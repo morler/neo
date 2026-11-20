@@ -123,6 +123,13 @@ Validation happens at startup, so mistakes surface before the first model call:
 An unknown provider name fails with the list of usable names and a pointer to
 the `providers` section, so a typo does not require reading these docs.
 
+`neo doctor` reports the same state without contacting the endpoint: the
+`provider` check shows `<name> (custom)`, and the `credentials` check either
+names the missing `api_key_env` variable, confirms it is set, or states that the
+endpoint needs no key. Its `model` check shows the model the chat would start
+with, so a custom provider whose `model` and `default_model` are both missing is
+visible before the first turn.
+
 The compaction window still comes from `compaction.context_window_tokens`. Neo
 cannot discover a custom model's context size, so set it explicitly for models
 whose window differs from the 200,000-token default.

@@ -1,7 +1,7 @@
 ---
 id: 7
 title: Add a custom provider end-to-end test and doctor guidance
-status: open
+status: closed
 priority: low
 labels:
     - feature
@@ -11,6 +11,7 @@ relations:
         - 6
 created: "2026-11-20"
 updated: "2026-11-20"
+closed: "2026-11-20"
 ---
 
 ## 背景
