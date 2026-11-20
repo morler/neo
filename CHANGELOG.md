@@ -29,6 +29,12 @@ All notable changes to Neo will be documented in this file.
   `/model` opens, and the terminal background is detected asynchronously
   instead of blocking the first frame for up to four seconds.
 
+### Security
+
+- Cleared every reported dependency advisory by upgrading `golang.org/x/net`
+  to v0.63.0, `golang.org/x/sys` to v0.50.0, and `golang.org/x/text` to v0.44.0,
+  and by moving the module to Go 1.26.11. Building Neo now requires Go 1.26.
+
 ## [v0.6.2] - 2026-08-04
 
 ### Security
