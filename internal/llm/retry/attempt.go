@@ -27,6 +27,9 @@ type Options struct {
 	Retryable      func(status int) bool
 	RetryAfterBody RetryAfterBodyFunc
 	ErrorLabel     string
+	// CredentialHint overrides the "check <ENV>" advice attached to 401/403
+	// errors raised after retries are exhausted.
+	CredentialHint string
 }
 
 func Do(ctx context.Context, opts Options, attemptFn AttemptFunc) (AttemptResult, error) {
@@ -76,7 +79,9 @@ func Do(ctx context.Context, opts Options, attemptFn AttemptFunc) (AttemptResult
 		}
 
 		if retryable(result.Status) {
-			lastErr = llm.NewHTTPError(label, result.Status, result.Body)
+			httpErr := llm.NewHTTPError(label, result.Status, result.Body)
+			httpErr.CredentialHint = opts.CredentialHint
+			lastErr = httpErr
 			if attempt == maxRetries {
 				logx.Debug("provider retries exhausted",
 					"provider", opts.Provider,

@@ -1,7 +1,7 @@
 ---
 id: 5
 title: Wire custom providers into /model, doctor, sessions, and log redaction
-status: open
+status: closed
 priority: medium
 labels:
     - feature
@@ -13,6 +13,7 @@ relations:
         - 4
 created: "2026-11-20"
 updated: "2026-11-20"
+closed: "2026-11-20"
 ---
 
 ## 背景

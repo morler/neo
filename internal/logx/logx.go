@@ -17,6 +17,15 @@ const (
 	defaultPayloadLimit = 4096
 )
 
+// builtinSecretEnvNames are the credential variables of the compiled-in
+// providers. Custom providers add theirs at init time from configuration.
+var builtinSecretEnvNames = []string{
+	"OPENAI_API_KEY",
+	"ANTHROPIC_API_KEY",
+	"OPENROUTER_API_KEY",
+	"GOOGLE_API_KEY",
+}
+
 var (
 	bearerPattern    = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._-]+`)
 	openAIKeyPattern = regexp.MustCompile(`sk-[A-Za-z0-9_-]+`)
@@ -28,10 +37,17 @@ var (
 	secrets          []string
 )
 
-func InitFromEnv() error {
+// InitFromEnv configures logging from NEO_LOG and NEO_LOG_VERBOSE, redacting
+// the API keys of the built-in providers.
+func InitFromEnv() error { return InitFromEnvWithSecrets(nil) }
+
+// InitFromEnvWithSecrets also redacts the API keys read by custom providers.
+// Their environment variable names come from configuration, so the caller
+// passes them in; Neo's logger initializes before the config is loaded.
+func InitFromEnvWithSecrets(extraEnvNames []string) error {
 	path := strings.TrimSpace(os.Getenv("NEO_LOG"))
 	verboseEnabled := envBool("NEO_LOG_VERBOSE")
-	secretValues := envSecrets()
+	secretValues := envSecrets(extraEnvNames)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -166,13 +182,8 @@ func redactString(s string) string {
 	return s
 }
 
-func envSecrets() []string {
-	names := []string{
-		"OPENAI_API_KEY",
-		"ANTHROPIC_API_KEY",
-		"OPENROUTER_API_KEY",
-		"GOOGLE_API_KEY",
-	}
+func envSecrets(extraEnvNames []string) []string {
+	names := append(append([]string(nil), builtinSecretEnvNames...), extraEnvNames...)
 	out := make([]string, 0, len(names))
 	for _, name := range names {
 		if value := strings.TrimSpace(os.Getenv(name)); value != "" {

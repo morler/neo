@@ -770,3 +770,77 @@ func TestSaveChatSession_RecordsTheActiveAgent(t *testing.T) {
 		t.Fatalf("agent = %q, want reviewer", reloaded.Metadata.Agent)
 	}
 }
+
+func TestDoctorProviderCheckAcceptsCustomProvider(t *testing.T) {
+	cfg := &config.Config{
+		Provider:  "local",
+		Providers: map[string]config.CustomProvider{"local": {Endpoint: "https://llm.internal/v1/chat/completions"}},
+	}
+	got := doctorProviderCheck(cfg)
+	if got.Status != doctorPass {
+		t.Fatalf("status = %s, want pass (%s)", got.Status, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "custom") {
+		t.Fatalf("detail = %q, want the custom marker", got.Detail)
+	}
+}
+
+func TestDoctorProviderCheckUnknownProviderListsCustomNames(t *testing.T) {
+	cfg := &config.Config{
+		Provider:  "mystery",
+		Providers: map[string]config.CustomProvider{"local": {Endpoint: "https://llm.internal/v1/chat/completions"}},
+	}
+	got := doctorProviderCheck(cfg)
+	if got.Status != doctorFail {
+		t.Fatalf("status = %s, want fail", got.Status)
+	}
+	for _, want := range []string{"mystery", "anthropic", "local"} {
+		if !strings.Contains(got.Detail, want) {
+			t.Fatalf("detail %q missing %q", got.Detail, want)
+		}
+	}
+}
+
+func TestDoctorCredentialCheckCustomProvider(t *testing.T) {
+	cfg := &config.Config{
+		Provider: "local",
+		Providers: map[string]config.CustomProvider{
+			"local": {Endpoint: "https://llm.internal/v1/chat/completions", APIKeyEnv: "LOCAL_LLM_API_KEY"},
+		},
+	}
+
+	t.Setenv("LOCAL_LLM_API_KEY", "secret")
+	got := doctorCredentialCheck(cfg)
+	if got.Status != doctorPass {
+		t.Fatalf("status = %s, want pass (%s)", got.Status, got.Detail)
+	}
+	if strings.Contains(got.Detail, "secret") {
+		t.Fatalf("detail exposed the secret: %q", got.Detail)
+	}
+	if !strings.Contains(got.Detail, "LOCAL_LLM_API_KEY") {
+		t.Fatalf("detail should name the variable, got %q", got.Detail)
+	}
+
+	t.Setenv("LOCAL_LLM_API_KEY", "")
+	got = doctorCredentialCheck(cfg)
+	if got.Status != doctorFail {
+		t.Fatalf("status = %s, want fail", got.Status)
+	}
+	if !strings.Contains(got.Detail, "LOCAL_LLM_API_KEY") {
+		t.Fatalf("detail should name the missing variable, got %q", got.Detail)
+	}
+}
+
+func TestDoctorCredentialCheckCustomProviderWithoutKeyEnvPasses(t *testing.T) {
+	cfg := &config.Config{
+		Provider:  "local",
+		Providers: map[string]config.CustomProvider{"local": {Endpoint: "http://127.0.0.1:8000/v1/chat/completions"}},
+	}
+	got := doctorCredentialCheck(cfg)
+	if got.Status != doctorPass {
+		t.Fatalf("status = %s, want pass (%s)", got.Status, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "no API key required") {
+		t.Fatalf("detail = %q, want an explanation that no key is needed", got.Detail)
+	}
+}

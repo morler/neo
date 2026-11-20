@@ -13,6 +13,7 @@ import (
 	"github.com/owainlewis/neo/internal/config"
 	"github.com/owainlewis/neo/internal/llm"
 	"github.com/owainlewis/neo/internal/llm/anthropic"
+	"github.com/owainlewis/neo/internal/llm/custom"
 	"github.com/owainlewis/neo/internal/llm/google"
 	"github.com/owainlewis/neo/internal/llm/openai"
 	"github.com/owainlewis/neo/internal/llm/openrouter"
@@ -22,6 +23,14 @@ import (
 )
 
 func newProvider(cfg *config.Config, name string) (llm.Provider, error) {
+	if p, ok := cfg.ProviderConfig(name); ok {
+		return custom.New(custom.Spec{
+			Name:         name,
+			Endpoint:     p.Endpoint,
+			APIKeyEnv:    p.APIKeyEnv,
+			DefaultModel: p.DefaultModel,
+		})
+	}
 	switch name {
 	case "openai":
 		if cfg.OpenAIAuth == config.OpenAIAuthSubscription {
@@ -35,7 +44,8 @@ func newProvider(cfg *config.Config, name string) (llm.Provider, error) {
 	case "anthropic", "":
 		return anthropic.New()
 	default:
-		return nil, fmt.Errorf("unknown provider %q (expected \"anthropic\", \"openai\", \"openrouter\", or \"google\")", name)
+		return nil, fmt.Errorf("unknown provider %q; available: %s (declare a custom backend under providers: in neo.yaml)",
+			name, strings.Join(cfg.ProviderNames(), ", "))
 	}
 }
 
@@ -152,6 +162,12 @@ func sessionBackend(cfg *config.Config, meta session.Metadata, errOut io.Writer)
 			return cfg.Provider, cfg.Model
 		}
 	}
+	// A custom backend stays restorable while it is still declared; a missing
+	// key then fails loudly when the provider is constructed instead of
+	// silently moving the conversation to a different model.
+	if cfg.IsCustomProvider(savedProvider) {
+		return savedProvider, meta.Model
+	}
 	if savedProvider == cfg.Provider || providerCredentialPresent(cfg, savedProvider) {
 		return savedProvider, meta.Model
 	}
@@ -208,7 +224,23 @@ func modelChoices(cfg *config.Config, activeProvider string) []tui.ModelChoice {
 	return providerModelChoices(cfg, activeProvider)
 }
 
+// customModelChoices maps a custom provider's static model list into the
+// picker. Neo never fetches a catalogue from a custom backend, so an omitted
+// list simply leaves the picker showing the current model.
+func customModelChoices(p config.CustomProvider) []tui.ModelChoice {
+	choices := make([]tui.ModelChoice, 0, len(p.Models))
+	for _, m := range p.Models {
+		choices = append(choices, tui.ModelChoice{ID: m.ID, Name: m.Name, Description: m.Description})
+	}
+	return choices
+}
+
 func providerCredentialPresent(cfg *config.Config, provider string) bool {
+	// A custom provider with no api_key_env needs no credential at all, so it
+	// is always usable; otherwise it is present only when its variable is set.
+	if p, ok := cfg.ProviderConfig(provider); ok {
+		return customCredentialPresent(p)
+	}
 	switch provider {
 	case "anthropic":
 		return strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != ""
@@ -231,7 +263,19 @@ func providerCredentialPresent(cfg *config.Config, provider string) bool {
 	}
 }
 
+// customCredentialPresent reports whether a custom provider's credential is
+// configured. Endpoints without api_key_env are unauthenticated by design.
+func customCredentialPresent(p config.CustomProvider) bool {
+	if p.APIKeyEnv == "" {
+		return true
+	}
+	return strings.TrimSpace(os.Getenv(p.APIKeyEnv)) != ""
+}
+
 func providerModelChoices(cfg *config.Config, provider string) []tui.ModelChoice {
+	if p, ok := cfg.ProviderConfig(provider); ok {
+		return customModelChoices(p)
+	}
 	switch provider {
 	case "openai":
 		if cfg.OpenAIAuth == config.OpenAIAuthSubscription {

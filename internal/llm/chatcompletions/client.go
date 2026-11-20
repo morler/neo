@@ -18,12 +18,19 @@ import (
 // Client talks to an OpenAI-compatible Chat Completions endpoint.
 type Client struct {
 	ProviderName string
+	// APIKey is sent as a Bearer token. Empty means the endpoint needs no
+	// authentication (a local runtime such as Ollama or vLLM), so the
+	// Authorization header is omitted entirely rather than sent blank.
 	APIKey       string
 	Endpoint     string
 	DefaultModel string
 	HTTP         *http.Client
 	MaxRetries   int
 	BaseDelay    time.Duration
+	// CredentialHint is attached to 401/403 failures so the advice names the
+	// variable this endpoint actually reads. Empty falls back to the built-in
+	// per-provider hints.
+	CredentialHint string
 }
 
 func (c *Client) Name() string { return c.ProviderName }
@@ -39,7 +46,13 @@ func (c *Client) Complete(ctx context.Context, req llm.Request) (*llm.Response, 
 		return nil, err
 	}
 
-	result, err := retry.Do(ctx, retry.Options{Provider: c.Name(), ErrorLabel: c.ProviderName, MaxRetries: c.MaxRetries, BaseDelay: c.BaseDelay}, func(ctx context.Context) (retry.AttemptResult, error) {
+	result, err := retry.Do(ctx, retry.Options{
+		Provider:       c.Name(),
+		ErrorLabel:     c.ProviderName,
+		MaxRetries:     c.MaxRetries,
+		BaseDelay:      c.BaseDelay,
+		CredentialHint: c.CredentialHint,
+	}, func(ctx context.Context) (retry.AttemptResult, error) {
 		raw, status, retryAfter, err := c.doRequest(ctx, body)
 		return retry.AttemptResult{Body: raw, Status: status, RetryAfter: retryAfter}, err
 	})
@@ -48,7 +61,9 @@ func (c *Client) Complete(ctx context.Context, req llm.Request) (*llm.Response, 
 	}
 	raw, status := result.Body, result.Status
 	if status >= 400 {
-		return nil, llm.NewHTTPError(c.ProviderName, status, raw)
+		httpErr := llm.NewHTTPError(c.ProviderName, status, raw)
+		httpErr.CredentialHint = c.CredentialHint
+		return nil, httpErr
 	}
 	var out Response
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -69,7 +84,9 @@ func (c *Client) doRequest(ctx context.Context, body []byte) ([]byte, int, retry
 		return nil, 0, retry.Absent(), err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	if c.APIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return nil, 0, retry.Absent(), err

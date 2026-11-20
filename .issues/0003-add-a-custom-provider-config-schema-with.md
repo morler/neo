@@ -1,7 +1,7 @@
 ---
 id: 3
 title: Add a custom provider config schema with validation
-status: open
+status: closed
 priority: high
 labels:
     - feature
@@ -11,6 +11,7 @@ relations:
         - 4
 created: "2026-11-20"
 updated: "2026-11-20"
+closed: "2026-11-20"
 ---
 
 ## 背景

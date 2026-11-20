@@ -41,11 +41,14 @@ type Config struct {
 	// (default, uses OPENAI_API_KEY) or "subscription" (ChatGPT/Codex
 	// device-code credentials via `neo login`). This also applies when OpenAI
 	// is selected through /model while another provider is the startup default.
-	OpenAIAuth string     `yaml:"openai_auth"`
-	Model      string     `yaml:"model"`
-	Subagents  Backend    `yaml:"subagents"`
-	Features   Features   `yaml:"features"`
-	Compaction Compaction `yaml:"compaction"`
+	OpenAIAuth string  `yaml:"openai_auth"`
+	Model      string  `yaml:"model"`
+	Subagents  Backend `yaml:"subagents"`
+	// Providers declares optional OpenAI-compatible backends selected by name
+	// through `provider` or `subagents.provider`. Built-in names are reserved.
+	Providers  map[string]CustomProvider `yaml:"providers"`
+	Features   Features                  `yaml:"features"`
+	Compaction Compaction                `yaml:"compaction"`
 	// ToolApprovals lists optional interactive tool names and Bash prefixes.
 	ToolApprovals []string `yaml:"tool_approvals"`
 	Output        Output   `yaml:"output"`
@@ -184,19 +187,24 @@ func parseConfig(b []byte, source string) (*Config, error) {
 	if err := validateOpenAIAuth(c.OpenAIAuth, source); err != nil {
 		return nil, err
 	}
+	if err := c.normalizeProviders(source); err != nil {
+		return nil, err
+	}
+	if !c.HasProvider(c.Provider) {
+		return nil, c.unknownProviderError(source, "provider", c.Provider)
+	}
 	if c.Model == "" {
-		c.Model = defaultModelFor(c.Provider, c.OpenAIAuth)
+		c.Model = c.defaultModelForProvider(c.Provider)
 	}
 	if c.SubagentsConfigured() {
 		if c.Subagents.Provider == "" {
 			c.Subagents.Provider = c.Provider
 		}
-		if !knownProvider(c.Subagents.Provider) {
-			return nil, fmt.Errorf("%s: subagents.provider must be one of %q, %q, %q, %q (got %q)",
-				source, "anthropic", "openai", "openrouter", "google", c.Subagents.Provider)
+		if !c.HasProvider(c.Subagents.Provider) {
+			return nil, c.unknownProviderError(source, "subagents.provider", c.Subagents.Provider)
 		}
 		if c.Subagents.Model == "" {
-			c.Subagents.Model = defaultModelFor(c.Subagents.Provider, c.OpenAIAuth)
+			c.Subagents.Model = c.defaultModelForProvider(c.Subagents.Provider)
 		}
 	}
 	seenApprovals := make(map[string]struct{}, len(c.ToolApprovals))
@@ -214,15 +222,6 @@ func parseConfig(b []byte, source string) (*Config, error) {
 	}
 	c.ToolApprovals = approvals
 	return &c, nil
-}
-
-func knownProvider(provider string) bool {
-	switch provider {
-	case "anthropic", "openai", "openrouter", "google":
-		return true
-	default:
-		return false
-	}
 }
 
 func validateOpenAIAuth(mode, source string) error {

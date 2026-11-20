@@ -180,3 +180,43 @@ func TestToLLMResponseRejectsMalformedToolArguments(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestClientComplete_OmitsAuthorizationWithoutAPIKey(t *testing.T) {
+	var sawHeader bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, sawHeader = r.Header["Authorization"]
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	client := &Client{ProviderName: "local", Endpoint: server.URL, HTTP: server.Client(), MaxRetries: -1}
+	resp, err := client.Complete(context.Background(), llm.Request{Model: "m", Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{{Type: "text", Text: "hi"}}}}})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if sawHeader {
+		t.Fatal("a keyless client must not send an Authorization header")
+	}
+	if resp.Content[0].Text != "ok" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestClientComplete_UsesCredentialHintOnAuthFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"nope"}}`, http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	client := &Client{ProviderName: "local", APIKey: "k", Endpoint: server.URL, HTTP: server.Client(), MaxRetries: -1, CredentialHint: "check LOCAL_LLM_API_KEY"}
+	_, err := client.Complete(context.Background(), llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.ContentBlock{{Type: "text", Text: "hi"}}}}})
+	if err == nil {
+		t.Fatal("expected an auth error")
+	}
+	if !strings.Contains(err.Error(), "check LOCAL_LLM_API_KEY") {
+		t.Fatalf("error %q should use the custom credential hint", err.Error())
+	}
+	if strings.Contains(err.Error(), "OPENROUTER_API_KEY") {
+		t.Fatalf("error %q should not use built-in hints for a custom provider", err.Error())
+	}
+}

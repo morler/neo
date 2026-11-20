@@ -78,15 +78,20 @@ func doctorRipgrepCheck() doctorCheck {
 }
 
 func doctorProviderCheck(cfg *config.Config) doctorCheck {
-	switch cfg.Provider {
-	case "anthropic", "openai", "openrouter", "google":
-		return doctorCheck{Status: doctorPass, Name: "provider", Detail: cfg.Provider}
-	default:
-		return doctorCheck{Status: doctorFail, Name: "provider", Detail: fmt.Sprintf("unknown provider %q", cfg.Provider)}
+	if !cfg.HasProvider(cfg.Provider) {
+		return doctorCheck{Status: doctorFail, Name: "provider",
+			Detail: fmt.Sprintf("unknown provider %q; available: %s", cfg.Provider, strings.Join(cfg.ProviderNames(), ", "))}
 	}
+	if cfg.IsCustomProvider(cfg.Provider) {
+		return doctorCheck{Status: doctorPass, Name: "provider", Detail: cfg.Provider + " (custom)"}
+	}
+	return doctorCheck{Status: doctorPass, Name: "provider", Detail: cfg.Provider}
 }
 
 func doctorCredentialCheck(cfg *config.Config) doctorCheck {
+	if _, ok := cfg.ProviderConfig(cfg.Provider); ok {
+		return doctorCustomCredentialCheck(cfg)
+	}
 	switch cfg.Provider {
 	case "anthropic":
 		return envCredentialCheck("ANTHROPIC_API_KEY")
@@ -111,6 +116,24 @@ func doctorCredentialCheck(cfg *config.Config) doctorCheck {
 	default:
 		return doctorCheck{Status: doctorFail, Name: "credentials", Detail: "provider is invalid"}
 	}
+}
+
+// doctorCustomCredentialCheck reports the credential state of a backend
+// declared under providers:. An endpoint with no api_key_env needs none.
+func doctorCustomCredentialCheck(cfg *config.Config) doctorCheck {
+	p, ok := cfg.ProviderConfig(cfg.Provider)
+	if !ok {
+		return doctorCheck{Status: doctorFail, Name: "credentials", Detail: "provider is invalid"}
+	}
+	if p.APIKeyEnv == "" {
+		return doctorCheck{Status: doctorPass, Name: "credentials",
+			Detail: "no API key required (providers." + cfg.Provider + ".api_key_env is unset)"}
+	}
+	if strings.TrimSpace(os.Getenv(p.APIKeyEnv)) == "" {
+		return doctorCheck{Status: doctorFail, Name: "credentials",
+			Detail: "set " + p.APIKeyEnv + " for providers." + cfg.Provider}
+	}
+	return doctorCheck{Status: doctorPass, Name: "credentials", Detail: p.APIKeyEnv + " is set"}
 }
 
 func envCredentialCheck(name string) doctorCheck {

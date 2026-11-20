@@ -88,7 +88,7 @@ func main() {
 		out: os.Stdout,
 		err: os.Stderr,
 	}, lifecycle{
-		init:  logx.InitFromEnv,
+		init:  initLogging,
 		close: logx.Close,
 	}))
 }
@@ -102,6 +102,18 @@ type stdio struct {
 type lifecycle struct {
 	init  func() error
 	close func() error
+}
+
+// initLogging redacts the built-in provider keys plus whatever api_key_env
+// names the configuration declares for custom providers. A broken config is
+// not fatal here: the command reports it with the usual guidance, and logging
+// still falls back to the built-in secret list.
+func initLogging() error {
+	var customEnv []string
+	if cfg, err := config.Load(); err == nil {
+		customEnv = cfg.CustomAPIKeyEnvNames()
+	}
+	return logx.InitFromEnvWithSecrets(customEnv)
 }
 
 // execute owns process-lifetime setup and cleanup. It returns before main

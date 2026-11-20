@@ -1,7 +1,7 @@
 ---
 id: 4
 title: Build custom providers as chat-completions clients
-status: open
+status: closed
 priority: high
 labels:
     - feature
@@ -13,6 +13,7 @@ relations:
         - 3
 created: "2026-11-20"
 updated: "2026-11-20"
+closed: "2026-11-20"
 ---
 
 ## 背景

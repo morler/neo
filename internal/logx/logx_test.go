@@ -204,3 +204,52 @@ func TestPayloadValue_VerboseKeepsFullPayload(t *testing.T) {
 		t.Fatalf("verbose payload should not be truncated:\n%s", text)
 	}
 }
+
+func TestInitFromEnvWithSecrets_RedactsCustomProviderKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "neo.log")
+	const sentinel = "local-gateway-sentinel"
+
+	t.Setenv("NEO_LOG", path)
+	t.Setenv("NEO_LOG_VERBOSE", "1")
+	t.Setenv("LOCAL_LLM_API_KEY", sentinel)
+	t.Setenv("OTHER_GATEWAY_KEY", "")
+	t.Cleanup(func() { _ = Close() })
+
+	if err := InitFromEnvWithSecrets([]string{"OTHER_GATEWAY_KEY", "LOCAL_LLM_API_KEY"}); err != nil {
+		t.Fatalf("InitFromEnvWithSecrets: %v", err)
+	}
+
+	preview := SafeString("custom "+sentinel, 0)
+	assertSecretsRedacted(t, "SafeString", preview, []string{sentinel})
+	if !strings.Contains(preview, "custom ") {
+		t.Fatalf("SafeString removed ordinary content: %q", preview)
+	}
+
+	// Provider request bodies go through PayloadValue, which redacts.
+	Debug("custom provider request", "payload", PayloadValue(`{"authorization":"Bearer `+sentinel+`"}`))
+	if err := Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	assertSecretsRedacted(t, "log output", string(data), []string{sentinel})
+}
+
+func TestInitFromEnv_KeepsBuiltinSecretsWhenNoCustomNamesGiven(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "neo.log")
+	const sentinel = "builtin-sentinel"
+
+	t.Setenv("NEO_LOG", path)
+	t.Setenv("OPENROUTER_API_KEY", sentinel)
+	t.Cleanup(func() { _ = Close() })
+
+	if err := InitFromEnv(); err != nil {
+		t.Fatalf("InitFromEnv: %v", err)
+	}
+	got := SafeString("key "+sentinel, 0)
+	assertSecretsRedacted(t, "SafeString", got, []string{sentinel})
+}

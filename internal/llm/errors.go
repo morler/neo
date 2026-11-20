@@ -16,6 +16,10 @@ type HTTPError struct {
 	Type     string
 	Message  string
 	Body     []byte
+	// CredentialHint overrides the built-in "check <ENV>" advice for 401/403.
+	// Custom providers set it to the api_key_env they read, or to a note that
+	// the endpoint needs no key at all.
+	CredentialHint string
 }
 
 // NewHTTPError builds an HTTPError from a response body. An unparseable body
@@ -68,6 +72,9 @@ func (e *HTTPError) Error() string {
 func (e *HTTPError) hint() string {
 	if e.Status != 401 && e.Status != 403 {
 		return ""
+	}
+	if e.CredentialHint != "" {
+		return e.CredentialHint
 	}
 	switch e.Provider {
 	case "anthropic":
