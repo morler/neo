@@ -19,6 +19,7 @@ type modelBrowser struct {
 	visible  bool
 	query    string
 	selected int
+	loading  bool
 	err      error
 }
 
@@ -62,13 +63,30 @@ func backendLabel(provider, model string) string {
 	return provider + "/" + model
 }
 
-func (m *model) openModelBrowser() {
-	if len(m.modelChoices) == 0 {
+func (m *model) openModelBrowser() tea.Cmd {
+	if len(m.modelChoices) == 0 && m.modelChoicesLoader == nil {
 		m.appendBlock(noticeBlock{text: "model: " + m.modelTag})
-		return
+		return nil
 	}
-	m.models = modelBrowser{visible: true}
+	loading := m.modelChoicesLoader != nil && !m.modelChoicesLoaded
+	m.models = modelBrowser{visible: true, loading: loading || m.modelChoicesLoading}
 	m.ensureModelSelection()
+	if !loading || m.modelChoicesLoading {
+		return nil
+	}
+	m.modelChoicesLoading = true
+	return m.loadModelChoices()
+}
+
+// loadModelChoices fetches the provider's live catalogue in a command, so the
+// browser opens with its static fallback instead of waiting on the network.
+func (m *model) loadModelChoices() tea.Cmd {
+	loader := m.modelChoicesLoader
+	ctx := m.ctx
+	return func() tea.Msg {
+		choices, err := loader(ctx)
+		return modelChoicesMsg{choices: choices, err: err}
+	}
 }
 
 func (m *model) closeModelBrowser() {
@@ -222,12 +240,19 @@ func (m *model) modelBrowserView() string {
 		lines = append(lines, style.Width(max(1, m.width-2)).Render(truncate(line, max(1, m.width-2))))
 	}
 	if len(lines) == 0 {
-		lines = append(lines, styMuted.Render("No models match."))
+		if m.models.loading {
+			lines = append(lines, styMuted.Render("Loading…"))
+		} else {
+			lines = append(lines, styMuted.Render("No models match."))
+		}
 	}
 
 	status := fmt.Sprintf("%d / %d", min(m.models.selected+1, len(items)), len(items))
 	if len(items) == 0 {
 		status = "0 / 0"
+	}
+	if m.models.loading && len(items) == 0 {
+		status = "loading…"
 	}
 	footer := strings.Join([]string{
 		styTool.Render("enter") + styMuted.Render(" select"),
@@ -240,7 +265,12 @@ func (m *model) modelBrowserView() string {
 	sb.WriteString(header)
 	sb.WriteString("\n\n")
 	sb.WriteString(query)
-	sb.WriteString("\n\n")
+	sb.WriteString("\n")
+	if m.models.loading {
+		sb.WriteString(styMuted.Render("Fetching model catalog…"))
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
 	sb.WriteString(strings.Join(lines, "\n"))
 	if m.models.err != nil {
 		sb.WriteString("\n\n")

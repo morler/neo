@@ -47,6 +47,8 @@ the agent they were started with, so `neo resume` keeps it unless a different
 - `neo run` accepts prompt text as arguments. Piped stdin is the prompt when no argument is given (`cat prompt.md | neo run --json`), and is prepended to the arguments when one of them is `-` (`git diff | neo run "Review this diff" -`). stdin is not read otherwise, so a harness that holds an idle pipe open cannot block the run.
 - `neo doctor` is local-first: it checks config, required credential presence, session store access, git availability, and whether the current directory is a git workspace without calling providers or printing secrets.
 - The interactive `@` file picker indexes files under Neo's effective startup working directory and inserts paths relative to that directory.
+- The OpenRouter model catalogue is fetched lazily when `/model` is opened. Startup uses the provider default, so a slow or offline catalogue request cannot delay the first frame.
+- The TUI starts with the dark markdown style and asks Bubble Tea for the terminal background asynchronously. A terminal that does not answer the query leaves the dark style in place instead of blocking startup.
 - `neo login` prints the OpenAI Codex device-code URL and one-time code, then stores refreshable subscription credentials in `~/.neo/auth.json` with file permissions intended to protect secrets.
 - `neo logout` deletes the stored OpenAI subscription credential entry.
 - Resuming a session attempts to change into the saved session cwd. If unavailable, Neo warns and stays in the current directory.

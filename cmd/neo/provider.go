@@ -198,14 +198,14 @@ func configuredOpenAIAuth(cfg *config.Config) string {
 	return config.OpenAIAuthAPIKey
 }
 
-func modelChoices(ctx context.Context, cfg *config.Config, activeProvider string, errOut io.Writer) []tui.ModelChoice {
+func modelChoices(cfg *config.Config, activeProvider string) []tui.ModelChoice {
 	if activeProvider == "" {
 		activeProvider = cfg.Provider
 		if activeProvider == "" {
 			activeProvider = "anthropic"
 		}
 	}
-	return providerModelChoices(ctx, cfg, activeProvider, errOut)
+	return providerModelChoices(cfg, activeProvider)
 }
 
 func providerCredentialPresent(cfg *config.Config, provider string) bool {
@@ -231,7 +231,7 @@ func providerCredentialPresent(cfg *config.Config, provider string) bool {
 	}
 }
 
-func providerModelChoices(ctx context.Context, cfg *config.Config, provider string, errOut io.Writer) []tui.ModelChoice {
+func providerModelChoices(cfg *config.Config, provider string) []tui.ModelChoice {
 	switch provider {
 	case "openai":
 		if cfg.OpenAIAuth == config.OpenAIAuthSubscription {
@@ -253,7 +253,12 @@ func providerModelChoices(ctx context.Context, cfg *config.Config, provider stri
 			{ID: "gpt-4o-mini", Name: "GPT-4o mini", Description: "Smaller GPT-4o model"},
 		}
 	case "openrouter":
-		return openRouterModelChoices(ctx, errOut)
+		// The live catalogue is loaded lazily when the model browser opens;
+		// startup must not wait on the network. normalizeModelChoices adds the
+		// configured model when it differs from the default.
+		return []tui.ModelChoice{
+			{ID: openrouter.DefaultModel, Name: openrouter.DefaultModel, Description: "Default OpenRouter model"},
+		}
 	case "google":
 		return []tui.ModelChoice{
 			{ID: google.DefaultModel, Name: "Gemini 3.5 Flash", Description: "Stable Google Gemini model for coding and agentic tasks"},
@@ -270,23 +275,19 @@ func providerModelChoices(ctx context.Context, cfg *config.Config, provider stri
 	}
 }
 
-// openRouterModelChoices fetches the live OpenRouter model catalogue. Model ids
-// move fast, so the picker is populated from OpenRouter's /models endpoint rather
-// than a hardcoded list. On failure (offline, timeout, API change) it falls back
-// to the provider default so the picker still works. The fetch is time-boxed so
-// startup never hangs on a slow network.
-func openRouterModelChoices(ctx context.Context, errOut io.Writer) []tui.ModelChoice {
+// loadOpenRouterModelChoices fetches the live OpenRouter model catalogue for
+// the model picker. It is called from a TUI command when the picker opens, not
+// during startup, and is time-boxed so a slow network cannot hang the picker.
+func loadOpenRouterModelChoices(ctx context.Context) ([]tui.ModelChoice, error) {
 	fetchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	models, err := openrouter.Models(fetchCtx, nil)
-	if err != nil || len(models) == 0 {
-		if err != nil {
-			fmt.Fprintf(errOut, "warning: could not fetch OpenRouter models (%v); using default\n", err)
-		}
-		return []tui.ModelChoice{
-			{ID: openrouter.DefaultModel, Name: openrouter.DefaultModel, Description: "Default OpenRouter model"},
-		}
+	if err != nil {
+		return nil, err
+	}
+	if len(models) == 0 {
+		return nil, fmt.Errorf("openrouter: empty model catalogue")
 	}
 
 	choices := make([]tui.ModelChoice, 0, len(models))
@@ -297,5 +298,14 @@ func openRouterModelChoices(ctx context.Context, errOut io.Writer) []tui.ModelCh
 		}
 		choices = append(choices, tui.ModelChoice{ID: m.ID, Name: name, Description: m.Description})
 	}
-	return choices
+	return choices, nil
+}
+
+// modelChoicesLoader returns the lazy catalogue loader for providers whose
+// model list is not static. Other providers return nil.
+func modelChoicesLoader(provider string) func(context.Context) ([]tui.ModelChoice, error) {
+	if provider == "openrouter" {
+		return loadOpenRouterModelChoices
+	}
+	return nil
 }

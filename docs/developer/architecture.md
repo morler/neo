@@ -37,7 +37,7 @@ Neo is a small Go coding agent. The core agent loop is policy-free: it owns mess
 4. For a new chat, it creates the session in `internal/session`.
 5. Skills (built-in plus discovered) and AGENTS.md are loaded, then `chatSystem` builds both flattened and segmented system prompts.
 6. `agent.New` receives the provider, tools, optional interactive approval matcher, system prompt, and restored messages and usage.
-7. `tui.Run` owns user interaction and saves the transcript after each send.
+7. `tui.Run` owns user interaction and saves the transcript after each send. The first frame does not wait for provider or terminal metadata: the OpenRouter catalogue loads when `/model` opens, and the terminal background is requested asynchronously.
 
 ## Execution Boundary
 

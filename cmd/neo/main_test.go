@@ -26,10 +26,10 @@ import (
 
 func TestModelChoices_OpenAISubscriptionOnlyListsSupportedCodexModel(t *testing.T) {
 	clearAdditionalProviderCredentials(t)
-	choices := modelChoices(context.Background(), &config.Config{
+	choices := modelChoices(&config.Config{
 		Provider:   "openai",
 		OpenAIAuth: config.OpenAIAuthSubscription,
-	}, "openai", io.Discard)
+	}, "openai")
 
 	if len(choices) != 1 {
 		t.Fatalf("subscription choices = %d, want 1: %#v", len(choices), choices)
@@ -41,10 +41,10 @@ func TestModelChoices_OpenAISubscriptionOnlyListsSupportedCodexModel(t *testing.
 
 func TestModelChoices_OpenAIAPIKeyDoesNotListCodexModels(t *testing.T) {
 	clearAdditionalProviderCredentials(t)
-	choices := modelChoices(context.Background(), &config.Config{
+	choices := modelChoices(&config.Config{
 		Provider:   "openai",
 		OpenAIAuth: config.OpenAIAuthAPIKey,
-	}, "openai", io.Discard)
+	}, "openai")
 
 	for _, choice := range choices {
 		if strings.Contains(choice.ID, "codex") {
@@ -55,7 +55,7 @@ func TestModelChoices_OpenAIAPIKeyDoesNotListCodexModels(t *testing.T) {
 
 func TestModelChoices_GoogleListsGeminiModels(t *testing.T) {
 	clearAdditionalProviderCredentials(t)
-	choices := modelChoices(context.Background(), &config.Config{Provider: "google"}, "google", io.Discard)
+	choices := modelChoices(&config.Config{Provider: "google"}, "google")
 	if len(choices) == 0 {
 		t.Fatal("expected google model choices")
 	}
@@ -102,27 +102,24 @@ func TestUsageDocumentsVersionAliases(t *testing.T) {
 	}
 }
 
-func TestModelChoices_OpenRouterFallsBackWhenCatalogueUnavailable(t *testing.T) {
+func TestModelChoices_OpenRouterUsesDefaultWithoutFetching(t *testing.T) {
 	clearAdditionalProviderCredentials(t)
-	// Point the picker at an unroutable network so the live fetch fails fast;
-	// the picker must still return the provider default rather than nothing.
-	t.Setenv("OPENROUTER_API_KEY", "")
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // already-cancelled context forces the fetch to fail immediately
-
-	choices := modelChoices(ctx, &config.Config{Provider: "openrouter"}, "openrouter", io.Discard)
+	// Startup must not touch the network: the picker opens with the static
+	// default and loadOpenRouterModelChoices replaces it on demand.
+	choices := modelChoices(&config.Config{Provider: "openrouter"}, "openrouter")
 	if len(choices) == 0 {
 		t.Fatal("expected a fallback openrouter model choice")
 	}
-	found := false
-	for _, choice := range choices {
-		if choice.ID == openrouter.DefaultModel {
-			found = true
-			break
-		}
+	if choices[0].ID != openrouter.DefaultModel {
+		t.Fatalf("first choice = %q, want %q", choices[0].ID, openrouter.DefaultModel)
 	}
-	if !found {
-		t.Fatalf("fallback choices missing default %q: %#v", openrouter.DefaultModel, choices)
+}
+
+func TestLoadOpenRouterModelChoices_FailsFastOnCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := loadOpenRouterModelChoices(ctx); err == nil {
+		t.Fatal("expected loadOpenRouterModelChoices to fail on a canceled context")
 	}
 }
 
@@ -130,7 +127,7 @@ func TestModelChoices_OnlyListsActiveProvider(t *testing.T) {
 	clearAdditionalProviderCredentials(t)
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 
-	choices := modelChoices(context.Background(), &config.Config{Provider: "anthropic", Model: "claude-opus-4-8"}, "anthropic", io.Discard)
+	choices := modelChoices(&config.Config{Provider: "anthropic", Model: "claude-opus-4-8"}, "anthropic")
 	for _, choice := range choices {
 		if strings.HasPrefix(choice.ID, "gpt-") {
 			t.Fatalf("picker exposed another provider model: %#v", choices)
@@ -226,6 +223,7 @@ func TestDoctorChecksContinueAfterConfigFailure(t *testing.T) {
 }
 
 func TestChatSystem_IgnoresProjectMemoryFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	cwd := filepath.Join(root, "pkg")
 	if err := os.MkdirAll(cwd, 0o755); err != nil {

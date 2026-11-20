@@ -29,14 +29,15 @@ import (
 )
 
 type Options struct {
-	AfterSend      func() error
-	ModelChoices   []ModelChoice
-	Provider       string
-	ModelSwitcher  func(string) error
-	WorkflowEvents <-chan workflow.Event
-	Verbose        bool
-	Input          io.Reader
-	Output         io.Writer
+	AfterSend          func() error
+	ModelChoices       []ModelChoice
+	ModelChoicesLoader func(context.Context) ([]ModelChoice, error)
+	Provider           string
+	ModelSwitcher      func(string) error
+	WorkflowEvents     <-chan workflow.Event
+	Verbose            bool
+	Input              io.Reader
+	Output             io.Writer
 }
 
 type Option func(*Options)
@@ -53,6 +54,13 @@ func WithModelSwitcher(provider string, choices []ModelChoice, fn func(string) e
 		opts.ModelChoices = choices
 		opts.ModelSwitcher = fn
 	}
+}
+
+// WithModelChoicesLoader supplies the live model catalogue for providers that
+// do not ship a static list. The loader runs only when the model browser is
+// opened, so a slow catalogue fetch never delays the first frame.
+func WithModelChoicesLoader(loader func(context.Context) ([]ModelChoice, error)) Option {
+	return func(opts *Options) { opts.ModelChoicesLoader = loader }
 }
 
 func WithWorkflowEvents(ch <-chan workflow.Event) Option {
@@ -143,6 +151,10 @@ type persistenceRetryResultMsg struct{ err error }
 type agentEventMsg struct{ ev agent.Event }
 type workflowEventMsg struct{ ev workflow.Event }
 type branchMsg struct{ branch string }
+type modelChoicesMsg struct {
+	choices []ModelChoice
+	err     error
+}
 type approvalRequestMsg struct {
 	req   agent.ApprovalRequest
 	reply chan bool
@@ -234,9 +246,9 @@ type model struct {
 	// an earlier turn are recognised as stale and ignored.
 	conversationGeneration uint64
 
-	// mdStyleName is the glamour style chosen at startup. We re-use it when
-	// recreating the renderer on resize so we never re-probe the terminal
-	// from inside raw mode (which leaks the OSC 11 reply into the textarea).
+	// mdStyleName is the glamour style currently in use. It starts at dark and
+	// switches when Bubble Tea reports a light terminal background, so startup
+	// never blocks on a terminal colour query.
 	mdStyleName string
 
 	// skills drives $name expansion of the user's input and /name skill
@@ -244,29 +256,21 @@ type model struct {
 	// turn in the status line and receipt.
 	skills []skills.Skill
 
-	afterSend     func() error
-	modelChoices  []ModelChoice
-	modelSwitcher func(string) error
-	verbose       bool
+	afterSend           func() error
+	modelChoices        []ModelChoice
+	modelChoicesLoader  func(context.Context) ([]ModelChoice, error)
+	modelChoicesLoaded  bool
+	modelChoicesLoading bool
+	modelSwitcher       func(string) error
+	verbose             bool
 }
 
 func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDir string, sk []skills.Skill, opts Options) (*model, error) {
-	// Detect dark/light once, here, before Bubble Tea puts stdin in raw mode.
-	// Glamour's WithAutoStyle issues an OSC 11 query each time; doing that
-	// from inside Update (e.g. on resize) leaks the terminal's reply into the
-	// textarea. We capture the chosen style and reuse it.
+	// Start dark and let Bubble Tea report the terminal background
+	// asynchronously (see Init). Querying it here with lipgloss would block
+	// the first frame for up to four seconds on terminals that do not answer
+	// DA1.
 	styleName := "dark"
-	input, inputOK := opts.Input.(*os.File)
-	output, outputOK := opts.Output.(*os.File)
-	if opts.Input == nil {
-		input, inputOK = os.Stdin, true
-	}
-	if opts.Output == nil {
-		output, outputOK = os.Stdout, true
-	}
-	if inputOK && outputOK && !lipgloss.HasDarkBackground(input, output) {
-		styleName = "light"
-	}
 	md, err := glamour.NewTermRenderer(
 		glamour.WithStandardStyle(styleName),
 		glamour.WithWordWrap(0),
@@ -331,24 +335,25 @@ func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDi
 	}
 	providerTag := strings.TrimSpace(opts.Provider)
 	m := &model{
-		ctx:           ctx,
-		ag:            ag,
-		modelTag:      modelTag,
-		providerTag:   providerTag,
-		mdStyleName:   styleName,
-		cwd:           cwd,
-		branch:        branch,
-		viewport:      vp,
-		input:         ta,
-		spin:          sp,
-		files:         newFilePicker(absCWD),
-		md:            md,
-		skills:        sk,
-		afterSend:     opts.AfterSend,
-		modelChoices:  normalizeModelChoices(modelTag, opts.ModelChoices),
-		modelSwitcher: opts.ModelSwitcher,
-		verbose:       opts.Verbose,
-		steer:         ag.Steer,
+		ctx:                ctx,
+		ag:                 ag,
+		modelTag:           modelTag,
+		providerTag:        providerTag,
+		mdStyleName:        styleName,
+		cwd:                cwd,
+		branch:             branch,
+		viewport:           vp,
+		input:              ta,
+		spin:               sp,
+		files:              newFilePicker(absCWD),
+		md:                 md,
+		skills:             sk,
+		afterSend:          opts.AfterSend,
+		modelChoices:       normalizeModelChoices(modelTag, opts.ModelChoices),
+		modelChoicesLoader: opts.ModelChoicesLoader,
+		modelSwitcher:      opts.ModelSwitcher,
+		verbose:            opts.Verbose,
+		steer:              ag.Steer,
 	}
 	// Welcome banner shown once at the top of scrollback.
 	m.blocks = append(m.blocks, splashBlock{
@@ -358,10 +363,11 @@ func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDi
 	return m, nil
 }
 
-// Init starts nothing: the spinner ticks only while a turn is running (see
-// the end of Update), so an idle session does not wake up every second.
+// Init asks Bubble Tea for the terminal background without blocking the first
+// frame. The reply arrives as tea.BackgroundColorMsg; the spinner ticks only
+// while a turn is running (see the end of Update).
 func (m *model) Init() tea.Cmd {
-	return nil
+	return tea.RequestBackgroundColor
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -369,6 +375,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	wasBusy := m.busy
 
 	switch msg := msg.(type) {
+	case tea.BackgroundColorMsg:
+		style := "dark"
+		if !msg.IsDark() {
+			style = "light"
+		}
+		m.setMarkdownStyle(style)
+		m.layout()
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -410,6 +424,25 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg, tea.MouseReleaseMsg, tea.MouseMotionMsg:
 		m.clearApprovalSelection()
+
+	case modelChoicesMsg:
+		m.modelChoicesLoading = false
+		m.models.loading = false
+		if msg.err != nil {
+			m.modelChoicesLoaded = false
+			if m.models.visible {
+				m.models.err = msg.err
+			}
+			m.layout()
+			break
+		}
+		m.modelChoicesLoaded = true
+		m.modelChoices = normalizeModelChoices(m.modelTag, msg.choices)
+		if m.models.visible {
+			m.models.err = nil
+			m.ensureModelSelection()
+		}
+		m.layout()
 
 	case agentEventMsg:
 		m.handleEvent(msg.ev)
@@ -668,7 +701,7 @@ func (m *model) handleSlashCommand(line string) tea.Cmd {
 	case "/help":
 		m.appendBlock(helpBlock{commands: m.slashCommands()})
 	case "/model":
-		m.openModelBrowser()
+		return m.openModelBrowser()
 	case "/clear":
 		m.resetConversation()
 		if err := m.persistSession(); err != nil {
@@ -1063,6 +1096,31 @@ func (m *model) syncInputHeight() {
 	if m.input.Height() != m.lastInputHeight {
 		m.lastInputHeight = m.input.Height()
 		m.layout()
+	}
+}
+
+// setMarkdownStyle switches the glamour style and re-renders the transcript.
+// It runs after the first frame, when Bubble Tea delivers the terminal
+// background colour, so it must not assume a window size is known yet.
+func (m *model) setMarkdownStyle(name string) {
+	if name == "" || name == m.mdStyleName {
+		return
+	}
+	m.mdStyleName = name
+	m.mdWidth = 0
+	m.rendered = m.rendered[:0]
+	m.renderedWidth = 0
+	if m.width > 2 {
+		if r, err := glamour.NewTermRenderer(
+			glamour.WithStandardStyle(name),
+			glamour.WithWordWrap(m.width-2),
+		); err == nil {
+			m.md = r
+			m.mdWidth = m.width - 2
+		}
+	}
+	if m.width > 0 {
+		m.refreshViewport()
 	}
 }
 

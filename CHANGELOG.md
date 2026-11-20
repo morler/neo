@@ -4,6 +4,12 @@ All notable changes to Neo will be documented in this file.
 
 ## Unreleased
 
+### Performance
+
+- Removed two startup stalls: the OpenRouter model catalogue now loads when
+  `/model` opens, and the terminal background is detected asynchronously
+  instead of blocking the first frame for up to four seconds.
+
 ## [v0.6.2] - 2026-08-04
 
 ### Security

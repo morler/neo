@@ -1,13 +1,103 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"image/color"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
 )
+
+func TestModelBrowser_LoadsCatalogueOnlyWhenOpened(t *testing.T) {
+	m := makeTestModel()
+	m.modelChoices = nil
+	m.modelChoicesLoader = func(context.Context) ([]ModelChoice, error) {
+		return []ModelChoice{{ID: "dynamic", Name: "Dynamic Model"}}, nil
+	}
+
+	cmd := m.handleSlashCommand("/model")
+	if cmd == nil {
+		t.Fatal("expected /model to return a catalogue load command")
+	}
+	if !m.models.visible || !m.models.loading {
+		t.Fatal("expected the browser to open while the catalogue loads")
+	}
+
+	m.Update(cmd())
+
+	if m.models.loading {
+		t.Fatal("expected loading to finish")
+	}
+	found := false
+	for _, choice := range m.modelChoices {
+		if choice.ID == "dynamic" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("model choices = %#v, want dynamic", m.modelChoices)
+	}
+	if got := plain(m.View().Content); !strings.Contains(got, "dynamic") {
+		t.Fatalf("loaded model missing from browser: %s", got)
+	}
+}
+
+func TestModelBrowser_LoadErrorKeepsFallbackAndShowsError(t *testing.T) {
+	m := makeTestModel()
+	m.modelChoices = normalizeModelChoices("test", []ModelChoice{{ID: "fallback", Name: "Fallback"}})
+	m.modelChoicesLoader = func(context.Context) ([]ModelChoice, error) {
+		return nil, errors.New("offline")
+	}
+
+	cmd := m.handleSlashCommand("/model")
+	if cmd == nil {
+		t.Fatal("expected /model to return a catalogue load command")
+	}
+	m.Update(cmd())
+
+	if !m.models.visible {
+		t.Fatal("expected the browser to stay open after a load error")
+	}
+	if m.models.err == nil || !strings.Contains(m.models.err.Error(), "offline") {
+		t.Fatalf("expected load error, got %v", m.models.err)
+	}
+	out := plain(m.View().Content)
+	if !strings.Contains(out, "fallback") || !strings.Contains(out, "offline") {
+		t.Fatalf("browser did not keep the fallback and show the error: %s", out)
+	}
+}
+
+func TestBackgroundColorMsgSwitchesMarkdownStyle(t *testing.T) {
+	m := makeTestModel()
+	md, err := glamour.NewTermRenderer(glamour.WithStandardStyle("dark"), glamour.WithWordWrap(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.md = md
+	m.mdStyleName = "dark"
+	m.mdWidth = 0
+	m.refreshViewport()
+
+	m.Update(tea.BackgroundColorMsg{Color: color.RGBA{R: 255, G: 255, B: 255, A: 255}})
+
+	if m.mdStyleName != "light" {
+		t.Fatalf("md style = %q, want light", m.mdStyleName)
+	}
+	if m.md == md {
+		t.Fatal("expected the markdown renderer to be rebuilt for the light style")
+	}
+}
+
+func TestInitRequestsBackgroundColor(t *testing.T) {
+	m := makeTestModel()
+	if m.Init() == nil {
+		t.Fatal("expected Init to request the terminal background color")
+	}
+}
 
 func TestSlashCommand_ModelOpensSearchableBrowser(t *testing.T) {
 	m := makeTestModel()
