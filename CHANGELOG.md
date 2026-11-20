@@ -4,6 +4,15 @@ All notable changes to Neo will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Declared custom OpenAI-compatible providers under a top-level `providers:`
+  map and select them with `provider: <name>` or `subagents.provider`. This
+  covers local runtimes (Ollama, vLLM), LiteLLM, and internal gateways without
+  an adapter per vendor. Endpoints with no `api_key_env` send no authorization
+  header; configured keys are validated at startup and redacted in logs.
+  Custom backends appear in `/model`, `neo doctor`, and resumed sessions.
+
 ### Performance
 
 - Removed two startup stalls: the OpenRouter model catalogue now loads when

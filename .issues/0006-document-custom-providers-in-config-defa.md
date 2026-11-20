@@ -1,7 +1,7 @@
 ---
 id: 6
 title: Document custom providers in config defaults, CLI help, and developer docs
-status: open
+status: closed
 priority: medium
 labels:
     - docs
@@ -13,6 +13,7 @@ relations:
         - 5
 created: "2026-11-20"
 updated: "2026-11-20"
+closed: "2026-11-20"
 ---
 
 ## 背景

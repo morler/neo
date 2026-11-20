@@ -274,7 +274,9 @@ USAGE:
 
 CONFIG:
   Reads neo.yaml (cwd) → ~/.neo/config.yaml → embedded defaults.
-  Select a backend with the "provider" key: "anthropic" (default), "openai", "openrouter", or "google".
+  Select a backend with the "provider" key. Built in: "anthropic" (default),
+  "openai", "openrouter", "google". Any other name must be declared under a
+  top-level "providers:" map in neo.yaml.
 
   ANTHROPIC_API_KEY    required when provider is "anthropic"
   OPENAI_API_KEY       required when provider is "openai" with api_key auth
@@ -285,6 +287,17 @@ CONFIG:
     provider: openai
     openai_auth: subscription
   then run "neo login".
+
+  Custom OpenAI-compatible endpoints (Ollama, vLLM, LiteLLM, internal
+  gateways) are declared once and then selected by name:
+    provider: local
+    providers:
+      local:
+        endpoint: http://127.0.0.1:8000/v1/chat/completions
+        api_key_env: LOCAL_LLM_API_KEY   # omit if the endpoint needs no key
+        default_model: qwen3-coder
+  Only the OpenAI Chat Completions protocol is supported; there is no
+  Anthropic-compatible custom backend.
 
 AGENT PROMPTS:
   --agent <name>     Replace the built-in system prompt with a markdown file

@@ -2,11 +2,13 @@
 
 ## The Simple Idea
 
-A provider is the adapter between Neo and a model API. Neo speaks its own small internal language; providers translate that into Anthropic, OpenAI, OpenRouter, or Gemini requests.
+A provider is the adapter between Neo and a model API. Neo speaks its own small internal language; providers translate that into Anthropic, OpenAI, OpenRouter, or Gemini requests, or into the OpenAI-compatible Chat Completions calls a custom backend exposes.
 
 ## The Problem
 
 Different model APIs use different request shapes, response shapes, tool-call formats, auth methods, retry behavior, and token accounting. OpenRouter uses an OpenAI-compatible Chat Completions shape while OpenAI itself uses the newer Responses API in Neo.
+
+Users also run their own endpoints — Ollama, vLLM, LiteLLM, or an internal gateway — that will never get a dedicated adapter in this repository.
 
 Neo should not bake any one provider into the agent loop.
 
@@ -52,12 +54,46 @@ surfaces as a decode failure rather than the cancellation that happened.
 | `provider: openai` + `openai_auth: subscription` | `neo login` device-code credentials | `internal/llm/openai.CodexClient` |
 | `provider: openrouter` | `OPENROUTER_API_KEY` | `internal/llm/openrouter` |
 | `provider: google` | `GOOGLE_API_KEY` | `internal/llm/google` |
+| `provider: <custom>` declared under `providers:` | `api_key_env`, or no auth at all | `internal/llm/custom` over `internal/llm/chatcompletions` |
 
 When an API-key provider is selected without its key, Neo names the required
 environment variable, links to the provider's key-creation page, shows an
 `export` command with a placeholder value, and suggests `neo doctor` to check
 the local setup. This guidance does not apply to OpenAI subscription auth,
 which uses `neo login` instead.
+
+## Custom Providers
+
+The four built-in adapters exist because their APIs differ. A custom backend is
+the opposite case: it speaks the same Chat Completions shape OpenRouter already
+uses, so `internal/llm/custom` only fills in a client rather than translating a
+new protocol.
+
+```go
+client, err := custom.New(custom.Spec{
+    Name:         "local",
+    Endpoint:     "http://127.0.0.1:8000/v1/chat/completions",
+    APIKeyEnv:    "LOCAL_LLM_API_KEY", // "" means no Authorization header
+    DefaultModel: "qwen3-coder",
+})
+```
+
+That constructor returns a `*chatcompletions.Client`, so custom backends
+inherit the same retry policy, error shaping, and idle-read protection as every
+other Chat Completions path. Nothing in `internal/agent` knows the difference
+between a custom provider and a built-in one.
+
+Two deliberate limits:
+
+- The protocol is OpenAI Chat Completions only. An Anthropic-compatible gateway
+  is not supported, and adding one would mean a real adapter, not a config key.
+- The model list is static, taken from `providers.<name>.models`. Neo does not
+  poll a custom endpoint for a catalogue, so `/model` shows what the config
+  declares plus the model already in use.
+
+`custom.Spec` is defined in the llm layer rather than reusing `config.CustomProvider`
+so `internal/llm` keeps no dependency on `internal/config`. The CLI maps one to
+the other at the composition boundary.
 
 ## How Models Are Chosen
 
@@ -69,7 +105,8 @@ In the TUI, `/model` opens a model picker. It changes the active model for the c
 
 - Provider adapters should translate, not decide product behavior.
 - Retry and response parsing belong in provider packages.
-- The core agent loop should not care whether a response came from Anthropic, OpenAI, OpenRouter, or Google.
+- The core agent loop should not care whether a response came from Anthropic, OpenAI, OpenRouter, or Google, or from a custom backend.
+- A custom `endpoint` using plain `http` sends the API key in clear text; that is the user's choice to make, but it must stay documented.
 - Subscription/Codex auth is experimental and should be documented carefully.
 
 ## Where To Look
@@ -79,6 +116,7 @@ In the TUI, `/model` opens a model picker. It changes the active model for the c
 - `internal/llm/openai`: OpenAI adapters.
 - `internal/llm/chatcompletions`: reusable OpenAI-compatible Chat Completions translation.
 - `internal/llm/openrouter`: OpenRouter adapter wiring.
+- `internal/llm/custom`: builds a chat-completions client from a configured custom provider.
 - `internal/llm/google`: Google Gemini adapter.
 - `internal/auth`: subscription credential storage and refresh.
 - `cmd/neo/main.go`: provider selection.

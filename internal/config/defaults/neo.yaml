@@ -2,7 +2,8 @@
 # Override by creating ./neo.yaml in a project, or ~/.neo/config.yaml globally.
 # The first file found wins — config files are NOT merged.
 
-# LLM backend: "anthropic" (default), "openai", "openrouter", or "google".
+# LLM backend. Built in: "anthropic" (default), "openai", "openrouter",
+# "google". Any other name must be declared under providers: below.
 # anthropic  → requires ANTHROPIC_API_KEY
 # openai     → uses the Responses API; auth via openai_auth (below)
 # openrouter → uses Chat Completions via OPENROUTER_API_KEY
@@ -21,6 +22,26 @@ model: claude-opus-5
 # subagents:
 #   provider: anthropic
 #   model: <claude-model-id>
+
+# Optional custom backends. Each entry speaks the OpenAI Chat Completions
+# shape, so any compatible gateway works: Ollama, vLLM, LiteLLM, llama.cpp,
+# or an internal endpoint. Built-in names are reserved; use another name.
+# Select one with `provider: <name>` (or `subagents.provider: <name>`).
+#
+# providers:
+#   local:
+#     endpoint: http://127.0.0.1:8000/v1/chat/completions  # required, http(s)
+#     api_key_env: LOCAL_LLM_API_KEY  # optional; omit to send no Authorization
+#     default_model: qwen3-coder      # optional; used when `model` is unset
+#     models:                         # optional; static list for /model
+#       - id: qwen3-coder
+#         name: Qwen3 Coder
+#         description: Local coder model
+#   gateway:
+#     endpoint: https://llm.internal.example.com/v1/chat/completions
+#     api_key_env: INTERNAL_GATEWAY_KEY
+#     models:
+#       - id: gpt-oss-120b
 
 # Optional interactive confirmations. Entries match exact tool names and Bash
 # command prefixes. This is user-interface friction, not a security boundary.

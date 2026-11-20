@@ -14,7 +14,8 @@ This is the complete configuration surface. Copy it to `~/.neo/config.yaml` or
 `./neo.yaml` and change only the values you need.
 
 ```yaml
-# LLM backend: anthropic, openai, openrouter, or google.
+# LLM backend: anthropic, openai, openrouter, google, or a name declared
+# under providers: (see Custom Providers below).
 provider: anthropic
 
 # OpenAI only: api_key uses OPENAI_API_KEY; subscription uses `neo login`.
@@ -65,6 +66,7 @@ The embedded source, including annotated provider examples, is
 | `provider: openai` with `openai_auth: subscription` | ChatGPT/Codex device-code credentials from `~/.neo/auth.json` | `internal/llm/openai.CodexClient` |
 | `provider: openrouter` | `OPENROUTER_API_KEY` | `internal/llm/openrouter` |
 | `provider: google` | `GOOGLE_API_KEY` | `internal/llm/google` |
+| `provider: <custom>` | `providers.<custom>.api_key_env`, or none | `internal/llm/custom` over `internal/llm/chatcompletions` |
 
 When `provider: openai` omits `model`, both API-key and subscription auth default
 to `gpt-6.1-sol`. Explicit model settings and saved-session models are unchanged.
@@ -72,6 +74,63 @@ to `gpt-6.1-sol`. Explicit model settings and saved-session models are unchanged
 Subscription credentials are created with `neo login` and removed with `neo logout`. The docs describe only where credentials live and which flow uses them; token values are never generated into developer docs.
 
 The top-level `provider` selects the backend for a session. In the TUI, `/model` lists models for that provider and switches the model and compactor for the current session without rewriting configuration. Start a new session with a different `provider` value to change backends.
+
+## Custom Providers
+
+Anyone running an OpenAI-compatible endpoint can declare it instead of waiting
+for a built-in adapter. The endpoint must speak the Chat Completions API; Neo
+has no Anthropic-compatible custom backend.
+
+```yaml
+provider: local
+model: qwen3-coder
+
+providers:
+  local:
+    endpoint: http://127.0.0.1:8000/v1/chat/completions
+    api_key_env: LOCAL_LLM_API_KEY
+    default_model: qwen3-coder
+    models:
+      - id: qwen3-coder
+        name: Qwen3 Coder
+        description: Local coder model
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `endpoint` | yes | Full chat-completions URL, including scheme and host. |
+| `api_key_env` | no | Environment variable holding the key. Omit to send no `Authorization` header at all, which is the normal case for a local runtime. |
+| `default_model` | no | Used when `model` is unset and the session records none. |
+| `models` | no | Static list for the `/model` picker. Neo never fetches a catalogue from a custom backend, so an omitted list leaves the picker showing only the current model. |
+| `api` | no | Wire protocol. Only `openai_compatible` exists, and it is the default. |
+
+Resolution order is fixed: the four built-in names always win, then `providers`
+entries are matched by name. A `providers` key that reuses a built-in name is
+rejected rather than silently shadowing it. Both `provider` and
+`subagents.provider` accept custom names.
+
+Validation happens at startup, so mistakes surface before the first model call:
+
+- Names are trimmed and must be non-empty and unique after trimming.
+- `endpoint` must be an absolute `http` or `https` URL with a host.
+- `api_key_env` must be a valid environment-variable name and cannot be shared
+  by two providers; each backend reads its own variable.
+- `models` entries need an `id`; duplicate ids keep the first occurrence.
+- An unknown protocol in `api` is rejected.
+- A configured `api_key_env` whose variable is unset fails immediately with the
+  variable name, instead of surfacing as a 401 mid-conversation.
+
+An unknown provider name fails with the list of usable names and a pointer to
+the `providers` section, so a typo does not require reading these docs.
+
+The compaction window still comes from `compaction.context_window_tokens`. Neo
+cannot discover a custom model's context size, so set it explicitly for models
+whose window differs from the 200,000-token default.
+
+Note the security boundary: `endpoint` with a plain `http` scheme sends the API
+key, and every prompt, in clear text over the network. Use `https` for anything
+beyond a loopback address. Neo's logs redact the values of every configured
+`api_key_env`, alongside the built-in provider keys.
 
 ## Feature Flags
 

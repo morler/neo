@@ -19,6 +19,7 @@ Neo is a small Go coding agent. The core agent loop is policy-free: it owns mess
 | `internal/llm/openai/` | OpenAI provider adapters for API-key Responses API calls and ChatGPT/Codex subscription calls. |
 | `internal/llm/chatcompletions/` | Reusable OpenAI-compatible Chat Completions adapter. |
 | `internal/llm/openrouter/` | OpenRouter provider setup and defaults. |
+| `internal/llm/custom/` | Builds a client for a user-declared OpenAI-compatible backend from `providers:` config. |
 | `internal/llm/google/` | Google Gemini adapter. |
 | `internal/logx/` | Optional structured debug logging. |
 | `internal/projectctx/` | AGENTS.md discovery and prompt augmentation. |
@@ -32,7 +33,7 @@ Neo is a small Go coding agent. The core agent loop is policy-free: it owns mess
 ## Chat Startup Flow
 
 1. `cmd/neo` resolves the session store. For a resumed chat, it loads the session and restores its saved working directory before entering the shared chat path.
-2. It loads config and selects Anthropic, OpenAI, OpenRouter, or Google Gemini, preferring saved provider and model metadata when resuming. OpenAI defaults to API-key auth; `openai_auth: subscription` builds the Codex subscription provider from stored device-code credentials.
+2. It loads config and selects Anthropic, OpenAI, OpenRouter, Google Gemini, or a backend declared under `providers:`, preferring saved provider and model metadata when resuming. OpenAI defaults to API-key auth; `openai_auth: subscription` builds the Codex subscription provider from stored device-code credentials. A custom backend is built by `internal/llm/custom` over the shared chat-completions adapter; a session pinned to a custom provider that is still declared resumes normally.
 3. It resolves the project root, constructs the workflow and subagent capabilities, and builds the complete tool registry.
 4. For a new chat, it creates the session in `internal/session`.
 5. Skills (built-in plus discovered) and AGENTS.md are loaded, then `chatSystem` builds both flattened and segmented system prompts.

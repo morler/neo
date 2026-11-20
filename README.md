@@ -31,7 +31,8 @@ from first inspection to tested change.
   bring their evidence back into one coherent workflow. Independent reads,
   searches, and inspection subagents can run in parallel.
 - **Your model, your choice.** Use Anthropic, OpenAI, Google Gemini, or
-  OpenRouter, and switch models for the active provider without leaving the terminal.
+  OpenRouter, declare your own OpenAI-compatible endpoint, and switch models for
+  the active provider without leaving the terminal.
 - **Sandbox-first execution.** Let the runtime contain tools, and optionally
   confirm selected interactive tool calls. Steer active work or queue the next
   instruction at any time.
