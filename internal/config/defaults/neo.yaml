@@ -30,7 +30,8 @@ model: claude-opus-5
 #
 # providers:
 #   local:
-#     endpoint: http://127.0.0.1:8000/v1/chat/completions  # required, http(s)
+#     endpoint: http://127.0.0.1:8000/v1    # required, http(s); /chat/completions
+#                                          # is appended when omitted
 #     api_key_env: LOCAL_LLM_API_KEY  # optional; omit to send no Authorization
 #     default_model: qwen3-coder      # optional; used when `model` is unset
 #     models:                         # optional; static list for /model
@@ -38,7 +39,7 @@ model: claude-opus-5
 #         name: Qwen3 Coder
 #         description: Local coder model
 #   gateway:
-#     endpoint: https://llm.internal.example.com/v1/chat/completions
+#     endpoint: https://llm.internal.example.com/v1
 #     api_key_env: INTERNAL_GATEWAY_KEY
 #     models:
 #       - id: gpt-oss-120b

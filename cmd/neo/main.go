@@ -293,9 +293,11 @@ CONFIG:
     provider: local
     providers:
       local:
-        endpoint: http://127.0.0.1:8000/v1/chat/completions
+        endpoint: http://127.0.0.1:8000/v1
         api_key_env: LOCAL_LLM_API_KEY   # omit if the endpoint needs no key
         default_model: qwen3-coder
+  endpoint takes a base URL such as http://127.0.0.1:8000/v1; Neo appends
+  /chat/completions, and a URL that already ends with it is used as-is.
   Only the OpenAI Chat Completions protocol is supported; there is no
   Anthropic-compatible custom backend.
 

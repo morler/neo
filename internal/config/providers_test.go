@@ -365,3 +365,34 @@ func TestCustomAPIKeyEnvNames_EmptyWithoutCustomProviders(t *testing.T) {
 		}
 	})
 }
+
+func TestLoad_CustomProviderCompletesBaseURLEndpoint(t *testing.T) {
+	cases := []struct {
+		name     string
+		endpoint string
+		want     string
+	}{
+		{"base URL", "https://llm.internal/v1", "https://llm.internal/v1/chat/completions"},
+		{"base URL trailing slash", "https://llm.internal/v1/", "https://llm.internal/v1/chat/completions"},
+		{"root base URL", "http://127.0.0.1:8000", "http://127.0.0.1:8000/chat/completions"},
+		{"complete URL unchanged", "https://llm.internal/v1/chat/completions", "https://llm.internal/v1/chat/completions"},
+		{"complete URL trailing slash unchanged", "https://llm.internal/v1/chat/completions/", "https://llm.internal/v1/chat/completions"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withTempDir(t, func(dir string) {
+				cfg, err := loadYAML(t, dir, "provider: local\nproviders:\n  local:\n    endpoint: "+tc.endpoint+"\n")
+				if err != nil {
+					t.Fatalf("load: %v", err)
+				}
+				p, ok := cfg.ProviderConfig("local")
+				if !ok {
+					t.Fatal("ProviderConfig(local) not found")
+				}
+				if p.Endpoint != tc.want {
+					t.Fatalf("endpoint = %q, want %q", p.Endpoint, tc.want)
+				}
+			})
+		})
+	}
+}

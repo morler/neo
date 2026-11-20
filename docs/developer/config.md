@@ -87,7 +87,7 @@ model: qwen3-coder
 
 providers:
   local:
-    endpoint: http://127.0.0.1:8000/v1/chat/completions
+    endpoint: http://127.0.0.1:8000/v1
     api_key_env: LOCAL_LLM_API_KEY
     default_model: qwen3-coder
     models:
@@ -98,7 +98,7 @@ providers:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `endpoint` | yes | Full chat-completions URL, including scheme and host. |
+| `endpoint` | yes | Base URL of the backend, such as `https://host/v1`. Neo appends `/chat/completions`; an endpoint that already ends with that path is used unchanged. |
 | `api_key_env` | no | Environment variable holding the key. Omit to send no `Authorization` header at all, which is the normal case for a local runtime. |
 | `default_model` | no | Used when `model` is unset and the session records none. |
 | `models` | no | Static list for the `/model` picker. Neo never fetches a catalogue from a custom backend, so an omitted list leaves the picker showing only the current model. |

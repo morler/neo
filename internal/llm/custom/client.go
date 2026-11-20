@@ -20,7 +20,9 @@ import (
 type Spec struct {
 	// Name is the provider name used in neo.yaml and in error messages.
 	Name string
-	// Endpoint is the full chat-completions URL.
+	// Endpoint is the chat-completions URL. A base URL such as https://host/v1
+	// is completed with the chat-completions path, matching how config
+	// normalizes providers.<name>.endpoint.
 	Endpoint string
 	// APIKeyEnv names the environment variable holding the API key. Empty
 	// means the endpoint is unauthenticated and no Authorization header is
@@ -42,6 +44,7 @@ func New(spec Spec) (*chatcompletions.Client, error) {
 	if endpoint == "" {
 		return nil, fmt.Errorf("custom provider %s: endpoint is required", name)
 	}
+	endpoint = chatCompletionsEndpoint(endpoint)
 
 	key, err := apiKey(spec.APIKeyEnv, name)
 	if err != nil {
@@ -84,6 +87,18 @@ func credentialHint(env, name string) string {
 		return fmt.Sprintf("custom provider %s sends no API key; check providers.%s.api_key_env", name, name)
 	}
 	return "check " + env
+}
+
+// chatCompletionsEndpoint completes a custom provider endpoint. OpenAI-compatible
+// clients are normally configured with a base URL such as https://host/v1 and
+// append the chat-completions path themselves, so a base URL gets that path
+// exactly once. An endpoint that already names the path is left untouched.
+func chatCompletionsEndpoint(endpoint string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	if strings.HasSuffix(trimmed, "/chat/completions") {
+		return trimmed
+	}
+	return trimmed + "/chat/completions"
 }
 
 // ensure the constructor satisfies the provider interface at compile time.

@@ -23,7 +23,9 @@ type CustomProvider struct {
 	// API is the wire protocol. Empty means APIProtocolOpenAICompatible; any
 	// other value is rejected because no other adapter exists yet.
 	API string `yaml:"api"`
-	// Endpoint is the full chat-completions URL, including scheme and host.
+	// Endpoint is the chat-completions URL, including scheme and host. A bare
+	// base URL such as https://host/v1 is also accepted; normalize appends the
+	// /chat/completions path so both forms reach the same place.
 	Endpoint string `yaml:"endpoint"`
 	// APIKeyEnv names the environment variable holding the API key. Empty
 	// means Neo sends no Authorization header.
@@ -184,6 +186,7 @@ func (p *CustomProvider) normalize(source, name string) error {
 	if u.Host == "" {
 		return fmt.Errorf("%s: providers.%s.endpoint %q is missing a host", source, name, p.Endpoint)
 	}
+	p.Endpoint = chatCompletionsEndpoint(p.Endpoint)
 
 	p.APIKeyEnv = strings.TrimSpace(p.APIKeyEnv)
 	if p.APIKeyEnv != "" && !isEnvName(p.APIKeyEnv) {
@@ -212,6 +215,18 @@ func (p *CustomProvider) normalize(source, name string) error {
 	}
 	p.Models = models
 	return nil
+}
+
+// chatCompletionsEndpoint completes a custom provider endpoint. OpenAI-compatible
+// clients are normally configured with a base URL such as https://host/v1 and
+// append the chat-completions path themselves, so a base URL gets that path
+// exactly once. An endpoint that already names the path is left untouched.
+func chatCompletionsEndpoint(endpoint string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	if strings.HasSuffix(trimmed, "/chat/completions") {
+		return trimmed
+	}
+	return trimmed + "/chat/completions"
 }
 
 // isEnvName reports whether s looks like a POSIX environment variable name:

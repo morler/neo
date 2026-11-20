@@ -173,3 +173,31 @@ func TestServerErrorsStaySingleLine(t *testing.T) {
 		t.Fatalf("error = %q", err.Error())
 	}
 }
+
+func TestNewCompletesBaseURLEndpoint(t *testing.T) {
+	t.Setenv("LOCAL_LLM_API_KEY", "secret-key")
+
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(Spec{
+		Name:      "local",
+		Endpoint:  server.URL + "/v1",
+		APIKeyEnv: "LOCAL_LLM_API_KEY",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	client.HTTP = server.Client()
+
+	if _, err := client.Complete(context.Background(), chatRequest()); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if gotPath != "/v1/chat/completions" {
+		t.Fatalf("path = %q, want /v1/chat/completions", gotPath)
+	}
+}

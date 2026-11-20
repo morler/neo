@@ -72,8 +72,8 @@ new protocol.
 ```go
 client, err := custom.New(custom.Spec{
     Name:         "local",
-    Endpoint:     "http://127.0.0.1:8000/v1/chat/completions",
-    APIKeyEnv:    "LOCAL_LLM_API_KEY", // "" means no Authorization header
+    Endpoint:     "http://127.0.0.1:8000/v1", // /chat/completions is appended
+    APIKeyEnv:    "LOCAL_LLM_API_KEY",        // "" means no Authorization header
     DefaultModel: "qwen3-coder",
 })
 ```
