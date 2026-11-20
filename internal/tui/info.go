@@ -21,6 +21,7 @@ var baseSlashCommands = []slashCommand{
 	{"/clear", "clear the current transcript"},
 	{"/help", "show this list"},
 	{"/model", "select the active model"},
+	{"/provider", "switch the active provider"},
 	{"/quit", "save and exit (also /exit)"},
 }
 

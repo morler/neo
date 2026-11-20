@@ -35,6 +35,7 @@ func (m *model) resetConversation() {
 	m.pendingSteering = nil
 	m.queued = nil
 	m.models = modelBrowser{}
+	m.providers = providerBrowser{}
 
 	// The composer and its pickers are transient activity. Keep the file
 	// index, which is rooted in the long-lived working directory, but discard

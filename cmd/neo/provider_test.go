@@ -2,11 +2,16 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/owainlewis/neo/internal/agent"
 	"github.com/owainlewis/neo/internal/config"
+	"github.com/owainlewis/neo/internal/llm/llmtest"
 	"github.com/owainlewis/neo/internal/session"
+	"github.com/owainlewis/neo/internal/tools"
 )
 
 func customProviderConfig() *config.Config {
@@ -155,5 +160,149 @@ func TestSessionBackend_FallsBackWhenCustomProviderWasRemoved(t *testing.T) {
 	}
 	if !strings.Contains(warnings.String(), "not configured") {
 		t.Fatalf("warning = %q, want an explanation", warnings.String())
+	}
+}
+
+func TestProviderChoices_ListsBuiltinsAndCustomBackends(t *testing.T) {
+	cfg := customProviderConfig()
+	choices := providerChoices(cfg)
+
+	seen := map[string]string{}
+	for _, c := range choices {
+		seen[c.ID] = c.Description
+	}
+	for _, want := range []string{"anthropic", "openai", "openrouter", "google", "local"} {
+		if _, ok := seen[want]; !ok {
+			t.Fatalf("provider choices missing %s: %#v", want, choices)
+		}
+	}
+	if !strings.Contains(seen["openai"], "OPENAI_API_KEY") {
+		t.Fatalf("openai description = %q, want the API key hint", seen["openai"])
+	}
+	if !strings.Contains(seen["local"], "custom") {
+		t.Fatalf("local description = %q, want it marked custom", seen["local"])
+	}
+
+	cfg.OpenAIAuth = config.OpenAIAuthSubscription
+	for _, c := range providerChoices(cfg) {
+		if c.ID == "openai" && !strings.Contains(c.Description, "subscription") {
+			t.Fatalf("subscription description = %q", c.Description)
+		}
+	}
+}
+
+// switchTestAgent builds a coordinator on the fake provider with a fixable
+// backend so switchChatBackend can be exercised without network access.
+func switchTestAgent(t *testing.T) *agent.Agent {
+	t.Helper()
+	return agent.New(agent.Config{
+		Model:    "claude-opus-5",
+		Provider: &llmtest.FakeProvider{},
+		Tools:    tools.NewRegistry(tools.ReadFile{}),
+	})
+}
+
+func TestSetChatModel_SwitchesModelAndKeepsProvider(t *testing.T) {
+	cfg := customProviderConfig()
+	ag := switchTestAgent(t)
+	prov := &llmtest.FakeProvider{}
+
+	if err := setChatModel(prov, cfg, ag, nil, false, "qwen3-coder-small"); err != nil {
+		t.Fatalf("setChatModel: %v", err)
+	}
+	if gotProvider, gotModel := ag.Backend(); gotProvider != "fake" || gotModel != "qwen3-coder-small" {
+		t.Fatalf("agent backend = %s/%s", gotProvider, gotModel)
+	}
+}
+
+func TestSetChatModel_LeavesBackendWhenModelIsRejected(t *testing.T) {
+	// SetBackend rejects an empty model before changing anything, so the
+	// running backend must stay on its previous model.
+	cfg := customProviderConfig()
+	ag := switchTestAgent(t)
+	if err := setChatModel(&llmtest.FakeProvider{}, cfg, ag, nil, false, " "); err == nil {
+		t.Fatal("expected an empty model to fail")
+	}
+	if _, model := ag.Backend(); model != "claude-opus-5" {
+		t.Fatalf("agent model = %q, want the previous model", model)
+	}
+}
+
+func TestRestoreChatModel_NoPreviousModelIsANoop(t *testing.T) {
+	ag := switchTestAgent(t)
+	restoreChatModel(&llmtest.FakeProvider{}, customProviderConfig(), ag, nil, false, "")
+	if _, model := ag.Backend(); model != "claude-opus-5" {
+		t.Fatalf("agent model = %q", model)
+	}
+}
+
+func TestSwitchChatBackend_PersistsProviderAndModel(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("HOME", filepath.Join(dir, "home"))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Source() != "embedded" {
+		t.Fatalf("source = %q, want embedded", cfg.Source())
+	}
+	ag := switchTestAgent(t)
+	prev := &llmtest.FakeProvider{}
+
+	next := &llmtest.FakeProvider{}
+	if err := switchChatBackend(cfg, ag, nil, false, next, "openai", "gpt-6.1-sol", prev, "claude-opus-5"); err != nil {
+		t.Fatalf("switchChatBackend: %v", err)
+	}
+	if provider, model := ag.Backend(); provider != "fake" || model != "gpt-6.1-sol" {
+		t.Fatalf("agent backend = %s/%s", provider, model)
+	}
+	written := filepath.Join(dir, "home", ".neo", "config.yaml")
+	b, err := os.ReadFile(written)
+	if err != nil {
+		t.Fatalf("read persisted config: %v", err)
+	}
+	if !strings.Contains(string(b), "\nprovider: openai\n") || !strings.Contains(string(b), "\nmodel: gpt-6.1-sol\n") {
+		t.Fatalf("persisted config does not record the switch:\n%s", b)
+	}
+}
+
+func TestSwitchChatBackend_FailedWriteRestoresBackend(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	t.Setenv("HOME", home)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	// Point HOME at a regular file so creating ~/.neo/config.yaml must fail.
+	blocked := filepath.Join(dir, "not-a-dir")
+	if err := os.WriteFile(blocked, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", blocked)
+
+	ag := switchTestAgent(t)
+	prev, prevModel := &llmtest.FakeProvider{}, "claude-opus-5"
+	if err := switchChatBackend(cfg, ag, nil, false, &llmtest.FakeProvider{}, "openai", "gpt-6.1-sol", prev, prevModel); err == nil {
+		t.Fatal("expected the config write to fail")
+	}
+	if _, model := ag.Backend(); model != prevModel {
+		t.Fatalf("agent model = %q after a failed switch, want %q", model, prevModel)
+	}
+}
+
+func TestSwitchChatBackend_RejectsMissingModel(t *testing.T) {
+	cfg := customProviderConfig()
+	ag := switchTestAgent(t)
+	if err := switchChatBackend(cfg, ag, nil, false, &llmtest.FakeProvider{}, "local", "", &llmtest.FakeProvider{}, "claude-opus-5"); err == nil {
+		t.Fatal("expected an empty model to fail")
+	}
+	if _, model := ag.Backend(); model != "claude-opus-5" {
+		t.Fatalf("agent model = %q, want the previous model", model)
 	}
 }

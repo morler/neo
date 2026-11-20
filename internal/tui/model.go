@@ -34,6 +34,8 @@ type Options struct {
 	ModelChoicesLoader func(context.Context) ([]ModelChoice, error)
 	Provider           string
 	ModelSwitcher      func(string) error
+	ProviderChoices    []ProviderChoice
+	ProviderSwitcher   ProviderSwitcher
 	WorkflowEvents     <-chan workflow.Event
 	Verbose            bool
 	Input              io.Reader
@@ -53,6 +55,16 @@ func WithModelSwitcher(provider string, choices []ModelChoice, fn func(string) e
 		opts.Provider = provider
 		opts.ModelChoices = choices
 		opts.ModelSwitcher = fn
+	}
+}
+
+// WithProviderSwitcher enables /provider. choices lists every backend the
+// switcher accepts; fn builds the backend, persists the choice, and returns the
+// resulting model and catalogue. An error leaves the running backend as it was.
+func WithProviderSwitcher(choices []ProviderChoice, fn ProviderSwitcher) Option {
+	return func(opts *Options) {
+		opts.ProviderChoices = choices
+		opts.ProviderSwitcher = fn
 	}
 }
 
@@ -192,12 +204,13 @@ type model struct {
 
 	width, height int
 
-	viewport viewport.Model
-	input    textarea.Model
-	spin     spinner.Model
-	picker   commandPicker
-	files    filePicker
-	models   modelBrowser
+	viewport  viewport.Model
+	input     textarea.Model
+	spin      spinner.Model
+	picker    commandPicker
+	files     filePicker
+	models    modelBrowser
+	providers providerBrowser
 
 	// lastInputHeight is the textarea height the current layout was computed
 	// for. When the textarea grows/shrinks (DynamicHeight), this lets us
@@ -262,6 +275,8 @@ type model struct {
 	modelChoicesLoaded  bool
 	modelChoicesLoading bool
 	modelSwitcher       func(string) error
+	providerChoices     []ProviderChoice
+	providerSwitcher    ProviderSwitcher
 	verbose             bool
 }
 
@@ -352,6 +367,8 @@ func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDi
 		modelChoices:       normalizeModelChoices(modelTag, opts.ModelChoices),
 		modelChoicesLoader: opts.ModelChoicesLoader,
 		modelSwitcher:      opts.ModelSwitcher,
+		providerChoices:    normalizeProviderChoices(opts.ProviderChoices),
+		providerSwitcher:   opts.ProviderSwitcher,
 		verbose:            opts.Verbose,
 		steer:              ag.Steer,
 	}
@@ -390,6 +407,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 
 	case tea.KeyMsg:
+		if m.providers.visible {
+			return m.handleProviderBrowserKey(msg)
+		}
 		if m.models.visible {
 			return m.handleModelBrowserKey(msg)
 		}
@@ -403,7 +423,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clearApprovalSelection()
 			break
 		}
-		if m.models.visible || m.quitPending {
+		if m.models.visible || m.providers.visible || m.quitPending {
 			break
 		}
 		cmds = append(cmds, m.updateInput(msg))
@@ -568,6 +588,9 @@ func (m *model) View() tea.View {
 	if m.width == 0 {
 		return makeView("loading…")
 	}
+	if m.providers.visible {
+		return makeView(m.providerBrowserView())
+	}
 	if m.models.visible {
 		return makeView(m.modelBrowserView())
 	}
@@ -702,6 +725,8 @@ func (m *model) handleSlashCommand(line string) tea.Cmd {
 		m.appendBlock(helpBlock{commands: m.slashCommands()})
 	case "/model":
 		return m.openModelBrowser()
+	case "/provider":
+		return m.openProviderBrowser()
 	case "/clear":
 		m.resetConversation()
 		if err := m.persistSession(); err != nil {
@@ -749,7 +774,7 @@ func (m *model) quitNow() tea.Cmd {
 
 func slashCommandRequiresIdle(cmd string) bool {
 	switch cmd {
-	case "/clear", "/model":
+	case "/clear", "/model", "/provider":
 		return true
 	default:
 		return false

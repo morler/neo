@@ -260,3 +260,10 @@ func (c *Config) defaultModelForProvider(provider string) string {
 	}
 	return defaultModelFor(provider, c.OpenAIAuth)
 }
+
+// DefaultModelFor is the exported view of the implicit model for provider. The
+// TUI needs it to preselect a model when /provider switches backends, since the
+// running model belongs to the previous provider.
+func (c *Config) DefaultModelFor(provider string) string {
+	return c.defaultModelForProvider(provider)
+}

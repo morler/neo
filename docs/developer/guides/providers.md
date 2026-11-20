@@ -99,7 +99,9 @@ the other at the composition boundary.
 
 The config `model` value is passed through to the provider. If omitted, Neo chooses a provider-aware default.
 
-In the TUI, `/model` opens a model picker. It changes the active model for the current session and saves that session metadata.
+In the TUI, `/model` opens a model picker. It changes the active model for the current session, saves that session metadata, and rewrites `model:` in the config file Neo loaded (only `model:`; the active provider stays as it is), so the next launch starts on the same model. If that write fails, the previous model is restored and the picker shows the error.
+
+`/provider` opens a provider picker. Choosing a provider builds it through the same code path as startup, so a missing API key or an incomplete `neo login` fails the switch with the provider's own error and the running backend stays where it was. On success the switch applies to the coordinator and to a subagent runner that follows it, and Neo rewrites `provider:` and `model:` in the config file it loaded. When that config came from embedded defaults, the rewritten file is created at `~/.neo/config.yaml`; everything else in the file is preserved, including comments and custom provider declarations.
 
 ## What To Be Careful About
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/owainlewis/neo/internal/agent"
 	"github.com/owainlewis/neo/internal/auth"
 	"github.com/owainlewis/neo/internal/config"
 	"github.com/owainlewis/neo/internal/llm"
@@ -19,6 +20,7 @@ import (
 	"github.com/owainlewis/neo/internal/llm/openrouter"
 	"github.com/owainlewis/neo/internal/llm/retry"
 	"github.com/owainlewis/neo/internal/session"
+	"github.com/owainlewis/neo/internal/subagent"
 	"github.com/owainlewis/neo/internal/tui"
 )
 
@@ -352,4 +354,100 @@ func modelChoicesLoader(provider string) func(context.Context) ([]tui.ModelChoic
 		return loadOpenRouterModelChoices
 	}
 	return nil
+}
+
+// providerChoices lists every usable backend for the /provider picker: the
+// built-ins plus any declared custom provider, each with the credential source
+// a user would need to make it work.
+func providerChoices(cfg *config.Config) []tui.ProviderChoice {
+	names := cfg.ProviderNames()
+	choices := make([]tui.ProviderChoice, 0, len(names))
+	for _, name := range names {
+		choices = append(choices, tui.ProviderChoice{
+			ID:          name,
+			Name:        name,
+			Description: providerDescription(cfg, name),
+		})
+	}
+	return choices
+}
+
+func providerDescription(cfg *config.Config, name string) string {
+	if _, ok := cfg.ProviderConfig(name); ok {
+		return "custom OpenAI-compatible backend"
+	}
+	switch name {
+	case "openai":
+		if cfg.OpenAIAuth == config.OpenAIAuthSubscription {
+			return "ChatGPT/Codex subscription (neo login)"
+		}
+		return "OpenAI API key (OPENAI_API_KEY)"
+	case "openrouter":
+		return "OpenRouter (OPENROUTER_API_KEY)"
+	case "google":
+		return "Google Gemini (GOOGLE_API_KEY)"
+	default:
+		return "Anthropic API key (ANTHROPIC_API_KEY)"
+	}
+}
+
+// setChatModel moves the running chat — the coordinator and a subagent runner
+// that follows it — onto model, keeping the current provider. SetBackend
+// validates before it changes anything, so a rejected model leaves the
+// running chat as it was.
+func setChatModel(prov llm.Provider, cfg *config.Config, ag *agent.Agent, runner *subagent.AgentRunner, runnerFollows bool, model string) error {
+	if err := ag.SetBackend(prov, model, chatCompactor(prov, model, cfg)); err != nil {
+		return err
+	}
+	if runner != nil && runnerFollows {
+		if err := runner.SetBackend(prov, model); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// restoreChatModel puts the chat back on the model it had before a failed
+// /model switch. An empty model leaves the running chat as it is.
+func restoreChatModel(prov llm.Provider, cfg *config.Config, ag *agent.Agent, runner *subagent.AgentRunner, runnerFollows bool, model string) {
+	if prov == nil || model == "" {
+		return
+	}
+	_ = ag.SetBackend(prov, model, chatCompactor(prov, model, cfg))
+	if runner != nil && runnerFollows {
+		_ = runner.SetBackend(prov, model)
+	}
+}
+
+// switchChatBackend moves the coordinator — and a subagent runner that follows
+// it — onto next, then rewrites provider and model in the config file Neo
+// loaded. Any failure restores the previous backend, so a failed switch leaves
+// the running chat and the config file unchanged.
+func switchChatBackend(cfg *config.Config, ag *agent.Agent, runner *subagent.AgentRunner, runnerFollows bool, next llm.Provider, name, model string, prev llm.Provider, prevModel string) error {
+	if err := ag.SetBackend(next, model, chatCompactor(next, model, cfg)); err != nil {
+		return err
+	}
+	if runner != nil && runnerFollows {
+		if err := runner.SetBackend(next, model); err != nil {
+			restoreChatBackend(cfg, ag, runner, runnerFollows, prev, prevModel)
+			return err
+		}
+	}
+	if _, err := cfg.WriteBackend(name, model); err != nil {
+		restoreChatBackend(cfg, ag, runner, runnerFollows, prev, prevModel)
+		return err
+	}
+	return nil
+}
+
+// restoreChatBackend puts the coordinator, and a following subagent runner,
+// back on the backend they had before a failed switch.
+func restoreChatBackend(cfg *config.Config, ag *agent.Agent, runner *subagent.AgentRunner, runnerFollows bool, prev llm.Provider, prevModel string) {
+	if prev == nil || prevModel == "" {
+		return
+	}
+	_ = ag.SetBackend(prev, prevModel, chatCompactor(prev, prevModel, cfg))
+	if runner != nil && runnerFollows {
+		_ = runner.SetBackend(prev, prevModel)
+	}
 }

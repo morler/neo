@@ -278,6 +278,11 @@ CONFIG:
   "openai", "openrouter", "google". Any other name must be declared under a
   top-level "providers:" map in neo.yaml.
 
+  Inside chat, /provider switches backends and writes "provider:" and "model:"
+  back to the config file in use (~/.neo/config.yaml when running on embedded
+  defaults). /model switches the model and writes only "model:", so the choice
+  survives a restart.
+
   ANTHROPIC_API_KEY    required when provider is "anthropic"
   OPENAI_API_KEY       required when provider is "openai" with api_key auth
   OPENROUTER_API_KEY   required when provider is "openrouter"
@@ -736,19 +741,75 @@ func runChatSession(ctx context.Context, store *session.Store, sess *session.Ses
 		return saveChatSession(ctx, store, sess, ag, cwd, agentProfile.Name)
 	}
 
+	// The active backend moves with /provider, so both switchers read it from
+	// these variables rather than the startup provider captured above.
+	activeProvider, activeProviderName := prov, providerName
+	// providerModels remembers the last model used per provider, so switching
+	// away and back restores it instead of the provider's default.
+	providerModels := map[string]string{providerName: model}
+
 	switchModel := func(nextModel string) error {
-		if agentRunner != nil && agentRunnerFollowsCoordinator {
-			if err := agentRunner.SetBackend(prov, nextModel); err != nil {
-				return err
-			}
+		prevModel := providerModels[activeProviderName]
+		if prevModel == "" {
+			_, prevModel = ag.Backend()
 		}
-		return ag.SetBackend(prov, nextModel, chatCompactor(prov, nextModel, cfg))
+		if err := setChatModel(activeProvider, cfg, ag, agentRunner, agentRunnerFollowsCoordinator, nextModel); err != nil {
+			return err
+		}
+		// Persist the choice with the backend it was made against, so the
+		// active provider cannot drift from the model written beside it.
+		if _, err := cfg.WriteBackend(activeProviderName, nextModel); err != nil {
+			restoreChatModel(activeProvider, cfg, ag, agentRunner, agentRunnerFollowsCoordinator, prevModel)
+			return err
+		}
+		providerModels[activeProviderName] = nextModel
+		cfg.Model = nextModel
+		return nil
+	}
+
+	switchProvider := func(name string) (tui.ProviderState, error) {
+		if !cfg.HasProvider(name) {
+			return tui.ProviderState{}, fmt.Errorf("unknown provider %q; available: %s",
+				name, strings.Join(cfg.ProviderNames(), ", "))
+		}
+		// Build the backend first: a missing key or subscription login fails
+		// here, before the running chat or the config file change.
+		next, err := checkedProvider(ctx, cfg, name)
+		if err != nil {
+			return tui.ProviderState{}, err
+		}
+		nextModel := providerModels[name]
+		if nextModel == "" {
+			nextModel = cfg.DefaultModelFor(name)
+		}
+		if nextModel == "" {
+			return tui.ProviderState{}, fmt.Errorf("provider %s has no default model; set default_model for it in neo.yaml", name)
+		}
+		// Apply the backend, then persist. A failed write restores the previous
+		// backend so a failed switch leaves nothing half-changed.
+		prevProvider, prevModel := activeProvider, providerModels[activeProviderName]
+		if prevModel == "" {
+			prevModel = model
+		}
+		if err := switchChatBackend(cfg, ag, agentRunner, agentRunnerFollowsCoordinator, next, name, nextModel, prevProvider, prevModel); err != nil {
+			return tui.ProviderState{}, err
+		}
+		activeProvider, activeProviderName = next, name
+		providerModels[name] = nextModel
+		cfg.Provider, cfg.Model = name, nextModel
+		return tui.ProviderState{
+			Provider: name,
+			Model:    nextModel,
+			Choices:  modelChoices(cfg, name),
+			Loader:   modelChoicesLoader(name),
+		}, nil
 	}
 
 	if err := tui.Run(ctx, ag, model, Version, cwd, sk,
 		tui.WithAfterSend(saveSession),
 		tui.WithModelSwitcher(providerName, modelChoices(cfg, providerName), switchModel),
 		tui.WithModelChoicesLoader(modelChoicesLoader(providerName)),
+		tui.WithProviderSwitcher(providerChoices(cfg), switchProvider),
 		tui.WithWorkflowEvents(workflowEvents),
 		tui.WithVerbose(cfg.VerboseEnabled()),
 		tui.WithIO(streams.in, streams.out),

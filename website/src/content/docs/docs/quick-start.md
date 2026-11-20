@@ -68,6 +68,10 @@ openai_auth: api_key
 For an OpenAI subscription, use `openai_auth: subscription`. For OpenRouter or Gemini, set
 `provider: openrouter` or `provider: google` respectively.
 
+If you would rather not edit the file, start chat and run `/provider`. The picker lists every
+configured backend, switches the running session, and writes `provider:` and `model:` back to the
+config file Neo loaded — `~/.neo/config.yaml` when you were running on embedded defaults.
+
 Neo reads the first config file it finds in this order:
 
 1. `./neo.yaml`

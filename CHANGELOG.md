@@ -12,6 +12,16 @@ All notable changes to Neo will be documented in this file.
   an adapter per vendor. Endpoints with no `api_key_env` send no authorization
   header; configured keys are validated at startup and redacted in logs.
   Custom backends appear in `/model`, `neo doctor`, and resumed sessions.
+- Added `/provider` to switch the running chat to another built-in or custom
+  backend without restarting. Neo validates credentials first, moves the chat
+  agent and any coordinator-following subagent runner to the new provider's
+  last-used or default model, refreshes the footer and `/model` list, and
+  rewrites only `provider:` and `model:` in the config file it loaded
+  (`~/.neo/config.yaml` when the session runs on embedded defaults). A failed
+  switch leaves the running backend and the file unchanged.
+- `/model` now persists the chosen model to the config file it loaded, rewriting
+  only `model:` so the next launch starts on the same model. A write failure
+  restores the previous model and reports the error.
 
 ### Performance
 

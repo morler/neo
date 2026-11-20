@@ -73,7 +73,9 @@ to `gpt-6.1-sol`. Explicit model settings and saved-session models are unchanged
 
 Subscription credentials are created with `neo login` and removed with `neo logout`. The docs describe only where credentials live and which flow uses them; token values are never generated into developer docs.
 
-The top-level `provider` selects the backend for a session. In the TUI, `/model` lists models for that provider and switches the model and compactor for the current session without rewriting configuration. Start a new session with a different `provider` value to change backends.
+The top-level `provider` selects the backend for a session. In the TUI, `/model` lists models for that provider and switches the model and compactor for the current session. A successful switch also rewrites `model:` in the config file Neo loaded (`~/.neo/config.yaml` when the session runs on embedded defaults), leaving `provider:` and every other line as it was, so the next launch starts on the same model. A write failure restores the previous model and reports the error in the picker.
+
+`/provider` switches the running session to another backend. It lists the built-in providers and every name declared under `providers:`, marks the active one, and validates credentials before changing anything. A successful switch moves the chat agent, and a subagent runner that follows the coordinator, to the new provider and to the model last used with it (or its `default_model`), updates the footer and `/model` list, saves the session metadata, and rewrites `provider:` and `model:` in the config file Neo loaded. When Neo is running on embedded defaults that file is `~/.neo/config.yaml`, created on demand from the embedded source; the rest of the file, including annotated examples, is left as it was. A failed switch leaves both the running backend and the file untouched.
 
 ## Custom Providers
 
