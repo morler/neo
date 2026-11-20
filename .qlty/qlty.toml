@@ -94,3 +94,7 @@ name = "zizmor"
 [[plugin]]
 name = "ast-grep"
 mode = "disabled"
+
+[[exclude]]
+file_patterns = ["**/*_test.go"]
+plugins = ["ripgrep"]

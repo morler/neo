@@ -34,6 +34,11 @@ All notable changes to Neo will be documented in this file.
 - Cleared every reported dependency advisory by upgrading `golang.org/x/net`
   to v0.63.0, `golang.org/x/sys` to v0.50.0, and `golang.org/x/text` to v0.44.0,
   and by moving the module to Go 1.26.11. Building Neo now requires Go 1.26.
+- Hardened the workflows: every third-party action is pinned to a commit SHA,
+  checkouts no longer persist credentials into the workspace, `pages: write`
+  and `id-token: write` are limited to the deploy job, the nightly workflow
+  passes the default branch through `env` instead of expanding it into a shell
+  script, and the release job builds without a module cache.
 
 ## [v0.6.2] - 2026-08-04
 

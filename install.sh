@@ -7,11 +7,11 @@ set -euo pipefail
 
 # ── Colour helpers ──────────────────────────────────────────────────────────
 if [ -t 1 ] && command -v tput &>/dev/null && tput colors &>/dev/null; then
-  BOLD=$(tput bold); DIM=$(tput dim); RESET=$(tput sgr0)
+  BOLD=$(tput bold); RESET=$(tput sgr0)
   RED=$(tput setaf 1); GREEN=$(tput setaf 2)
   YELLOW=$(tput setaf 3); CYAN=$(tput setaf 6)
 else
-  BOLD=""; DIM=""; RESET=""; RED=""; GREEN=""; YELLOW=""; CYAN=""
+  BOLD=""; RESET=""; RED=""; GREEN=""; YELLOW=""; CYAN=""
 fi
 
 info()    { printf "%s  %s%s\n"        "${CYAN}→${RESET}"  "$*" "${RESET}"; }
@@ -151,7 +151,7 @@ install_from_release() {
   local url="https://github.com/${REPO}/releases/download/${version}/${asset}"
   local tmp_dir
   tmp_dir=$(mktemp -d)
-  trap "rm -rf '$tmp_dir'" EXIT
+  trap 'rm -rf "$tmp_dir"' EXIT
 
   info "Downloading ${asset} (${version})…"
   download "$url" "${tmp_dir}/${asset}" 2>/dev/null || \
