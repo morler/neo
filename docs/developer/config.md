@@ -57,6 +57,27 @@ the system prompt and tool definitions rather than the transcript alone.
 The embedded source, including annotated provider examples, is
 [`internal/config/defaults/neo.yaml`](https://github.com/owainlewis/neo/blob/main/internal/config/defaults/neo.yaml).
 
+## Goals
+
+`goals.max_attempts` bounds how long `/goal` keeps going on its own. An attempt
+is one automatic continuation turn; the turn started by `/goal <objective>` is
+not counted, and neither are the turns you type yourself.
+
+```yaml
+goals:
+  max_attempts: 20
+```
+
+| Field | Default | Effect |
+| --- | --- | --- |
+| `max_attempts` | `20` | Continuation turns one goal may start. When they are used up the goal becomes `budget_limited` and stops with a handoff message. `/goal resume` gives it a fresh budget; `/goal clear` removes it. |
+
+Omitting the section, or setting `max_attempts: 0`, uses the default. A negative
+value is rejected when the config loads, naming `goals.max_attempts` and the
+file it came from. There is no per-turn token or wall-clock budget in this
+version: an attempt is the only unit, so the limit is predictable and cheap to
+reason about.
+
 ## Provider Selection
 
 | Config | Auth source | Provider adapter |

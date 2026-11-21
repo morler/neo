@@ -533,3 +533,89 @@ func TestLoad_OpenAIDefaultModels(t *testing.T) {
 		})
 	}
 }
+
+func TestGoalMaxAttemptsDefaultsWhenOmitted(t *testing.T) {
+	cfg, err := parseConfig([]byte("provider: anthropic\n"), "test")
+	if err != nil {
+		t.Fatalf("parseConfig: %v", err)
+	}
+	if got := cfg.GoalMaxAttempts(); got != DefaultGoalMaxAttempts {
+		t.Fatalf("GoalMaxAttempts = %d, want the default %d", got, DefaultGoalMaxAttempts)
+	}
+	if DefaultGoalMaxAttempts != 20 {
+		t.Fatalf("default budget changed to %d; the docs and the design spec say 20", DefaultGoalMaxAttempts)
+	}
+}
+
+func TestGoalMaxAttemptsHonorsAnExplicitValue(t *testing.T) {
+	cfg, err := parseConfig([]byte("goals:\n  max_attempts: 5\n"), "test")
+	if err != nil {
+		t.Fatalf("parseConfig: %v", err)
+	}
+	if got := cfg.GoalMaxAttempts(); got != 5 {
+		t.Fatalf("GoalMaxAttempts = %d, want 5", got)
+	}
+}
+
+func TestGoalMaxAttemptsRejectsNegativeValues(t *testing.T) {
+	_, err := parseConfig([]byte("goals:\n  max_attempts: -1\n"), "neo.yaml")
+	if err == nil {
+		t.Fatal("expected a config error for a negative attempt budget")
+	}
+	for _, want := range []string{"goals.max_attempts", "neo.yaml", "negative"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestGoalMaxAttemptsRejectsNonIntegerValues(t *testing.T) {
+	if _, err := parseConfig([]byte("goals:\n  max_attempts: lots\n"), "test"); err == nil {
+		t.Fatal("expected a config error for a non-integer attempt budget")
+	}
+}
+
+func TestGoalConfigDoesNotChangeOtherFields(t *testing.T) {
+	body := `provider: openai
+model: gpt-test
+goals:
+  max_attempts: 3
+features:
+  skills: false
+`
+	cfg, err := parseConfig([]byte(body), "test")
+	if err != nil {
+		t.Fatalf("parseConfig: %v", err)
+	}
+	if cfg.Provider != "openai" || cfg.Model != "gpt-test" {
+		t.Fatalf("provider/model = %q/%q", cfg.Provider, cfg.Model)
+	}
+	if cfg.SkillsEnabled() {
+		t.Fatal("skills flag was ignored")
+	}
+	if got := cfg.GoalMaxAttempts(); got != 3 {
+		t.Fatalf("GoalMaxAttempts = %d, want 3", got)
+	}
+}
+
+func TestEmbeddedDefaultsParseWithAGoalBudget(t *testing.T) {
+	cfg, err := parseConfig(embeddedConfigYAML, "embedded:neo.yaml")
+	if err != nil {
+		t.Fatalf("embedded defaults: %v", err)
+	}
+	if got := cfg.GoalMaxAttempts(); got != DefaultGoalMaxAttempts {
+		t.Fatalf("embedded GoalMaxAttempts = %d, want %d", got, DefaultGoalMaxAttempts)
+	}
+	// The documented section stays commented out: the default must not require
+	// users to edit their config.
+	if strings.Contains(string(embeddedConfigYAML), "\ngoals:") {
+		t.Fatal("embedded defaults set an active goals section; keep it commented")
+	}
+}
+
+func TestGoalMaxAttemptsOnANilConfig(t *testing.T) {
+	var cfg *Config
+	if got := cfg.GoalMaxAttempts(); got != DefaultGoalMaxAttempts {
+		t.Fatalf("nil config GoalMaxAttempts = %d, want %d", got, DefaultGoalMaxAttempts)
+	}
+}

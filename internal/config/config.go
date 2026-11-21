@@ -49,6 +49,7 @@ type Config struct {
 	Providers  map[string]CustomProvider `yaml:"providers"`
 	Features   Features                  `yaml:"features"`
 	Compaction Compaction                `yaml:"compaction"`
+	Goals      Goals                     `yaml:"goals"`
 	// ToolApprovals lists optional interactive tool names and Bash prefixes.
 	ToolApprovals []string `yaml:"tool_approvals"`
 	Output        Output   `yaml:"output"`
@@ -81,6 +82,27 @@ type Output struct {
 
 // VerboseEnabled reports whether full tool output rendering is on (default: false).
 func (c *Config) VerboseEnabled() bool { return featureEnabled(c.Output.Verbose, false) }
+
+// DefaultGoalMaxAttempts bounds how many automatic continuation turns one goal
+// may start when goals.max_attempts is not set. The turn started by
+// /goal <objective> is not one of them.
+const DefaultGoalMaxAttempts = 20
+
+// Goals configures the /goal attempt budget. Attempts count automatic
+// continuation turns only; Phase 1 has no token or wall-clock accounting.
+type Goals struct {
+	// MaxAttempts is the number of continuation turns a goal may start before
+	// it becomes budget_limited. Omitted or zero means the default.
+	MaxAttempts int `yaml:"max_attempts"`
+}
+
+// GoalMaxAttempts returns the effective continuation budget.
+func (c *Config) GoalMaxAttempts() int {
+	if c == nil || c.Goals.MaxAttempts <= 0 {
+		return DefaultGoalMaxAttempts
+	}
+	return c.Goals.MaxAttempts
+}
 
 // Compaction configures when long transcripts are summarized.
 type Compaction struct {
@@ -206,6 +228,10 @@ func parseConfig(b []byte, source string) (*Config, error) {
 		if c.Subagents.Model == "" {
 			c.Subagents.Model = c.defaultModelForProvider(c.Subagents.Provider)
 		}
+	}
+	if c.Goals.MaxAttempts < 0 {
+		return nil, fmt.Errorf("%s: goals.max_attempts must not be negative (got %d); omit it for the default of %d",
+			source, c.Goals.MaxAttempts, DefaultGoalMaxAttempts)
 	}
 	seenApprovals := make(map[string]struct{}, len(c.ToolApprovals))
 	approvals := make([]string, 0, len(c.ToolApprovals))
