@@ -603,3 +603,76 @@ func TestManagerIsRaceFree(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+func TestSummarizeCollapsesToOneShortLine(t *testing.T) {
+	if got := Summarize("  fix\n the\tflaky  test "); got != "fix the flaky test" {
+		t.Fatalf("Summarize = %q", got)
+	}
+	if got := Summarize("   \n\t "); got != "" {
+		t.Fatalf("Summarize of blank text = %q", got)
+	}
+	long := strings.Repeat("word ", 40)
+	got := Summarize(long)
+	if !strings.HasPrefix(got, "word word") || !strings.HasSuffix(got, "…") {
+		t.Fatalf("Summarize of long text = %q", got)
+	}
+	if strings.Contains(got, "\n") {
+		t.Fatalf("Summarize kept a newline: %q", got)
+	}
+}
+
+func TestRestoreReinstatesASnapshot(t *testing.T) {
+	mgr, first := newTestManager(t, Limits{})
+	before := mgr.Snapshot()
+
+	started, err := mgr.Start("replacement")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if started.Replaced == nil {
+		t.Fatal("replacement did not report the previous goal")
+	}
+
+	if err := mgr.Restore(before); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	got := mgr.Snapshot()
+	if got == nil || got.ID != first.ID || got.Objective != "make the failing session test pass" {
+		t.Fatalf("restored = %+v, want the original goal", got)
+	}
+
+	if err := mgr.Restore(nil); err != nil {
+		t.Fatalf("Restore(nil): %v", err)
+	}
+	if snap := mgr.Snapshot(); snap != nil {
+		t.Fatalf("Restore(nil) left %+v", snap)
+	}
+}
+
+func TestRestoreRejectsAnInvalidSnapshot(t *testing.T) {
+	mgr, first := newTestManager(t, Limits{})
+	if err := mgr.Restore(&State{ID: "", Objective: "x", Status: Active}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Restore = %v, want ErrInvalid", err)
+	}
+	if snap := mgr.Snapshot(); snap == nil || snap.ID != first.ID {
+		t.Fatalf("a rejected restore changed state: %+v", snap)
+	}
+}
+
+// Restore is not reachable through the tool: a model that could reinstate an
+// old goal would bypass pause, clear, and the budget.
+func TestToolCannotRestoreAGoal(t *testing.T) {
+	mgr, err := NewManager(nil, Limits{})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if _, err := mgr.Start("current"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	tool := Tool{Manager: mgr}
+	for _, action := range []string{"restore", "revert", "undo"} {
+		if _, err := tool.Run(t.Context(), map[string]any{"action": action}); err == nil {
+			t.Fatalf("action %q is reachable from the tool", action)
+		}
+	}
+}

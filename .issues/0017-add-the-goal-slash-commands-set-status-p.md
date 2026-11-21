@@ -1,7 +1,7 @@
 ---
 id: 17
 title: 'Add the /goal slash commands: set, status, pause, resume, and clear'
-status: open
+status: closed
 priority: high
 labels:
     - feature
@@ -15,6 +15,7 @@ relations:
         - 14
 created: "2026-11-21"
 updated: "2026-11-21"
+closed: "2026-11-21"
 ---
 
 ## 背景

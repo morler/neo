@@ -166,6 +166,28 @@ func NewManager(initial *State, limits Limits) (*Manager, error) {
 // construction, so this is safe to call from any goroutine without locking.
 func (m *Manager) Limits() Limits { return m.limits }
 
+// Restore reinstates a snapshot this manager produced, replacing the current
+// goal or clearing it when snapshot is nil. It exists for callers that must undo
+// a transition they could not persist: the state the caller had before is the
+// only one that still matches disk.
+//
+// Restore validates like NewManager and is not a model-facing operation: the
+// goal tool exposes no way to call it.
+func (m *Manager) Restore(snapshot *State) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if snapshot == nil {
+		m.state = nil
+		return nil
+	}
+	restored, err := m.normalizeRestored(*snapshot)
+	if err != nil {
+		return err
+	}
+	m.state = restored
+	return nil
+}
+
 // Snapshot returns a copy of the current goal, or nil when there is none.
 func (m *Manager) Snapshot() *State {
 	m.mu.Lock()
@@ -491,4 +513,20 @@ func newID() (string, error) {
 		return "", fmt.Errorf("generate goal id: %w", err)
 	}
 	return "goal_" + hex.EncodeToString(b[:]), nil
+}
+
+// Summarize collapses a goal string to one short line for transcript notes and
+// tool results, so a long objective does not dominate a status line.
+func Summarize(text string) string {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return ""
+	}
+	line := strings.Join(fields, " ")
+	const max = 72
+	runes := []rune(line)
+	if len(runes) <= max {
+		return line
+	}
+	return strings.TrimSpace(string(runes[:max-1])) + "…"
 }

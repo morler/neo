@@ -739,13 +739,15 @@ func (m *model) submitUserTurnWithSkillExpansion(displayText, agentText string, 
 func (m *model) handleSlashCommand(line string) tea.Cmd {
 	parts := strings.Fields(line)
 	cmd := parts[0]
-	if m.busy && slashCommandRequiresIdle(cmd) {
+	if m.busy && slashCommandRequiresIdle(cmd, strings.TrimSpace(strings.TrimPrefix(line, cmd))) {
 		m.appendBlock(errorBlock{err: fmt.Errorf("%s is unavailable while a turn is running", cmd)})
 		return nil
 	}
 	switch cmd {
 	case "/help":
 		m.appendBlock(helpBlock{commands: m.slashCommands()})
+	case "/goal":
+		return m.handleGoalCommand(strings.TrimSpace(strings.TrimPrefix(line, cmd)))
 	case "/model":
 		return m.openModelBrowser()
 	case "/provider":
@@ -795,10 +797,17 @@ func (m *model) quitNow() tea.Cmd {
 	return tea.Quit
 }
 
-func slashCommandRequiresIdle(cmd string) bool {
+// slashCommandRequiresIdle reports whether a command starts new work or
+// replaces conversation state. Control commands that only change the session's
+// goal status stay available mid-turn, so /goal is decided by its subcommand
+// rather than by its name.
+func slashCommandRequiresIdle(cmd, rest string) bool {
 	switch cmd {
 	case "/clear", "/model", "/provider":
 		return true
+	case "/goal":
+		sub, _ := splitGoalArgs(rest)
+		return sub == ""
 	default:
 		return false
 	}

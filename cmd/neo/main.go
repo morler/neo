@@ -301,6 +301,11 @@ CONFIG:
   defaults). /model switches the model and writes only "model:", so the choice
   survives a restart.
 
+  /goal <objective> sets a standing goal for the session and starts the first
+  turn; Neo keeps sending continuation turns while it is active and you are
+  idle. /goal status reports it, /goal pause and /goal resume stop and restart
+  continuation, and /goal clear removes it. The goal is saved with the session.
+
   ANTHROPIC_API_KEY    required when provider is "anthropic"
   OPENAI_API_KEY       required when provider is "openai" with api_key auth
   OPENROUTER_API_KEY   required when provider is "openrouter"

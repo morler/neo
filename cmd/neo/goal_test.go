@@ -297,3 +297,11 @@ func TestChatGoalManagerWarningMentionsTheGoalID(t *testing.T) {
 		t.Fatalf("warning = %q, want it to name the rejected goal", warning)
 	}
 }
+
+func TestUsageDocumentsTheGoalCommands(t *testing.T) {
+	for _, want := range []string{"/goal <objective>", "/goal status", "/goal pause", "/goal resume", "/goal clear", "saved with the session"} {
+		if !strings.Contains(usageText, want) {
+			t.Fatalf("usage does not contain %q", want)
+		}
+	}
+}
