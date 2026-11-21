@@ -8,6 +8,7 @@ Neo exposes a small built-in tool surface to the model.
 | `bash` | Chat and headless | Run a shell command via `/bin/bash -c`. Returns bounded combined stdout and stderr, retaining the start and end when truncated. Optional `timeout` in seconds. |
 | `edit_file` | Chat and headless | Replace exactly one occurrence of `old_string` with `new_string`. Fails if the old text is missing, appears more than once, or the file changed since the agent last read it. `old_string` matches the file's raw text, so the line-number gutter `read_file` adds must be stripped first. |
 | `glob` | Chat and headless | List workspace files matching a glob pattern, honouring `.gitignore`. Supports `**` for recursive matches. Returns one path per line. |
+| `goal` | Interactive chat | Read or finish the session's standing goal. `action: "get"` reports the goal id, objective, status, attempt budget, and stopping rules; `complete` and `blocked` need that goal id plus a reason. The tool cannot pause, resume, clear, or change the budget. |
 | `grep` | Chat and headless | Search the workspace with a regular expression, honouring `.gitignore`. Returns matching lines as `path:line:text`. |
 | `read_file` | Chat and headless | Read a file from disk, prefixing each line with its 1-indexed number and a tab so the numbers match what `grep` reports. Returns up to `tools.MaxOutputBytes` (64 KiB); use `offset` and `limit` to page through larger files. |
 | `workflow` | Interactive chat | Create or update the visible workflow checklist. Neo attaches tool and subagent activity to the active item automatically. |
@@ -15,6 +16,31 @@ Neo exposes a small built-in tool surface to the model.
 
 Independent inspect calls issued in one model response can run concurrently.
 Inspect children receive only `read_file`, `grep`, and `glob`.
+
+## Goal ownership
+
+The `goal` tool is always registered in interactive chat, even in a session with
+no goal, so the model's tool list never changes mid-conversation. Its results are
+JSON with `ok`, and failures caused by goal state — no goal, a stale
+`goal_id`, a terminal status, a blocked report below the audit threshold — are
+`ok: false` results with a `next` instruction rather than Go errors. Missing or
+malformed input is a tool error, like every other tool.
+
+The model may only read the goal and request `complete` or `blocked`. `active`,
+`paused`, `budget_limited`, and `cleared` belong to the user and the idle
+scheduler, so the tool has no action that could resume, pause, clear, or spend
+budget. `complete` requires a reason naming the evidence; `blocked` requires the
+same blocker to recur past the audit threshold (`internal/goal`).
+
+`neo run` does not register the tool: headless runs take no interactive control
+input, and a goal they could not continue would only be dead state.
+
+```json
+{"ok": true, "action": "get", "goal_id": "goal_1a2b", "status": "active",
+ "attempts": {"used": 1, "max": 20}, "stop_when": ["…"]}
+{"ok": false, "action": "blocked", "error": "the same blocker has been reported 1 of 2 times",
+ "next": "Keep working. Report the same blocker again only if it still applies after another real attempt."}
+```
 
 ## Output size
 

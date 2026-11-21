@@ -1,7 +1,7 @@
 ---
 id: 14
 title: Add the always-registered goal tool with get, complete, and blocked
-status: open
+status: closed
 priority: high
 labels:
     - feature
@@ -14,6 +14,7 @@ relations:
         - 12
 created: "2026-11-21"
 updated: "2026-11-21"
+closed: "2026-11-21"
 ---
 
 ## 背景

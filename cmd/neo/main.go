@@ -19,6 +19,7 @@ import (
 	"github.com/owainlewis/neo/internal/approval"
 	"github.com/owainlewis/neo/internal/compact"
 	"github.com/owainlewis/neo/internal/config"
+	"github.com/owainlewis/neo/internal/goal"
 	"github.com/owainlewis/neo/internal/llm"
 	"github.com/owainlewis/neo/internal/logx"
 	"github.com/owainlewis/neo/internal/profile"
@@ -81,6 +82,23 @@ evidence. Do not mirror every tool call manually; Neo attaches tool and subagent
 activity to the active workflow item automatically. Write subagent prompts from
 the user's goal and current context, and use the normal tools directly when
 delegation is unnecessary.`
+
+// goalCapability is appended when the goal tool is registered.
+const goalCapability = `
+
+# Standing goal
+
+When the user sets a goal, keep working toward it across turns. Neo sends a
+continuation message while the goal is active and the user is idle; treat each
+one as "the goal is still open" rather than a new request.
+
+Never redefine the goal as a smaller task. Before calling the goal tool with
+complete, verify the objective with a command, test, or inspection and cite that
+
+evidence in the reason. Call it with blocked only when the same blocker has
+recurred after real attempts; one transient failure is not a blocker. Pausing,
+resuming, clearing, and the attempt budget belong to the user, so the goal tool
+offers no such action.`
 
 func main() {
 	os.Exit(execute(os.Args[1:], stdio{
@@ -427,6 +445,9 @@ func capabilitySections(reg *tools.Registry) string {
 	if _, ok := reg.Get("agent"); ok {
 		b.WriteString(subagentCapability)
 	}
+	if _, ok := reg.Get("goal"); ok {
+		b.WriteString(goalCapability)
+	}
 	return b.String()
 }
 
@@ -691,6 +712,14 @@ func runChatSession(ctx context.Context, store *session.Store, sess *session.Ses
 	wf := make(chan workflow.Event, 128)
 	workflowEvents = wf
 	extra = append(extra, workflow.Tool{Events: wf})
+	// The goal tool is always registered, even with no goal in the session, so
+	// the model's tool list never changes mid-conversation. Its manager owns the
+	// session goal; the tool cannot pause, resume, clear, or spend the budget.
+	goalManager, goalWarning := chatGoalManager(sess.Goal)
+	if goalWarning != "" {
+		fmt.Fprintln(streams.err, goalWarning)
+	}
+	extra = append(extra, goal.Tool{Manager: goalManager})
 	if cwd != "" {
 		var at subagent.AgentTool
 		workerProvider, workerModel, followsCoordinator := subagentBackend(ctx, cfg, prov, model)

@@ -162,6 +162,10 @@ func NewManager(initial *State, limits Limits) (*Manager, error) {
 	return m, nil
 }
 
+// Limits reports the bounds this manager enforces. Limits never change after
+// construction, so this is safe to call from any goroutine without locking.
+func (m *Manager) Limits() Limits { return m.limits }
+
 // Snapshot returns a copy of the current goal, or nil when there is none.
 func (m *Manager) Snapshot() *State {
 	m.mu.Lock()

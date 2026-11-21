@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/owainlewis/neo/internal/config"
+	"github.com/owainlewis/neo/internal/goal"
 	"github.com/owainlewis/neo/internal/llm"
 	"github.com/owainlewis/neo/internal/llm/llmtest"
 	"github.com/owainlewis/neo/internal/profile"
@@ -110,7 +111,7 @@ func TestChatSystemNamesNoUnregisteredTool(t *testing.T) {
 			for _, n := range tc.reg.Names() {
 				registered[n] = true
 			}
-			for _, candidate := range []string{"workflow", "agent"} {
+			for _, candidate := range []string{"workflow", "agent", "goal"} {
 				if strings.Contains(system, candidate+" tool") && !registered[candidate] {
 					t.Fatalf("prompt names the %s tool, which is not registered", candidate)
 				}
@@ -278,5 +279,5 @@ func TestEnvironmentSectionKeepsValuesOnOneLine(t *testing.T) {
 // chatRegistry mirrors what interactive chat registers, so prompt tests see the
 // capability sections a chat session would actually get.
 func chatRegistry() *tools.Registry {
-	return newRegistry("", "", workflow.Tool{}, subagent.AgentTool{})
+	return newRegistry("", "", workflow.Tool{}, subagent.AgentTool{}, goal.Tool{})
 }
