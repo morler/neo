@@ -289,3 +289,220 @@ func countNotices(m *model, substr string) int {
 	}
 	return n
 }
+
+// budgetModel builds a model whose goal has a tiny budget, so the handoff is
+// reachable without 20 turns.
+func budgetModel(t *testing.T, max int) (*model, *goal.Manager, *int) {
+	t.Helper()
+	m := makeTestModel()
+	mgr, err := goal.NewManager(nil, goal.Limits{MaxAttempts: max})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	saves := 0
+	m.goal = mgr
+	m.goalPersist = func() error {
+		saves++
+		return nil
+	}
+	if _, err := mgr.Start("keep working"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	return m, mgr, &saves
+}
+
+// finishScheduledTurn clears the busy state a scheduled continuation sets, as
+// if that turn had run and returned. The TUI would do this in sendResultMsg.
+func finishScheduledTurn(t *testing.T, m *model) {
+	t.Helper()
+	if !m.busy {
+		t.Fatal("no turn was scheduled")
+	}
+	if m.sendCancel != nil {
+		m.sendCancel()
+	}
+	m.busy = false
+	m.sendCancel = nil
+}
+
+func TestBudgetExhaustionShowsTheHandoff(t *testing.T) {
+	m, mgr, saves := budgetModel(t, 1)
+
+	// The first continuation is allowed and spends the whole budget.
+	if cmd := m.maybeContinueGoal(); cmd == nil {
+		t.Fatal("the first continuation was not allowed")
+	}
+	if snap := mgr.Snapshot(); snap.Attempts.Used != 1 {
+		t.Fatalf("attempts = %d, want 1", snap.Attempts.Used)
+	}
+	finishScheduledTurn(t, m)
+
+	m.blocks = nil
+	if cmd := m.maybeContinueGoal(); cmd != nil {
+		t.Fatal("a continuation started past the budget")
+	}
+
+	handoffs := 0
+	for _, b := range m.blocks {
+		hb, ok := b.(goalBudgetBlock)
+		if !ok {
+			continue
+		}
+		handoffs++
+		out := plain(hb.render(100, nil))
+		for _, want := range []string{
+			"Goal budget reached: 1/1 attempts used.",
+			"Last reason: none recorded",
+			"/goal resume",
+			"/goal clear",
+		} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("handoff missing %q:\n%s", want, out)
+			}
+		}
+	}
+	if handoffs != 1 {
+		t.Fatalf("handoffs = %d, want 1", handoffs)
+	}
+	if *saves != 1 {
+		t.Fatalf("saves = %d, want the budget limit persisted once", *saves)
+	}
+	if snap := mgr.Snapshot(); snap.Status != goal.BudgetLimited {
+		t.Fatalf("status = %q, want budget_limited", snap.Status)
+	}
+}
+
+func TestBudgetHandoffIncludesTheLastReason(t *testing.T) {
+	m, mgr, _ := budgetModel(t, 1)
+	started := mgr.Snapshot()
+	if _, err := mgr.RequestBlocked(started.ID, "tests still fail in internal/session"); err != nil {
+		t.Fatalf("RequestBlocked: %v", err)
+	}
+	if cmd := m.maybeContinueGoal(); cmd == nil {
+		t.Fatal("first continuation not allowed")
+	}
+	finishScheduledTurn(t, m)
+	m.blocks = nil
+	m.maybeContinueGoal()
+
+	out := plain(lastBlock[goalBudgetBlock](t, m).render(120, nil))
+	if !strings.Contains(out, "tests still fail in internal/session") {
+		t.Fatalf("handoff lost the last reason:\n%s", out)
+	}
+}
+
+func TestBudgetHandoffSaveFailureIsVisible(t *testing.T) {
+	m, mgr, _ := budgetModel(t, 1)
+	m.maybeContinueGoal() // spends the budget
+	finishScheduledTurn(t, m)
+	m.blocks = nil
+	m.goalPersist = func() error { return errors.New("disk full") }
+
+	m.maybeContinueGoal()
+
+	if snap := mgr.Snapshot(); snap.Status != goal.BudgetLimited {
+		t.Fatalf("status = %q", snap.Status)
+	}
+	found := false
+	for _, b := range m.blocks {
+		eb, ok := b.(errorBlock)
+		if ok && strings.Contains(eb.err.Error(), "disk full") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no save error reported: %+v", m.blocks)
+	}
+}
+
+// The initial /goal turn is not an attempt, and it is the only turn that must
+// not count. Both halves are asserted here because the budget's meaning depends
+// on the distinction.
+func TestInitialGoalTurnDoesNotCountAsAnAttempt(t *testing.T) {
+	prov := &llmtest.FakeProvider{Responses: []llm.Response{llmtest.Text("done")}}
+	m, mgr, _ := goalTestModel(t, prov)
+	m.ag = agent.New(agent.Config{Model: "test", Provider: prov})
+
+	cmd := m.handleSlashCommand("/goal fix the failing test")
+	if cmd == nil {
+		t.Fatal("/goal did not start a turn")
+	}
+	if snap := mgr.Snapshot(); snap.Attempts.Used != 0 {
+		t.Fatalf("used = %d before the first turn even ran, want 0", snap.Attempts.Used)
+	}
+	m.Update(cmd())
+	// The initial turn is free, but finishing it schedules the first
+	// continuation, and that continuation is what consumes the first attempt.
+	if snap := mgr.Snapshot(); snap.Attempts.Used != 1 {
+		t.Fatalf("used = %d after the initial turn, want the scheduled continuation to be attempt 1", snap.Attempts.Used)
+	}
+	if !m.busy {
+		t.Fatal("the initial turn did not schedule its continuation")
+	}
+	found := false
+	for _, b := range m.blocks {
+		if ub, ok := b.(userBlock); ok && strings.HasPrefix(ub.text, "↳ goal continuation 1/4") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the continuation is not labelled as attempt 1: %+v", m.blocks)
+	}
+}
+
+func TestBudgetLimitedGoalResumesWithAFreshBudget(t *testing.T) {
+	m, mgr, _ := budgetModel(t, 2)
+	for i := 0; i < 2; i++ {
+		if cmd := m.maybeContinueGoal(); cmd == nil {
+			t.Fatalf("continuation %d was refused", i+1)
+		}
+		finishScheduledTurn(t, m)
+	}
+	m.maybeContinueGoal() // exhausts and shows the handoff
+	if snap := mgr.Snapshot(); snap.Status != goal.BudgetLimited {
+		t.Fatalf("status = %q, want budget_limited", snap.Status)
+	}
+
+	cmd := m.handleSlashCommand("/goal resume")
+	if cmd == nil {
+		t.Fatal("/goal resume did not restart the goal")
+	}
+	// Resume schedules the next turn immediately, so by the time it returns the
+	// budget is fresh and the first continuation of the new budget is running.
+	snap := mgr.Snapshot()
+	if snap.Status != goal.Active || snap.Attempts.Max != 2 || snap.Attempts.Used != 1 {
+		t.Fatalf("resumed = %+v, want active with 1/2 used", snap)
+	}
+	if !m.busy {
+		t.Fatal("resume did not start a continuation")
+	}
+	found := false
+	for _, b := range m.blocks {
+		if ub, ok := b.(userBlock); ok && strings.HasPrefix(ub.text, "↳ goal continuation 1/2") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the resumed continuation did not restart the counter: %+v", m.blocks)
+	}
+}
+
+func TestBudgetLimitedStatusRendersAsExhausted(t *testing.T) {
+	m, mgr, _ := budgetModel(t, 1)
+	m.maybeContinueGoal()
+	finishScheduledTurn(t, m)
+	m.blocks = nil
+	m.maybeContinueGoal()
+	m.handleSlashCommand("/goal status")
+
+	out := plain(lastBlock[goalBlock](t, m).render(100, nil))
+	if !strings.Contains(out, "1/1 (exhausted)") {
+		t.Fatalf("status block = %s", out)
+	}
+	if !strings.Contains(out, "budget limited") {
+		t.Fatalf("status block missing the budget-limited state: %s", out)
+	}
+	if snap := mgr.Snapshot(); snap.Status != goal.BudgetLimited {
+		t.Fatalf("status = %q", snap.Status)
+	}
+}

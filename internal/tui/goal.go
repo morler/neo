@@ -272,3 +272,31 @@ func formatGoalTime(t time.Time) string {
 	}
 	return t.UTC().Format("2006-01-02 15:04 UTC")
 }
+
+// goalBudgetBlock is the handoff shown when a goal uses its last continuation
+// turn. It is deliberately explicit: the goal stopped on its own, here is what
+// it last recorded, and here are the two commands that do something about it.
+type goalBudgetBlock struct{ state goal.State }
+
+func (b goalBudgetBlock) render(width int, _ *glamour.TermRenderer) string {
+	s := b.state
+	lines := []string{
+		styLabel.Render(fmt.Sprintf("Goal budget reached: %d/%d attempts used.", s.Attempts.Used, s.Attempts.Max)),
+	}
+	lines = append(lines, styMuted.Render("Last reason: ")+wrap(goalLastReason(s), max(width-16, 1)))
+	lines = append(lines, styMuted.Render("Use /goal resume to continue or /goal clear to stop."))
+	return accentCard(strings.Join(lines, "\n"), colWarn)
+}
+
+// goalLastReason picks the most recent thing the goal recorded. An unapplied
+// blocker sits in the audit rather than in LastReason, and it is exactly what
+// the user needs to see when the budget runs out.
+func goalLastReason(s goal.State) string {
+	if reason := strings.TrimSpace(s.LastReason); reason != "" {
+		return reason
+	}
+	if reason := strings.TrimSpace(s.Blocked.LastReason); reason != "" {
+		return reason
+	}
+	return "none recorded"
+}

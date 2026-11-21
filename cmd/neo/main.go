@@ -738,7 +738,7 @@ func runChatSession(ctx context.Context, store *session.Store, sess *session.Ses
 	// The goal tool is always registered, even with no goal in the session, so
 	// the model's tool list never changes mid-conversation. Its manager owns the
 	// session goal; the tool cannot pause, resume, clear, or spend the budget.
-	goalManager, goalWarning := chatGoalManager(sess.Goal)
+	goalManager, goalWarning := chatGoalManager(sess.Goal, cfg)
 	if goalWarning != "" {
 		fmt.Fprintln(streams.err, goalWarning)
 	}

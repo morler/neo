@@ -36,8 +36,7 @@ func (m *model) maybeContinueGoal() tea.Cmd {
 		return nil
 	}
 	if !res.Allowed {
-		// The budget ran out. The next issue (#20) renders the handoff; here the
-		// contract is only that no further turn starts.
+		m.finishGoalBudget(res.State)
 		return nil
 	}
 
@@ -120,4 +119,15 @@ func (m *model) interruptTurn(reason string) {
 		return
 	}
 	m.pauseGoalOnInterrupt(reason)
+}
+
+// finishGoalBudget reports that the attempt budget ran out. The transition
+// already happened inside ConsumeAttempt, so the only work left is to save it
+// and explain the handoff: the goal stays budget_limited until the user resumes
+// or clears it, and no continuation starts in the meantime.
+func (m *model) finishGoalBudget(s goal.State) {
+	m.appendBlock(goalBudgetBlock{state: s})
+	if err := m.saveGoal(); err != nil {
+		m.appendBlock(errorBlock{err: fmt.Errorf("save goal: %w (the budget limit is not saved and will be lost on exit)", err)})
+	}
 }

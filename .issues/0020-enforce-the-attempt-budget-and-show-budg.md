@@ -1,7 +1,7 @@
 ---
 id: 20
 title: Enforce the attempt budget and show budget_limited handoff
-status: open
+status: closed
 priority: high
 labels:
     - feature
@@ -14,6 +14,7 @@ relations:
         - 19
 created: "2026-11-21"
 updated: "2026-11-21"
+closed: "2026-11-21"
 ---
 
 ## 背景

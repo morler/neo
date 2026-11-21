@@ -478,6 +478,18 @@ func TestGoalBlockShowsAnExhaustedBudget(t *testing.T) {
 	}
 }
 
+func TestGoalLastReasonPrefersTheGoalThenTheBlocker(t *testing.T) {
+	if got := goalLastReason(goal.State{LastReason: "tests pass"}); got != "tests pass" {
+		t.Fatalf("last reason = %q", got)
+	}
+	if got := goalLastReason(goal.State{Blocked: goal.BlockedAudit{LastReason: "no credentials"}}); got != "no credentials" {
+		t.Fatalf("blocker reason = %q", got)
+	}
+	if got := goalLastReason(goal.State{}); got != "none recorded" {
+		t.Fatalf("empty reason = %q", got)
+	}
+}
+
 // The goal UI must not add permanent chrome: nothing is rendered until the user
 // asks, which keeps the status line unchanged for everyone else.
 func TestGoalStatusDoesNotTouchTheStatusLine(t *testing.T) {

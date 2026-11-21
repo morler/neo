@@ -78,6 +78,19 @@ file it came from. There is no per-turn token or wall-clock budget in this
 version: an attempt is the only unit, so the limit is predictable and cheap to
 reason about.
 
+A restored goal keeps the budget it was saved with, so resuming an old session
+does not silently change how much work it has left. When the budget is used up
+the handoff names the last recorded reason and the two ways forward:
+
+```text
+Goal budget reached: 20/20 attempts used.
+Last reason: tests still fail in internal/session.
+Use /goal resume to continue or /goal clear to stop.
+```
+
+`/goal resume` resets the counter to zero and starts the next continuation
+immediately when nothing else is happening.
+
 ## Provider Selection
 
 | Config | Auth source | Provider adapter |

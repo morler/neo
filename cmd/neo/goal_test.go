@@ -72,7 +72,7 @@ func TestGoalGuidanceStatesTheOwnershipAndEvidenceRules(t *testing.T) {
 }
 
 func TestChatGoalManagerStartsWithoutASavedGoal(t *testing.T) {
-	mgr, warning := chatGoalManager(nil)
+	mgr, warning := chatGoalManager(nil, &config.Config{})
 	if warning != "" {
 		t.Fatalf("warning = %q, want none for a new session", warning)
 	}
@@ -90,7 +90,7 @@ func TestChatGoalManagerRestoresASavedGoal(t *testing.T) {
 		CreatedAt: time.Now().UTC().Add(-time.Hour),
 		UpdatedAt: time.Now().UTC(),
 	}
-	mgr, warning := chatGoalManager(saved)
+	mgr, warning := chatGoalManager(saved, &config.Config{})
 	if warning != "" {
 		t.Fatalf("warning = %q, want none", warning)
 	}
@@ -108,7 +108,7 @@ func TestChatGoalManagerRestoresASavedGoal(t *testing.T) {
 }
 
 func TestChatGoalManagerWarnsAndKeepsTheSessionOpenOnACorruptGoal(t *testing.T) {
-	mgr, warning := chatGoalManager(&goal.State{ID: "goal_broken", Status: goal.Active})
+	mgr, warning := chatGoalManager(&goal.State{ID: "goal_broken", Status: goal.Active}, &config.Config{})
 	if !strings.Contains(warning, "ignoring the saved goal") {
 		t.Fatalf("warning = %q, want it to explain the saved goal was ignored", warning)
 	}
@@ -139,7 +139,7 @@ func TestSaveChatSessionPersistsTheManagerGoal(t *testing.T) {
 		t.Fatal(err)
 	}
 	ag := agent.New(agent.Config{Model: "test", Provider: &llmtest.FakeProvider{}})
-	mgr, warning := chatGoalManager(nil)
+	mgr, warning := chatGoalManager(nil, &config.Config{})
 	if warning != "" {
 		t.Fatalf("warning = %q", warning)
 	}
@@ -171,7 +171,7 @@ func TestSaveChatSessionTracksEachTransition(t *testing.T) {
 		t.Fatal(err)
 	}
 	ag := agent.New(agent.Config{Model: "test", Provider: &llmtest.FakeProvider{}})
-	mgr, _ := chatGoalManager(nil)
+	mgr, _ := chatGoalManager(nil, &config.Config{})
 	started, err := mgr.Start("ship the change")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -227,7 +227,7 @@ func TestSaveChatSessionTracksEachTransition(t *testing.T) {
 func TestSaveChatSessionWithoutAManagerKeepsTheSavedGoal(t *testing.T) {
 	ctx := t.Context()
 	store := session.NewStore(t.TempDir())
-	mgr, _ := chatGoalManager(nil)
+	mgr, _ := chatGoalManager(nil, &config.Config{})
 	if _, err := mgr.Start("keep me"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestResumedSessionRestoresTheGoalIntoTheManager(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, _ := chatGoalManager(nil)
+	first, _ := chatGoalManager(nil, &config.Config{})
 	started, err := first.Start("finish the migration")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -278,7 +278,7 @@ func TestResumedSessionRestoresTheGoalIntoTheManager(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	resumed, warning := chatGoalManager(loaded.Goal)
+	resumed, warning := chatGoalManager(loaded.Goal, &config.Config{})
 	if warning != "" {
 		t.Fatalf("resume warning = %q", warning)
 	}
@@ -292,7 +292,7 @@ func TestResumedSessionRestoresTheGoalIntoTheManager(t *testing.T) {
 }
 
 func TestChatGoalManagerWarningMentionsTheGoalID(t *testing.T) {
-	_, warning := chatGoalManager(&goal.State{ID: "goal_broken", Status: goal.Active})
+	_, warning := chatGoalManager(&goal.State{ID: "goal_broken", Status: goal.Active}, &config.Config{})
 	if !strings.Contains(warning, "goal_broken") {
 		t.Fatalf("warning = %q, want it to name the rejected goal", warning)
 	}
@@ -303,5 +303,63 @@ func TestUsageDocumentsTheGoalCommands(t *testing.T) {
 		if !strings.Contains(usageText, want) {
 			t.Fatalf("usage does not contain %q", want)
 		}
+	}
+}
+
+func TestChatGoalManagerUsesTheConfiguredBudget(t *testing.T) {
+	cfg := &config.Config{Goals: config.Goals{MaxAttempts: 3}}
+	mgr, warning := chatGoalManager(nil, cfg)
+	if warning != "" {
+		t.Fatalf("warning = %q", warning)
+	}
+	if got := mgr.Limits().MaxAttempts; got != 3 {
+		t.Fatalf("max attempts = %d, want the configured 3", got)
+	}
+	started, err := mgr.Start("ship it")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if started.State.Attempts.Max != 3 {
+		t.Fatalf("goal budget = %d, want 3", started.State.Attempts.Max)
+	}
+}
+
+func TestChatGoalManagerFallsBackToTheDefaultBudget(t *testing.T) {
+	mgr, _ := chatGoalManager(nil, &config.Config{})
+	if got := mgr.Limits().MaxAttempts; got != config.DefaultGoalMaxAttempts {
+		t.Fatalf("max attempts = %d, want the default %d", got, config.DefaultGoalMaxAttempts)
+	}
+}
+
+func TestChatGoalManagerKeepsTheBudgetOnACorruptSavedGoal(t *testing.T) {
+	cfg := &config.Config{Goals: config.Goals{MaxAttempts: 7}}
+	mgr, warning := chatGoalManager(&goal.State{ID: "goal_broken", Status: goal.Active}, cfg)
+	if !strings.Contains(warning, "ignoring the saved goal") {
+		t.Fatalf("warning = %q", warning)
+	}
+	if got := mgr.Limits().MaxAttempts; got != 7 {
+		t.Fatalf("fallback manager lost the configured budget: %d", got)
+	}
+}
+
+func TestRestoredGoalKeepsItsSavedBudgetOverAChangedConfig(t *testing.T) {
+	// A session saved with a 5-attempt budget keeps it on resume even if the
+	// config now says 20: the budget belongs to the goal that was running.
+	saved := &goal.State{
+		ID:        "goal_saved",
+		Objective: "finish the migration",
+		Status:    goal.Active,
+		Attempts:  goal.Attempts{Used: 2, Max: 5},
+	}
+	mgr, warning := chatGoalManager(saved, &config.Config{Goals: config.Goals{MaxAttempts: 20}})
+	if warning != "" {
+		t.Fatalf("warning = %q", warning)
+	}
+	snap := mgr.Snapshot()
+	if snap.Attempts.Max != 5 {
+		t.Fatalf("restored budget = %d, want the saved 5", snap.Attempts.Max)
+	}
+	if snap.Attempts.Used != 2 {
+		t.Fatalf("restored used = %d, want 2", snap.Attempts.Used)
 	}
 }

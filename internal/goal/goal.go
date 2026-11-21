@@ -78,6 +78,10 @@ type Contract struct {
 
 // Attempts counts automatic continuation turns. The turn started by
 // /goal <objective> is not an attempt.
+//
+// Phase 1 budgets attempts only. Token and wall-clock accounting would need
+// usage the core loop does not attribute to a goal, so UsageLimited exists as a
+// reserved status with no transition that produces it.
 type Attempts struct {
 	Used int `json:"used"`
 	Max  int `json:"max"`
