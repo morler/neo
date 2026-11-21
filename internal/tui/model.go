@@ -753,7 +753,12 @@ func (m *model) handleSlashCommand(line string) tea.Cmd {
 	case "/provider":
 		return m.openProviderBrowser()
 	case "/clear":
-		m.resetConversation()
+		cleared := m.resetConversation()
+		if cleared != nil {
+			m.appendBlock(noticeBlock{text: fmt.Sprintf(
+				"goal cleared (%s: %s) · /goal pause keeps a goal without continuing it",
+				cleared.ID, goal.Summarize(cleared.Objective))})
+		}
 		if err := m.persistSession(); err != nil {
 			m.appendBlock(errorBlock{err: err})
 		}

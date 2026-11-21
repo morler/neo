@@ -1,12 +1,25 @@
 package tui
 
-import "time"
+import (
+	"time"
+
+	"github.com/owainlewis/neo/internal/goal"
+)
 
 // resetConversation starts a clean conversation without disturbing the
 // backend, workspace, or presentation configuration carried by the model.
 // /clear is idle-only, but clearing defensive in-flight handles here keeps all
 // conversation-scoped cleanup owned by this one operation.
-func (m *model) resetConversation() {
+//
+// The session goal is cleared here too, and that is deliberate: a goal that
+// survived /clear would keep asking the model to continue against a transcript
+// that no longer contains the evidence it needs. Clearing is also what stops a
+// pending automatic continuation, because the scheduler reads the goal when it
+// decides to enqueue one, so a manager with no goal cannot start a turn.
+//
+// The cleared goal is returned so the caller can report it. Keeping a goal
+// without continuing is /goal pause, not /clear.
+func (m *model) resetConversation() *goal.State {
 	m.conversationGeneration++
 	if m.sendCancel != nil {
 		m.sendCancel()
@@ -23,6 +36,8 @@ func (m *model) resetConversation() {
 		}
 		m.approval = nil
 	}
+
+	cleared := m.clearGoal()
 
 	m.ag.Clear()
 	m.blocks = nil
@@ -46,4 +61,19 @@ func (m *model) resetConversation() {
 	m.files = filePicker{root: fileRoot, files: fileIndex}
 	m.setDotColor(colDotThinking)
 	m.refreshViewport()
+	return cleared
+}
+
+// clearGoal drops the session goal, if any. A session without a goal, or one
+// whose manager was never wired, is not an error: /clear still resets the
+// conversation.
+func (m *model) clearGoal() *goal.State {
+	if m.goal == nil {
+		return nil
+	}
+	cleared, err := m.goal.Clear()
+	if err != nil {
+		return nil
+	}
+	return cleared
 }

@@ -3,10 +3,12 @@ package tui
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/owainlewis/neo/internal/agent"
+	"github.com/owainlewis/neo/internal/goal"
 	"github.com/owainlewis/neo/internal/llm"
 	"github.com/owainlewis/neo/internal/llm/llmtest"
 	"github.com/owainlewis/neo/internal/skills"
@@ -49,8 +51,16 @@ func TestResetConversationClearsConversationState(t *testing.T) {
 	m.files.selected = 1
 	m.files.token = filePickerToken{raw: "@old"}
 	m.models = modelBrowser{visible: true, query: "old"}
+	mgr, err := goal.NewManager(nil, goal.Limits{})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if _, err := mgr.Start("old objective"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	m.goal = mgr
 
-	m.resetConversation()
+	cleared := m.resetConversation()
 
 	if got := m.ag.Transcript(); len(got) != 0 {
 		t.Fatalf("transcript = %#v, want empty", got)
@@ -93,6 +103,12 @@ func TestResetConversationClearsConversationState(t *testing.T) {
 	}
 	if m.picker.visible || m.files.visible || m.files.token != (filePickerToken{}) || m.models.visible {
 		t.Fatalf("transient UI remains: picker=%#v files=%#v models=%#v", m.picker, m.files, m.models)
+	}
+	if cleared == nil || cleared.Objective != "old objective" {
+		t.Fatalf("cleared goal = %+v, want the previous objective so the caller can report it", cleared)
+	}
+	if snap := m.goal.Snapshot(); snap != nil {
+		t.Fatalf("goal survived /clear: %+v", snap)
 	}
 }
 
@@ -205,5 +221,132 @@ func TestOldActivityStaysStaleAfterNewTurnStarts(t *testing.T) {
 	}
 	if _, ok := m.blocks[0].(userBlock); !ok {
 		t.Fatalf("new turn block = %T, want userBlock", m.blocks[0])
+	}
+}
+
+// /clear must clear an active goal and save that fact: a surviving goal would
+// keep the scheduler enqueueing continuations against an emptied transcript.
+func TestClearClearsTheActiveGoalAndSavesOnce(t *testing.T) {
+	m := makeTestModel()
+	mgr, err := goal.NewManager(nil, goal.Limits{MaxAttempts: 4})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	started, err := mgr.Start("fix the flaky test")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := mgr.ConsumeAttempt(); err != nil {
+		t.Fatalf("ConsumeAttempt: %v", err)
+	}
+	m.goal = mgr
+	m.blocks = append(m.blocks, noticeBlock{text: "keep"})
+	saves := 0
+	m.afterSend = func() error {
+		saves++
+		return nil
+	}
+
+	cmd := m.handleSlashCommand("/clear")
+	if cmd != nil {
+		t.Fatal("/clear returned a command")
+	}
+	if snap := m.goal.Snapshot(); snap != nil {
+		t.Fatalf("goal survived /clear: %+v", snap)
+	}
+	if saves != 1 {
+		t.Fatalf("saves = %d, want one save after clearing", saves)
+	}
+	if len(m.blocks) != 1 {
+		t.Fatalf("blocks = %+v, want the clearing notice only", m.blocks)
+	}
+	nb, ok := m.blocks[0].(noticeBlock)
+	if !ok {
+		t.Fatalf("block = %T, want a notice", m.blocks[0])
+	}
+	for _, want := range []string{started.State.ID, "fix the flaky test", "/goal pause"} {
+		if !strings.Contains(nb.text, want) {
+			t.Fatalf("notice %q missing %q", nb.text, want)
+		}
+	}
+}
+
+// Clearing a conversation with no goal stays quiet: no notice, no extra save
+// behaviour beyond the existing session save.
+func TestClearWithoutAGoalAddsNoNotice(t *testing.T) {
+	m := makeTestModel()
+	mgr, err := goal.NewManager(nil, goal.Limits{})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	m.goal = mgr
+	m.afterSend = func() error { return nil }
+
+	m.handleSlashCommand("/clear")
+
+	if len(m.blocks) != 0 {
+		t.Fatalf("blocks = %+v, want none", m.blocks)
+	}
+}
+
+// A TUI without goal wiring still clears its conversation, exactly as before.
+func TestClearWithoutGoalWiringWorks(t *testing.T) {
+	m := makeTestModel()
+	m.blocks = append(m.blocks, noticeBlock{text: "old"})
+	m.handleSlashCommand("/clear")
+	if len(m.blocks) != 0 {
+		t.Fatalf("blocks = %+v, want the transcript cleared", m.blocks)
+	}
+}
+
+// The save failure path is unchanged: the error must be visible.
+func TestClearWithGoalReportsSaveFailure(t *testing.T) {
+	m := makeTestModel()
+	mgr, err := goal.NewManager(nil, goal.Limits{})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if _, err := mgr.Start("ship it"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	m.goal = mgr
+	saveErr := errors.New("save failed")
+	m.afterSend = func() error { return saveErr }
+
+	m.handleSlashCommand("/clear")
+
+	if len(m.blocks) != 2 {
+		t.Fatalf("blocks = %+v, want the notice plus the save error", m.blocks)
+	}
+	eb, ok := m.blocks[1].(errorBlock)
+	if !ok {
+		t.Fatalf("second block = %T, want an error", m.blocks[1])
+	}
+	if !errors.Is(eb.err, saveErr) {
+		t.Fatalf("error = %v, want %v", eb.err, saveErr)
+	}
+}
+
+// resetConversation is the single owner of conversation-scoped cleanup, so it
+// must clear the goal even when called directly rather than through /clear.
+func TestResetConversationClearsTheGoalDirectly(t *testing.T) {
+	m := makeTestModel()
+	mgr, err := goal.NewManager(nil, goal.Limits{})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	started, err := mgr.Start("direct reset")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	m.goal = mgr
+
+	cleared := m.resetConversation()
+
+	if snap := m.goal.Snapshot(); snap != nil {
+		t.Fatalf("goal survived resetConversation: %+v", snap)
+	}
+	if cleared == nil || cleared.ID != started.State.ID || cleared.Status != goal.Cleared {
+		t.Fatalf("cleared = %+v, want the old goal reported as cleared", cleared)
 	}
 }

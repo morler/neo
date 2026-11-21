@@ -68,7 +68,10 @@ Provider failures that return no response have no reported usage to add.
 
 Older session files without `usage` load as zero usage. Resumed
 sessions continue accumulating from the saved totals. Clearing a transcript also
-clears the saved usage and conversation-scoped TUI activity for that session.
+clears the saved usage and conversation-scoped TUI activity for that session,
+and drops the active goal: a goal without its evidence would keep Neo working on
+an empty conversation. The cleared goal is reported in the transcript, and
+`/goal pause` is the command for keeping a goal without continuing it.
 The selected backend, working directory, skills, and presentation
 settings remain active for the new conversation.
 
