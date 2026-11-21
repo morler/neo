@@ -1,7 +1,7 @@
 ---
 id: 13
 title: Persist an optional goal in session JSON and restore it on resume
-status: open
+status: closed
 priority: high
 labels:
     - feature
@@ -12,6 +12,7 @@ relations:
         - 12
 created: "2026-11-21"
 updated: "2026-11-21"
+closed: "2026-11-21"
 ---
 
 ## 背景

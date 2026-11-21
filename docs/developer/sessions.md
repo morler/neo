@@ -7,7 +7,7 @@ Neo stores resumable conversations under `~/.neo/sessions/` by default.
 | File | Purpose |
 | --- | --- |
 | `index.json` | Metadata index used by `neo sessions`. |
-| `<session-id>.json` | Full session metadata and transcript. |
+| `<session-id>.json` | Full session metadata, transcript, usage, and the optional goal. |
 
 Session files are written atomically with a sibling temp file and rename.
 
@@ -71,6 +71,35 @@ sessions continue accumulating from the saved totals. Clearing a transcript also
 clears the saved usage and conversation-scoped TUI activity for that session.
 The selected backend, working directory, skills, and presentation
 settings remain active for the new conversation.
+
+## Goal
+
+A session may carry one optional top-level `goal` object. It holds the state of
+`/goal`: the objective, its status, the attempt budget, the blocked audit, and
+the last recorded reason. It is written with the transcript in the same atomic
+write, so the two never disagree on disk.
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Goal identifier (`goal_<hex>`). Replaced goals get a new one, which is how a stale tool update is rejected. |
+| `objective` | The user's goal text, verbatim. |
+| `contract` | `outcome`, `verification`, `constraints`, `boundaries`, and `stop_when` rules restated to the model on continuation turns. |
+| `status` | `active`, `paused`, `complete`, `blocked`, `budget_limited`, or `usage_limited`. |
+| `attempts` | `used` and `max` automatic continuation turns. The initial `/goal` turn is not counted. |
+| `blocked` | Audit of the repeated blocker: `signature`, `count`, and `last_reason`. |
+| `last_reason` | The most recent completion evidence, blocker, or pause reason. |
+| `created_at`, `updated_at` | UTC timestamps for the goal, not the session. |
+
+The goal is saved when it is created (before the first turn is sent) and again
+after every turn and every user-visible transition. Clearing it removes the key
+entirely rather than writing `null`, so a session without a goal is
+indistinguishable from one saved before `/goal` existed.
+
+Sessions saved before `/goal` existed have no `goal` field and load with no
+goal. An empty `{}` goal object is treated as absent; a record with an ID but
+invalid fields is kept for the goal manager to validate and report on resume
+rather than silently discarded. Goal text never affects the session title or
+local search excerpts.
 
 ## Visible Prompt Text
 

@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/owainlewis/neo/internal/atomicfile"
+	"github.com/owainlewis/neo/internal/goal"
 	"github.com/owainlewis/neo/internal/llm"
 )
 
@@ -46,6 +47,11 @@ type Session struct {
 	Metadata Metadata      `json:"metadata"`
 	Messages []llm.Message `json:"messages"`
 	Usage    llm.Usage     `json:"usage"`
+	// Goal is the session's single /goal objective and its control state. It is
+	// omitted when the session has no goal, so older session files load
+	// unchanged and never appear to carry one. The goal belongs to the session:
+	// resuming restores it, and a new session starts without one.
+	Goal *goal.State `json:"goal,omitempty"`
 }
 
 type SearchResult struct {
@@ -137,9 +143,22 @@ func (s *Store) Load(_ context.Context, id string) (*Session, error) {
 	if sess.Metadata.ID == "" {
 		sess.Metadata.ID = id
 	}
+	// A goal object with no id and no objective carries no information, so it is
+	// treated as absent rather than as a goal. This keeps a truncated or
+	// hand-edited file from resurrecting an empty goal the UI cannot act on;
+	// a goal that has an id but bad fields is left for the goal manager to
+	// validate and report on restore.
+	if sess.Goal != nil && strings.TrimSpace(sess.Goal.ID) == "" && strings.TrimSpace(sess.Goal.Objective) == "" {
+		sess.Goal = nil
+	}
 	return &sess, nil
 }
 
+// Save writes the session file and its index entry. Goal state is saved with
+// the transcript in one atomic write, so the two never disagree on disk. The
+// caller decides when: creating a goal saves immediately and before the first
+// turn, and again after every turn and every user-visible goal transition
+// (cmd/neo's saveChatSession). This package never saves on a timer.
 func (s *Store) Save(_ context.Context, sess *Session) error {
 	if sess == nil {
 		return fmt.Errorf("session: nil session")
