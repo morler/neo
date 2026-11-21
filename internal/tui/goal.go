@@ -48,14 +48,19 @@ func (m *model) handleGoalCommand(raw string) tea.Cmd {
 		})
 		return nil
 	case "resume":
-		m.applyGoalTransition(func() (string, error) {
+		if !m.applyGoalTransition(func() (string, error) {
 			s, err := m.goal.Resume()
 			if err != nil {
 				return "", goalReason(err)
 			}
 			return fmt.Sprintf("goal %s resumed with a fresh attempt budget (%d)", s.ID, s.Attempts.Max), nil
-		})
-		return nil
+		}) {
+			return nil
+		}
+		// Resume is the one command that means "continue now": the goal is
+		// active and the user is idle, so the scheduler starts the next turn
+		// immediately instead of waiting for a turn that will never come.
+		return m.maybeContinueGoal()
 	case "clear":
 		m.applyGoalTransition(func() (string, error) {
 			s, err := m.goal.Clear()
@@ -130,18 +135,20 @@ func (m *model) startGoal(objective string) tea.Cmd {
 
 // applyGoalTransition runs a user-owned status change and saves it immediately.
 // A failed save is reported as "changed in memory but not saved" rather than
-// pretending the transition reached disk.
-func (m *model) applyGoalTransition(transition func() (string, error)) {
+// pretending the transition reached disk. It reports whether the transition is
+// both applied and persisted, which is the precondition for acting on it.
+func (m *model) applyGoalTransition(transition func() (string, error)) bool {
 	message, err := transition()
 	if err != nil {
 		m.appendBlock(errorBlock{err: err})
-		return
+		return false
 	}
 	if err := m.saveGoal(); err != nil {
 		m.appendBlock(errorBlock{err: fmt.Errorf("save goal: %w (the change is not saved and will be lost on exit)", err)})
-		return
+		return false
 	}
 	m.appendBlock(noticeBlock{text: message})
+	return true
 }
 
 // saveGoal persists a goal transition through the CLI-owned save callback.

@@ -249,12 +249,21 @@ func TestGoalControlCommandsTransitionAndSave(t *testing.T) {
 		t.Fatalf("status = %q, want paused", snap.Status)
 	}
 
-	m.handleSlashCommand("/goal resume")
+	resume := m.handleSlashCommand("/goal resume")
 	if snap := mgr.Snapshot(); snap.Status != goal.Active {
 		t.Fatalf("status = %q, want active", snap.Status)
 	}
-	if got := plain(lastBlock[noticeBlock](t, m).text); !strings.Contains(got, "fresh attempt budget (4)") {
-		t.Fatalf("resume notice = %q", got)
+	notices := 0
+	for _, b := range m.blocks {
+		if nb, ok := b.(noticeBlock); ok && strings.Contains(nb.text, "fresh attempt budget (4)") {
+			notices++
+		}
+	}
+	if notices != 1 {
+		t.Fatalf("resume notices = %d, want 1", notices)
+	}
+	if resume == nil {
+		t.Fatal("/goal resume did not schedule the next continuation")
 	}
 
 	m.handleSlashCommand("/goal clear")

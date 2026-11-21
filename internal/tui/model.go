@@ -558,6 +558,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queued = nil
 			m.appendBlock(noticeBlock{text: "starting queued follow-up"})
 			cmds = append(cmds, m.submitUserTurn(queued.displayText, queued.agentText, queued.images))
+			break
+		}
+		// The turn ended and nothing else claimed it, so this is the one place
+		// an idle goal can start its next continuation. A user follow-up, a
+		// pending quit, a canceled turn, and a turn that could not be saved all
+		// skip it: input wins, and a goal should not advance on state the
+		// session could not record.
+		if msg.err == nil && msg.saveErr == nil {
+			cmds = append(cmds, m.maybeContinueGoal())
 		}
 
 	case persistenceRetryResultMsg:
