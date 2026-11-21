@@ -29,6 +29,7 @@ export default defineConfig({
             { label: 'CLI', slug: 'docs/reference/cli' },
             { label: 'Configuration', slug: 'docs/reference/config' },
             { label: 'Sessions', slug: 'docs/reference/sessions' },
+            { label: 'Goals', slug: 'docs/reference/goals' },
             { label: 'Tools', slug: 'docs/reference/tools' },
           ],
         },

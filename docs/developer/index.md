@@ -8,6 +8,7 @@ Start here when changing Neo:
 - [CLI](cli.md) documents commands and startup flow.
 - [Configuration](config.md) documents config loading and feature flags.
 - [Sessions](sessions.md) documents persisted conversations.
+- [Goals](goals.md) documents `/goal`, continuation turns, and the attempt budget.
 - [Tools](tools.md) documents the built-in tool surface.
 - [Skills](skills.md) documents built-in and user-defined slash prompts.
 - [Prompt caching](prompt-caching.md) documents structured system prompt blocks.

@@ -515,7 +515,7 @@ expanded into a user turn when the user references `$name` or invokes
 | `internal/compact/` | Compactor interface, transcript summarization, safe splitting | No session persistence or UI. |
 | `internal/config/` | Config discovery, defaults, validation, feature flags | No provider construction. |
 | `internal/factory/` | Child runner, supervisor budgets, attribution, `agent` tool | Does not interpret child results or permit nested children. |
-| `internal/goal/` | Session goal state, status transitions, attempt budget, blocked audit | Product control state; the agent loop never sees it. |
+| `internal/goal/` | Session goal state, status transitions, attempt budget, blocked audit, `goal` tool, continuation prompt text | Product control state; the agent loop never sees it. |
 | `internal/llm/` | Shared request, response, message, content, usage, and provider types | No network transport in the root package. |
 | `internal/llm/chatcompletions/` | Reusable OpenAI-compatible wire conversion and HTTP client | Used by provider setup packages such as OpenRouter. |
 | `internal/llm/<provider>/` | Vendor wire conversion, HTTP transport, retry integration | Does not execute tools or own transcripts. |

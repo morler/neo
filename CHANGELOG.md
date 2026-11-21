@@ -6,6 +6,15 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
+- `/goal` gives a session one standing objective and keeps working toward it
+  while the session is idle: `/goal <objective>` starts the first turn,
+  `/goal status` shows the objective, status, attempt budget, blocked audit, and
+  last reason, and `/goal pause`, `/goal resume`, and `/goal clear` control it.
+  The model can only mark a goal complete (with evidence) or blocked (after the
+  same blocker recurs), so it can never resume, clear, or extend its own run.
+  Goal state is saved with the session and restored on `neo resume`. `esc` and
+  `ctrl+c` pause a running goal, `/clear` drops it, and `goals.max_attempts`
+  (default 20) stops the run with a handoff that names the last recorded reason.
 - Declared custom OpenAI-compatible providers under a top-level `providers:`
   map and select them with `provider: <name>` or `subagents.provider`. This
   covers local runtimes (Ollama, vLLM), LiteLLM, and internal gateways without

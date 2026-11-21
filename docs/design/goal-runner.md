@@ -1,6 +1,9 @@
 # Neo Goal Runner - Design Spec
 
-> **Status:** Draft. This describes proposed behavior, not the current product.
+> **Status:** Implemented (Phase 1). See [Goals](../developer/goals.md) for the
+> user-facing behavior. Not implemented in this phase: a separate judge model,
+> `/goal draft`, `/subgoal`, wait barriers, token or wall-clock budgets, `/loop`,
+> and reusable goal files.
 
 This spec describes how Neo should implement `/goal`.
 

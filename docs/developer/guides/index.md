@@ -12,6 +12,7 @@ These guides explain Neo's core features in plain language. The reference docs s
 | [Sandbox and approvals](permissions.md) | Where Neo's security boundary lives and how optional confirmations work. |
 | [Providers](providers.md) | How Anthropic, OpenAI, OpenRouter, and Google Gemini plug in. |
 | [Sessions](sessions.md) | How Neo saves and resumes conversations. |
+| [Goals](../goals.md) | How a standing objective keeps the agent working after a turn ends. |
 | [Compaction](compaction.md) | Why long chats need context management and what Neo has today. |
 
 ## How To Read These

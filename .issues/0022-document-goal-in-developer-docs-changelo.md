@@ -1,7 +1,7 @@
 ---
 id: 22
 title: Document /goal in developer docs, changelog, and the CLI surface
-status: open
+status: closed
 priority: medium
 labels:
     - docs
@@ -12,6 +12,7 @@ relations:
         - 15
 created: "2026-11-21"
 updated: "2026-11-21"
+closed: "2026-11-21"
 ---
 
 ## 背景
@@ -38,3 +39,12 @@ AGENTS.md 要求行为变更时同步文档；草案 §12/§14 第 11 步要求�
 - `docs/developer/goals.md` 中的 YAML/命令示例可直接照做，且与代码行为一致。
 - 文档明确写出 Phase 1 的边界与已知权衡（模型自评完成度）。
 - `go test ./...` 通过；文档站点构建不受影响（`docs/developer/**` 变更即可触发）。
+
+## 实施记录
+
+- 新增 `docs/developer/goals.md`；`index.md`、`cli.md`、`config.md`、`architecture.md`、`guides/index.md`、`ARCHITECTURE.md` 均已同步。
+- 状态机图改为 `text` 代码块：站点没有 mermaid 渲染，`docs/design` 里的 mermaid 也不进站点。
+- `docs/design` 不发布到站点，所以 goals.md 末尾用纯路径提及设计文档，而不是 Markdown 链接。
+- 站点侧边栏（`website/astro.config.mjs`）新增 Goals 入口，否则页面构建出来但无法从导航到达。
+- 新增 `cmd/neo/docs_links_test.go`：校验 `docs/developer/**` 内相对 Markdown 链接可达，防止重命名后留下死链。
+- `docs/developer/sessions.md`、`tools.md` 的 goal 小节在 #13/#14 已落地，本 issue 只做一致性核对。

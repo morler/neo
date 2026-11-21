@@ -89,7 +89,8 @@ Use /goal resume to continue or /goal clear to stop.
 ```
 
 `/goal resume` resets the counter to zero and starts the next continuation
-immediately when nothing else is happening.
+immediately when nothing else is happening. See [Goals](goals.md) for the full
+command surface and status model.
 
 ## Provider Selection
 
