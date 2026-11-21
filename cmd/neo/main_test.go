@@ -274,7 +274,7 @@ func TestSaveChatSession_NormalizesCodexAdapterProviderForResume(t *testing.T) {
 		Provider: openai.NewCodex(nil),
 		Model:    "gpt-5-codex",
 	})
-	if err := saveChatSession(ctx, store, sess, ag, "/workspace", ""); err != nil {
+	if err := saveChatSession(ctx, store, sess, ag, nil, "/workspace", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -347,7 +347,7 @@ func TestSaveChatSession_PreservesOpenAIAPIProvider(t *testing.T) {
 		Provider: &openai.Client{},
 		Model:    "gpt-5.2",
 	})
-	if err := saveChatSession(ctx, store, sess, ag, "/workspace", ""); err != nil {
+	if err := saveChatSession(ctx, store, sess, ag, nil, "/workspace", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -451,7 +451,7 @@ func TestSaveChatSession_PersistsCompactionAndAnswerUsage(t *testing.T) {
 	if _, err := ag.Send(ctx, "continue"); err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	if err := saveChatSession(ctx, store, sess, ag, "/workspace", ""); err != nil {
+	if err := saveChatSession(ctx, store, sess, ag, nil, "/workspace", ""); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
@@ -759,7 +759,7 @@ func TestSaveChatSession_RecordsTheActiveAgent(t *testing.T) {
 	ag := agent.New(agent.Config{Model: "m", Provider: &llmtest.FakeProvider{}})
 
 	// Resuming under a different profile switches the session's agent.
-	if err := saveChatSession(ctx, store, sess, ag, "/workspace", "reviewer"); err != nil {
+	if err := saveChatSession(ctx, store, sess, ag, nil, "/workspace", "reviewer"); err != nil {
 		t.Fatal(err)
 	}
 	reloaded, err := store.Load(ctx, sess.Metadata.ID)

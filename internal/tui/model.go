@@ -21,6 +21,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/owainlewis/neo/internal/agent"
+	"github.com/owainlewis/neo/internal/goal"
 	"github.com/owainlewis/neo/internal/llm"
 	"github.com/owainlewis/neo/internal/logx"
 	"github.com/owainlewis/neo/internal/skills"
@@ -30,6 +31,8 @@ import (
 
 type Options struct {
 	AfterSend          func() error
+	GoalManager        *goal.Manager
+	GoalPersist        func() error
 	ModelChoices       []ModelChoice
 	ModelChoicesLoader func(context.Context) ([]ModelChoice, error)
 	Provider           string
@@ -46,6 +49,22 @@ type Option func(*Options)
 
 func WithAfterSend(fn func() error) Option {
 	return func(opts *Options) { opts.AfterSend = fn }
+}
+
+// WithGoalManager gives the TUI the session's goal manager. The TUI never
+// mutates goal state directly: it asks this manager, which serializes
+// transitions and enforces the ownership rules.
+func WithGoalManager(mgr *goal.Manager) Option {
+	return func(opts *Options) { opts.GoalManager = mgr }
+}
+
+// WithGoalPersist supplies the save used after a goal transition that happens
+// inside the TUI. It runs synchronously before the first turn of a new goal is
+// sent, so a goal always reaches disk before the model sees it. A nil callback
+// means the TUI cannot save goals on its own; callers that enable goal commands
+// must provide one.
+func WithGoalPersist(fn func() error) Option {
+	return func(opts *Options) { opts.GoalPersist = fn }
 }
 
 // WithModelSwitcher enables model selection for the active provider. The
@@ -270,6 +289,8 @@ type model struct {
 	skills []skills.Skill
 
 	afterSend           func() error
+	goal                *goal.Manager
+	goalPersist         func() error
 	modelChoices        []ModelChoice
 	modelChoicesLoader  func(context.Context) ([]ModelChoice, error)
 	modelChoicesLoaded  bool
@@ -364,6 +385,8 @@ func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDi
 		md:                 md,
 		skills:             sk,
 		afterSend:          opts.AfterSend,
+		goal:               opts.GoalManager,
+		goalPersist:        opts.GoalPersist,
 		modelChoices:       normalizeModelChoices(modelTag, opts.ModelChoices),
 		modelChoicesLoader: opts.ModelChoicesLoader,
 		modelSwitcher:      opts.ModelSwitcher,

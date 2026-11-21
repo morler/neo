@@ -35,11 +35,11 @@ Neo is a small Go coding agent. The core agent loop is policy-free: it owns mess
 
 1. `cmd/neo` resolves the session store. For a resumed chat, it loads the session and restores its saved working directory before entering the shared chat path.
 2. It loads config and selects Anthropic, OpenAI, OpenRouter, Google Gemini, or a backend declared under `providers:`, preferring saved provider and model metadata when resuming. OpenAI defaults to API-key auth; `openai_auth: subscription` builds the Codex subscription provider from stored device-code credentials. A custom backend is built by `internal/llm/custom` over the shared chat-completions adapter; a session pinned to a custom provider that is still declared resumes normally.
-3. It resolves the project root, constructs the workflow and subagent capabilities, and builds the complete tool registry.
-4. For a new chat, it creates the session in `internal/session`.
+3. It resolves the project root. For a new chat, it creates the session in `internal/session`; a resumed session already exists, so its saved goal is available to restore.
+4. It builds the chat's `internal/goal.Manager` from the session's saved goal, restoring the status, attempt count, and blocked audit. A goal the manager rejects is reported as a warning and the session starts without one. Then it constructs the workflow, goal, and subagent capabilities and builds the complete tool registry.
 5. Skills (built-in plus discovered) and AGENTS.md are loaded, then `chatSystem` builds both flattened and segmented system prompts.
 6. `agent.New` receives the provider, tools, optional interactive approval matcher, system prompt, and restored messages and usage.
-7. `tui.Run` owns user interaction and saves the transcript after each send. The first frame does not wait for provider or terminal metadata: the OpenRouter catalogue loads when `/model` opens, and the terminal background is requested asynchronously.
+7. `tui.Run` owns user interaction. It receives the goal manager and the same save callback the transcript uses, so a goal transition made in the UI reaches disk before the first turn of that goal is sent, and again after every turn. The first frame does not wait for provider or terminal metadata: the OpenRouter catalogue loads when `/model` opens, and the terminal background is requested asynchronously.
 8. `/provider` calls back into `cmd/neo`: the CLI builds and validates the chosen provider, calls `agent.SetBackend` and, when it follows the coordinator, the subagent runner's `SetBackend`, then `Config.WriteBackend` rewrites `provider:` and `model:` in the loaded config file. The TUI only receives the resulting provider, model, and model catalogue, so provider knowledge stays at the CLI boundary.
 
 ## Execution Boundary

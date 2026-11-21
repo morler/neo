@@ -6,9 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/owainlewis/neo/internal/agent"
 	"github.com/owainlewis/neo/internal/config"
 	"github.com/owainlewis/neo/internal/goal"
+	"github.com/owainlewis/neo/internal/llm/llmtest"
 	"github.com/owainlewis/neo/internal/profile"
+	"github.com/owainlewis/neo/internal/session"
 	"github.com/owainlewis/neo/internal/tools"
 	"github.com/owainlewis/neo/internal/workflow"
 )
@@ -125,5 +128,172 @@ func TestGoalToolRejectsAnUnknownActionThroughTheRegistry(t *testing.T) {
 	}
 	if _, err := tool.Run(t.Context(), map[string]any{"action": "resume"}); err == nil {
 		t.Fatal("the registry-exposed goal tool accepted a user-only action")
+	}
+}
+
+func TestSaveChatSessionPersistsTheManagerGoal(t *testing.T) {
+	ctx := t.Context()
+	store := session.NewStore(t.TempDir())
+	sess, err := store.Create(ctx, session.Metadata{Model: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := agent.New(agent.Config{Model: "test", Provider: &llmtest.FakeProvider{}})
+	mgr, warning := chatGoalManager(nil)
+	if warning != "" {
+		t.Fatalf("warning = %q", warning)
+	}
+	started, err := mgr.Start("make go test ./... pass")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	if err := saveChatSession(ctx, store, sess, ag, mgr, "/workspace", ""); err != nil {
+		t.Fatalf("saveChatSession: %v", err)
+	}
+	loaded, err := store.Load(ctx, sess.Metadata.ID)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Goal == nil || loaded.Goal.ID != started.State.ID {
+		t.Fatalf("saved goal = %+v, want %s", loaded.Goal, started.State.ID)
+	}
+	if loaded.Goal.Objective != "make go test ./... pass" {
+		t.Fatalf("objective = %q", loaded.Goal.Objective)
+	}
+}
+
+func TestSaveChatSessionTracksEachTransition(t *testing.T) {
+	ctx := t.Context()
+	store := session.NewStore(t.TempDir())
+	sess, err := store.Create(ctx, session.Metadata{Model: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := agent.New(agent.Config{Model: "test", Provider: &llmtest.FakeProvider{}})
+	mgr, _ := chatGoalManager(nil)
+	started, err := mgr.Start("ship the change")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	save := func() {
+		t.Helper()
+		if err := saveChatSession(ctx, store, sess, ag, mgr, "/workspace", ""); err != nil {
+			t.Fatalf("saveChatSession: %v", err)
+		}
+	}
+	save()
+
+	if _, err := mgr.Pause("user interrupt"); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	save()
+	loaded, err := store.Load(ctx, sess.Metadata.ID)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Goal == nil || loaded.Goal.Status != goal.Paused {
+		t.Fatalf("saved status = %+v, want paused", loaded.Goal)
+	}
+
+	if _, err := mgr.Resume(); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if _, err := mgr.RequestComplete(started.State.ID, "go test ./... passes"); err != nil {
+		t.Fatalf("RequestComplete: %v", err)
+	}
+	save()
+	loaded, err = store.Load(ctx, sess.Metadata.ID)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Goal.Status != goal.Complete || loaded.Goal.LastReason != "go test ./... passes" {
+		t.Fatalf("saved goal = %+v, want complete with evidence", loaded.Goal)
+	}
+
+	if _, err := mgr.Clear(); err != nil {
+		t.Fatalf("Clear: %v", err)
+	}
+	save()
+	loaded, err = store.Load(ctx, sess.Metadata.ID)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Goal != nil {
+		t.Fatalf("cleared goal still persisted: %+v", loaded.Goal)
+	}
+}
+
+func TestSaveChatSessionWithoutAManagerKeepsTheSavedGoal(t *testing.T) {
+	ctx := t.Context()
+	store := session.NewStore(t.TempDir())
+	mgr, _ := chatGoalManager(nil)
+	if _, err := mgr.Start("keep me"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	sess, err := store.Create(ctx, session.Metadata{Model: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := agent.New(agent.Config{Model: "test", Provider: &llmtest.FakeProvider{}})
+	if err := saveChatSession(ctx, store, sess, ag, mgr, "/workspace", ""); err != nil {
+		t.Fatalf("saveChatSession: %v", err)
+	}
+
+	// A caller that never wired a manager must not erase the goal it cannot see.
+	if err := saveChatSession(ctx, store, sess, ag, nil, "/workspace", ""); err != nil {
+		t.Fatalf("saveChatSession without a manager: %v", err)
+	}
+	loaded, err := store.Load(ctx, sess.Metadata.ID)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Goal == nil || loaded.Goal.Objective != "keep me" {
+		t.Fatalf("goal = %+v, want it preserved", loaded.Goal)
+	}
+}
+
+func TestResumedSessionRestoresTheGoalIntoTheManager(t *testing.T) {
+	ctx := t.Context()
+	store := session.NewStore(t.TempDir())
+	sess, err := store.Create(ctx, session.Metadata{Model: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := chatGoalManager(nil)
+	started, err := first.Start("finish the migration")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := first.ConsumeAttempt(); err != nil {
+		t.Fatalf("ConsumeAttempt: %v", err)
+	}
+	ag := agent.New(agent.Config{Model: "test", Provider: &llmtest.FakeProvider{}})
+	if err := saveChatSession(ctx, store, sess, ag, first, "/workspace", ""); err != nil {
+		t.Fatalf("saveChatSession: %v", err)
+	}
+
+	// Resuming is exactly this: load the record, then rebuild the manager.
+	loaded, err := store.Load(ctx, sess.Metadata.ID)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	resumed, warning := chatGoalManager(loaded.Goal)
+	if warning != "" {
+		t.Fatalf("resume warning = %q", warning)
+	}
+	snap := resumed.Snapshot()
+	if snap == nil || snap.ID != started.State.ID {
+		t.Fatalf("restored = %+v, want %s", snap, started.State.ID)
+	}
+	if snap.Attempts.Used != 1 || snap.Status != goal.Active {
+		t.Fatalf("restored state = %+v, want one attempt already used", snap)
+	}
+}
+
+func TestChatGoalManagerWarningMentionsTheGoalID(t *testing.T) {
+	_, warning := chatGoalManager(&goal.State{ID: "goal_broken", Status: goal.Active})
+	if !strings.Contains(warning, "goal_broken") {
+		t.Fatalf("warning = %q, want it to name the rejected goal", warning)
 	}
 }

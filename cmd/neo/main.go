@@ -701,6 +701,24 @@ func runChatSession(ctx context.Context, store *session.Store, sess *session.Ses
 	if !ok {
 		return 1
 	}
+	// The session exists before the goal manager is built: the goal belongs to
+	// the session, so resuming restores it from the record just loaded.
+	if sess == nil {
+		var err error
+		adapterName := prov.Name()
+		sess, err = store.Create(ctx, session.Metadata{
+			CWD:        cwd,
+			Agent:      agentProfile.Name,
+			Model:      model,
+			Provider:   sessionProviderID(adapterName),
+			OpenAIAuth: adapterOpenAIAuth(adapterName),
+		})
+		if err != nil {
+			fmt.Fprintf(streams.err, "create session: %v\n", err)
+			return 1
+		}
+	}
+
 	// The chat agent is the primary coordinator. It gets the agent tool (as
 	// caller node 0) so it can spawn amnesiac subagents with self-contained
 	// prompts directly from the conversation. Sequencing is the agent's
@@ -729,21 +747,6 @@ func runChatSession(ctx context.Context, store *session.Store, sess *session.Ses
 	}
 	reg := newRegistry(cwd, root, extra...)
 
-	if sess == nil {
-		var err error
-		adapterName := prov.Name()
-		sess, err = store.Create(ctx, session.Metadata{
-			CWD:        cwd,
-			Agent:      agentProfile.Name,
-			Model:      model,
-			Provider:   sessionProviderID(adapterName),
-			OpenAIAuth: adapterOpenAIAuth(adapterName),
-		})
-		if err != nil {
-			fmt.Fprintf(streams.err, "create session: %v\n", err)
-			return 1
-		}
-	}
 	// Skills are loaded once: the catalog is advertised in the system prompt
 	// (via chatSystem), and the same slice drives $name and /name expansion in
 	// the TUI.
@@ -766,8 +769,11 @@ func runChatSession(ctx context.Context, store *session.Store, sess *session.Ses
 		Usage:            sess.Usage,
 	})
 
+	// saveSession writes the transcript and the goal together. Every goal
+	// transition that happens in this process goes through it, so the messages
+	// and the goal they belong to never disagree on disk.
 	saveSession := func() error {
-		return saveChatSession(ctx, store, sess, ag, cwd, agentProfile.Name)
+		return saveChatSession(ctx, store, sess, ag, goalManager, cwd, agentProfile.Name)
 	}
 
 	// The active backend moves with /provider, so both switchers read it from
@@ -836,6 +842,8 @@ func runChatSession(ctx context.Context, store *session.Store, sess *session.Ses
 
 	if err := tui.Run(ctx, ag, model, Version, cwd, sk,
 		tui.WithAfterSend(saveSession),
+		tui.WithGoalManager(goalManager),
+		tui.WithGoalPersist(saveSession),
 		tui.WithModelSwitcher(providerName, modelChoices(cfg, providerName), switchModel),
 		tui.WithModelChoicesLoader(modelChoicesLoader(cfg, providerName)),
 		tui.WithProviderSwitcher(providerChoices(cfg), switchProvider),
@@ -849,10 +857,16 @@ func runChatSession(ctx context.Context, store *session.Store, sess *session.Ses
 	return 0
 }
 
-func saveChatSession(ctx context.Context, store *session.Store, sess *session.Session, ag *agent.Agent, cwd, agentName string) error {
+func saveChatSession(ctx context.Context, store *session.Store, sess *session.Session, ag *agent.Agent, goals *goal.Manager, cwd, agentName string) error {
 	activeProvider, activeModel := ag.Backend()
 	sess.Messages = ag.Transcript()
 	sess.Usage = ag.Usage()
+	// Only a caller holding a manager may change the saved goal. A caller with
+	// none (a test double, or a future non-goal path) leaves whatever the
+	// session already recorded rather than erasing it.
+	if goals != nil {
+		sess.Goal = goals.Snapshot()
+	}
 	sess.Metadata.CWD = cwd
 	// Resuming with a different --agent switches the session's agent, so record
 	// the one actually in use rather than the one it was created with.

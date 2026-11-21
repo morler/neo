@@ -1,7 +1,7 @@
 ---
 id: 16
 title: Restore, own, and persist goal state from the chat composition root
-status: open
+status: closed
 priority: high
 labels:
     - feature
@@ -16,6 +16,7 @@ relations:
         - 15
 created: "2026-11-21"
 updated: "2026-11-21"
+closed: "2026-11-21"
 ---
 
 ## 背景

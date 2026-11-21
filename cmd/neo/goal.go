@@ -9,10 +9,11 @@ import (
 // chatGoalManager builds the chat session's goal manager. A goal saved with the
 // session is restored so resuming continues the same objective; a goal the
 // manager rejects is reported as a warning and the session starts without one,
-// because losing /goal must not make an otherwise valid session unopenable.
+// because an unreadable goal must not make an otherwise valid session
+// unopenable.
 //
-// Budget wiring (goals.max_attempts) and saving transitions back into the
-// session are separate concerns handled around this manager.
+// The attempt budget comes from goals.max_attempts (issue #15); until that
+// config lands this uses the package default.
 func chatGoalManager(saved *goal.State) (*goal.Manager, string) {
 	mgr, err := goal.NewManager(saved, goal.Limits{})
 	if err != nil {
