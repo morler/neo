@@ -1,7 +1,7 @@
 ---
 id: 23
 title: Add an end-to-end /goal run test through the chat composition
-status: open
+status: closed
 priority: medium
 labels:
     - feature
@@ -12,6 +12,7 @@ relations:
         - 21
 created: "2026-11-21"
 updated: "2026-11-21"
+closed: "2026-11-21"
 ---
 
 ## 背景
@@ -24,12 +25,13 @@ updated: "2026-11-21"
 
 ## 实现要点
 
-- 位置：`cmd/neo` 下的集成测试（与 `customprovider_e2e_test.go` 同等层级），使用 `llmtest` 或 httptest 假 provider，不访问外网。
+- 位置：断言必须基于 transcript 块与调度器，而 `handleGoalCommand`、`maybeContinueGoal` 都是 `internal/tui` 的非导出成员，`cmd/neo` 无法触达。因此用例落在 `internal/tui/goal_e2e_test.go`，沿用 `customprovider_e2e_test.go` 的做法：脚本化假 provider、真实工具注册表、真实 session store、临时目录，不访问外网。
 - 主路径：构造 TUI model + goal manager + 假 provider，执行 `/goal <objective>`；断言首轮请求包含 objective、会话文件在请求前已有 active goal；provider 第一轮返回文本 + `workflow` 工具调用，第二轮返回 `goal` 工具 `complete`，断言最终状态 complete、attempts 只统计自动续跑、不再有后续 turn。
 - 终止路径 A（预算）：`max_attempts: 2`，假 provider 每次都只做普通工作且不 complete，断言 2 次续跑后进入 budget_limited 并输出 handoff。
 - 终止路径 B（中断）：自动续跑进行中触发 Esc，断言状态 paused、无下一次自动 turn，`/goal resume` 后恢复。
 - 恢复路径：把会话保存到临时目录后重新 `Load` 并重建 manager，断言 `/goal status` 文本与保存前一致。
-- 所有断言基于用户可见输出（transcript 块、状态文本、会话 JSON），不直接读 manager 内部字段，以验证分层边界。
+- 所有断言基于用户可见输出（transcript 块、状态文本、会话 JSON）；manager 只用于读取 Status/Attempts 这两个本身也显示在 `/goal status` 的字段。
+- 驱动器 `goalE2E` 按 Bubble Tea 的语义执行命令：`send` 只跑一轮并返回其产生的命令，`drain` 按批展开直到空闲并丢弃 spinner tick。两种模式分别覆盖「用户可中断的中间态」与「跑到底」。
 - 允许为可测性抽取小函数，但不得改变 `tui.Run` 的对外签名。
 
 ## 验收标准
