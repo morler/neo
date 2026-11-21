@@ -515,6 +515,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		canceled := errors.Is(msg.err, context.Canceled)
 		if canceled {
 			m.appendBlock(noticeBlock{text: "turn canceled"})
+			// Esc and Ctrl-C already paused the goal when they canceled the
+			// turn. A cancellation that arrived another way still must not
+			// fall through to a continuation, so it pauses the goal here.
+			m.interruptTurn("turn canceled")
 		} else if errors.Is(msg.err, agent.ErrMaxTurns) {
 			// EventMaxTurnsReached already appended a maxTurnsBlock
 			// describing this turn; don't also emit a result summary.

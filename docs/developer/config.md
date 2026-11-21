@@ -155,6 +155,10 @@ Each feature flag is tri-state in Go: absent means use the built-in default, whi
 | `skills` | `true` | Discover skills and expand $name references or /name slash invocations. |
 | `prompt_caching` | `true` | Mark the stable system prompt prefix as cacheable when the provider supports it. |
 
+Interrupting a running goal turn with `esc` or quitting with `ctrl+c` pauses the
+goal instead of letting it continue, so a canceled turn never loops. `/goal
+resume` starts it again with a fresh attempt budget.
+
 ## Output
 
 `output.verbose` is tri-state, same as feature flags: absent or `false` means concise mode (the default).

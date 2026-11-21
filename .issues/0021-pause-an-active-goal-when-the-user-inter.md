@@ -1,7 +1,7 @@
 ---
 id: 21
 title: Pause an active goal when the user interrupts a turn
-status: open
+status: closed
 priority: high
 labels:
     - feature
@@ -13,6 +13,7 @@ relations:
         - 19
 created: "2026-11-21"
 updated: "2026-11-21"
+closed: "2026-11-21"
 ---
 
 ## 背景

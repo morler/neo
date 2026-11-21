@@ -124,6 +124,9 @@ func (m *model) requestQuit() tea.Cmd {
 	}
 	if m.busy {
 		m.quitPending = true
+		// Leaving while a goal turn runs is an interrupt too, so the goal pauses
+		// instead of being resumed by a continuation the canceled turn queues.
+		m.interruptTurn("quit while the goal was running")
 		if m.sendCancel != nil {
 			m.sendCancel()
 		}
@@ -156,6 +159,7 @@ func (m *model) handleEscape() {
 	}
 	if m.busy && m.sendCancel != nil {
 		logx.Debug("tui send canceled", "mode", "soft_interrupt")
+		m.interruptTurn("turn interrupted")
 		m.sendCancel()
 	}
 }
