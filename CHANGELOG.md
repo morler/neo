@@ -12,6 +12,11 @@ All notable changes to Neo will be documented in this file.
   an adapter per vendor. Endpoints with no `api_key_env` send no authorization
   header; configured keys are validated at startup and redacted in logs.
   Custom backends appear in `/model`, `neo doctor`, and resumed sessions.
+- `/model` now loads the live model catalogue of a custom OpenAI-compatible
+  backend from `GET <endpoint>/models` when the picker opens, instead of only
+  listing `providers.<name>.models`. The static list stays as the immediate
+  fallback and supplies display names; a failed or slow fetch keeps it visible
+  and reports the error in the picker.
 - Added `/provider` to switch the running chat to another built-in or custom
   backend without restarting. Neo validates credentials first, moves the chat
   agent and any coordinator-following subagent runner to the new provider's

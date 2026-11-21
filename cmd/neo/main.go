@@ -801,14 +801,14 @@ func runChatSession(ctx context.Context, store *session.Store, sess *session.Ses
 			Provider: name,
 			Model:    nextModel,
 			Choices:  modelChoices(cfg, name),
-			Loader:   modelChoicesLoader(name),
+			Loader:   modelChoicesLoader(cfg, name),
 		}, nil
 	}
 
 	if err := tui.Run(ctx, ag, model, Version, cwd, sk,
 		tui.WithAfterSend(saveSession),
 		tui.WithModelSwitcher(providerName, modelChoices(cfg, providerName), switchModel),
-		tui.WithModelChoicesLoader(modelChoicesLoader(providerName)),
+		tui.WithModelChoicesLoader(modelChoicesLoader(cfg, providerName)),
 		tui.WithProviderSwitcher(providerChoices(cfg), switchProvider),
 		tui.WithWorkflowEvents(workflowEvents),
 		tui.WithVerbose(cfg.VerboseEnabled()),

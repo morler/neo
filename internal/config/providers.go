@@ -33,8 +33,9 @@ type CustomProvider struct {
 	// DefaultModel is used when neither `model` nor a saved session supplies
 	// one.
 	DefaultModel string `yaml:"default_model"`
-	// Models is an optional static list for the /model picker. Neo does not
-	// fetch a catalogue from a custom backend.
+	// Models is an optional static list for the /model picker. It is the
+	// fallback shown while the live GET <endpoint>/models catalogue loads, and
+	// the source of display names for ids the catalogue returns too.
 	Models []CustomModel `yaml:"models"`
 }
 

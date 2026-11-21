@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,9 +110,66 @@ func TestModelChoices_CustomProviderWithoutModelsIsEmpty(t *testing.T) {
 	}
 }
 
-func TestModelChoicesLoader_CustomProviderDoesNotLoadCatalogue(t *testing.T) {
-	if loader := modelChoicesLoader("local"); loader != nil {
-		t.Fatal("custom providers must not fetch a remote catalogue")
+func TestModelChoicesLoader_CustomProviderFetchesCatalogue(t *testing.T) {
+	cfg := customProviderConfig()
+	p := cfg.Providers["local"]
+	p.Models = []config.CustomModel{{ID: "qwen3-coder", Name: "Qwen3 Coder", Description: "Local coder model"}}
+	cfg.Providers["local"] = p
+
+	var gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen3-coder"}]}`))
+	}))
+	defer srv.Close()
+	cfg.Providers["local"] = config.CustomProvider{
+		Endpoint:  srv.URL + "/v1",
+		APIKeyEnv: p.APIKeyEnv,
+		Models:    p.Models,
+	}
+	t.Setenv("LOCAL_LLM_API_KEY", "secret")
+
+	loader := modelChoicesLoader(cfg, "local")
+	if loader == nil {
+		t.Fatal("custom providers load their catalogue when /model opens")
+	}
+	if static := modelChoicesLoader(cfg, "anthropic"); static != nil {
+		t.Fatal("built-in providers with static lists need no loader")
+	}
+
+	choices, err := loader(t.Context())
+	if err != nil {
+		t.Fatalf("loader: %v", err)
+	}
+	if gotPath != "/v1/models" {
+		t.Fatalf("path = %q, want /v1/models", gotPath)
+	}
+	if gotAuth != "Bearer secret" {
+		t.Fatalf("authorization = %q, want the configured key", gotAuth)
+	}
+	if len(choices) != 1 || choices[0].ID != "qwen3-coder" {
+		t.Fatalf("choices = %#v, want the live catalogue", choices)
+	}
+	// The live id keeps the configured display name from the static list.
+	if choices[0].Name != "Qwen3 Coder" {
+		t.Fatalf("name = %q, want the configured name", choices[0].Name)
+	}
+}
+
+func TestModelChoicesLoader_CustomProviderErrorsOnFailedFetch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "nope", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cfg := customProviderConfig()
+	cfg.Providers["local"] = config.CustomProvider{Endpoint: srv.URL + "/v1"}
+	loader := modelChoicesLoader(cfg, "local")
+	if loader == nil {
+		t.Fatal("expected a loader for a custom provider")
+	}
+	if _, err := loader(t.Context()); err == nil {
+		t.Fatal("expected a failed catalogue fetch to surface an error")
 	}
 }
 

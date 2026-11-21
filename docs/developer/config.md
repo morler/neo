@@ -103,7 +103,7 @@ providers:
 | `endpoint` | yes | Base URL of the backend, such as `https://host/v1`. Neo appends `/chat/completions`; an endpoint that already ends with that path is used unchanged. |
 | `api_key_env` | no | Environment variable holding the key. Omit to send no `Authorization` header at all, which is the normal case for a local runtime. |
 | `default_model` | no | Used when `model` is unset and the session records none. |
-| `models` | no | Static list for the `/model` picker. Neo never fetches a catalogue from a custom backend, so an omitted list leaves the picker showing only the current model. |
+| `models` | no | Static list for the `/model` picker. It is the immediate fallback: opening `/model` also fetches `GET <endpoint>/models` for the live catalogue, and those ids replace the static entries (matching ids keep the configured name and description). A failed fetch keeps the static list and shows the error in the picker. |
 | `api` | no | Wire protocol. Only `openai_compatible` exists, and it is the default. |
 
 Resolution order is fixed: the four built-in names always win, then `providers`
@@ -118,6 +118,10 @@ Validation happens at startup, so mistakes surface before the first model call:
 - `api_key_env` must be a valid environment-variable name and cannot be shared
   by two providers; each backend reads its own variable.
 - `models` entries need an `id`; duplicate ids keep the first occurrence.
+- The live catalogue is read from `<endpoint>/models`, derived from the
+  chat-completions endpoint, and accepts both `{"data":[{"id":...}]}` and a bare
+  JSON array. It is optional: a gateway without that route leaves the static
+  list in place and reports the fetch error inside `/model`.
 - An unknown protocol in `api` is rejected.
 - A configured `api_key_env` whose variable is unset fails immediately with the
   variable name, instead of surfacing as a 401 mid-conversation.

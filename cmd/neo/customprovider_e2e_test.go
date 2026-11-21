@@ -44,7 +44,8 @@ func (b *customBackend) start(t *testing.T) *httptest.Server {
 		var recorded recordedRequest
 		recorded.Path = r.URL.Path
 		recorded.Authorization = r.Header.Get("Authorization")
-		if err := json.NewDecoder(r.Body).Decode(&recorded.Raw); err != nil {
+		// A catalogue fetch is a GET with no body; chat calls always send one.
+		if err := json.NewDecoder(r.Body).Decode(&recorded.Raw); err != nil && r.Method != http.MethodGet {
 			t.Errorf("decode request body: %v", err)
 		}
 		if model, ok := recorded.Raw["model"].(string); ok {
@@ -269,6 +270,44 @@ func TestCustomProviderEndToEnd_ToolCallRoundTrip(t *testing.T) {
 	}
 	if !sawToolResult {
 		t.Fatalf("second request is missing the tool result: %#v", requests[1].Messages)
+	}
+}
+
+func TestCustomProviderEndToEnd_ModelPickerFetchesCatalogue(t *testing.T) {
+	backend := &customBackend{respond: func(int) (int, string) {
+		return http.StatusOK, `{"data":[{"id":"qwen3-coder"},{"id":"llama-4"}]}`
+	}}
+	server := backend.start(t)
+	_, cfg := customProviderWorkspace(t, server.URL+"/v1", "LOCAL_LLM_API_KEY")
+	t.Setenv("LOCAL_LLM_API_KEY", "secret-key")
+
+	// The loader is what /model invokes when its picker opens.
+	loader := modelChoicesLoader(cfg, cfg.Provider)
+	if loader == nil {
+		t.Fatal("a custom provider must load its model catalogue for /model")
+	}
+	choices, err := loader(t.Context())
+	if err != nil {
+		t.Fatalf("loader: %v", err)
+	}
+
+	requests := backend.recorded(t)
+	if len(requests) != 1 {
+		t.Fatalf("requests = %d, want one catalogue fetch", len(requests))
+	}
+	got := requests[0]
+	if got.Path != "/v1/models" {
+		t.Fatalf("path = %q, want /v1/models derived from the chat endpoint", got.Path)
+	}
+	if got.Authorization != "Bearer secret-key" {
+		t.Fatalf("authorization = %q, want the configured key", got.Authorization)
+	}
+	if len(choices) != 2 || choices[0].ID != "llama-4" || choices[1].ID != "qwen3-coder" {
+		t.Fatalf("choices = %#v, want the sorted live catalogue", choices)
+	}
+	// The configured static example keeps its display name for a listed id.
+	if choices[1].Name != "Qwen3 Coder" {
+		t.Fatalf("name = %q, want the configured name", choices[1].Name)
 	}
 }
 

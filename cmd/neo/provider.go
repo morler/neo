@@ -227,8 +227,8 @@ func modelChoices(cfg *config.Config, activeProvider string) []tui.ModelChoice {
 }
 
 // customModelChoices maps a custom provider's static model list into the
-// picker. Neo never fetches a catalogue from a custom backend, so an omitted
-// list simply leaves the picker showing the current model.
+// picker. It is the fallback while the live catalogue loads, so an omitted list
+// simply leaves the picker showing the current model.
 func customModelChoices(p config.CustomProvider) []tui.ModelChoice {
 	choices := make([]tui.ModelChoice, 0, len(p.Models))
 	for _, m := range p.Models {
@@ -347,13 +347,66 @@ func loadOpenRouterModelChoices(ctx context.Context) ([]tui.ModelChoice, error) 
 	return choices, nil
 }
 
+// loadCustomModelChoices fetches a custom backend's live model catalogue for
+// the picker. It reuses the configured static list for display names, so a
+// gateway that lists ids only still shows the friendly names of known models.
+// The request is time-boxed: a slow or offline gateway leaves the fallback
+// visible and reports the error inside the picker.
+func loadCustomModelChoices(cfg *config.Config, name string) func(context.Context) ([]tui.ModelChoice, error) {
+	p, ok := cfg.ProviderConfig(name)
+	if !ok {
+		return nil
+	}
+	spec := custom.Spec{
+		Name:         name,
+		Endpoint:     p.Endpoint,
+		APIKeyEnv:    p.APIKeyEnv,
+		DefaultModel: p.DefaultModel,
+	}
+	known := make(map[string]tui.ModelChoice, len(p.Models))
+	for _, m := range customModelChoices(p) {
+		known[m.ID] = m
+	}
+	return func(ctx context.Context) ([]tui.ModelChoice, error) {
+		fetchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		models, err := custom.Models(fetchCtx, spec, nil)
+		if err != nil {
+			return nil, err
+		}
+		if len(models) == 0 {
+			return nil, fmt.Errorf("%s: empty model catalogue", name)
+		}
+
+		choices := make([]tui.ModelChoice, 0, len(models))
+		for _, m := range models {
+			choice := tui.ModelChoice{ID: m.ID, Name: m.Name, Description: m.Description}
+			if prev, ok := known[m.ID]; ok {
+				if strings.TrimSpace(choice.Name) == "" {
+					choice.Name = prev.Name
+				}
+				if strings.TrimSpace(choice.Description) == "" {
+					choice.Description = prev.Description
+				}
+			}
+			choices = append(choices, choice)
+		}
+		return choices, nil
+	}
+}
+
 // modelChoicesLoader returns the lazy catalogue loader for providers whose
 // model list is not static. Other providers return nil.
-func modelChoicesLoader(provider string) func(context.Context) ([]tui.ModelChoice, error) {
-	if provider == "openrouter" {
+func modelChoicesLoader(cfg *config.Config, provider string) func(context.Context) ([]tui.ModelChoice, error) {
+	switch {
+	case cfg.IsCustomProvider(provider):
+		return loadCustomModelChoices(cfg, provider)
+	case provider == "openrouter":
 		return loadOpenRouterModelChoices
+	default:
+		return nil
 	}
-	return nil
 }
 
 // providerChoices lists every usable backend for the /provider picker: the
