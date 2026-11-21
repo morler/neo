@@ -1,7 +1,7 @@
 ---
 id: 12
 title: Add the internal/goal state machine, transitions, and blocked audit
-status: open
+status: closed
 priority: high
 labels:
     - feature
@@ -12,6 +12,7 @@ relations:
         - 16
 created: "2026-11-21"
 updated: "2026-11-21"
+closed: "2026-11-21"
 ---
 
 ## 背景
