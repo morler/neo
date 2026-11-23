@@ -95,61 +95,23 @@ func (m *model) closeModelBrowser() {
 }
 
 func (m *model) handleModelBrowserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-	if key == "ctrl+c" || key == "ctrl+d" {
-		return m, m.requestQuit()
-	}
-	if m.quitPending {
-		return m, nil
-	}
-	switch key {
-	case "esc":
-		m.closeModelBrowser()
-	case "up":
-		m.moveModelSelection(-1)
-	case "down":
-		m.moveModelSelection(1)
-	case "backspace", "delete":
-		if m.models.query != "" {
-			m.models.query = dropLastRune(m.models.query)
-			m.models.err = nil
-			m.ensureModelSelection()
-		}
-	case "enter":
-		m.selectCurrentModel()
-	default:
-		s := msg.String()
-		if utf8.RuneCountInString(s) == 1 && s >= " " && s != "\x7f" {
-			m.models.query += s
-			m.models.err = nil
-			m.ensureModelSelection()
-		}
-	}
-	return m, nil
+	return m.handlePickerKey(msg, pickerTarget{
+		query:    &m.models.query,
+		selected: &m.models.selected,
+		err:      &m.models.err,
+		close:    m.closeModelBrowser,
+		move:     m.moveModelSelection,
+		ensure:   m.ensureModelSelection,
+		choose:   m.selectCurrentModel,
+	})
 }
 
 func (m *model) moveModelSelection(delta int) {
-	items := m.filteredModels()
-	if len(items) == 0 {
-		m.models.selected = 0
-		return
-	}
-	n := len(items)
-	m.models.selected = (m.models.selected + delta + n) % n
+	moveSelection(len(m.filteredModels()), &m.models.selected, delta)
 }
 
 func (m *model) ensureModelSelection() {
-	items := m.filteredModels()
-	if len(items) == 0 {
-		m.models.selected = 0
-		return
-	}
-	if m.models.selected >= len(items) {
-		m.models.selected = len(items) - 1
-	}
-	if m.models.selected < 0 {
-		m.models.selected = 0
-	}
+	clampSelection(len(m.filteredModels()), &m.models.selected)
 }
 
 func (m *model) selectCurrentModel() {

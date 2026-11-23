@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -72,61 +71,23 @@ func (m *model) closeProviderBrowser() {
 }
 
 func (m *model) handleProviderBrowserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-	if key == "ctrl+c" || key == "ctrl+d" {
-		return m, m.requestQuit()
-	}
-	if m.quitPending {
-		return m, nil
-	}
-	switch key {
-	case "esc":
-		m.closeProviderBrowser()
-	case "up":
-		m.moveProviderSelection(-1)
-	case "down":
-		m.moveProviderSelection(1)
-	case "backspace", "delete":
-		if m.providers.query != "" {
-			m.providers.query = dropLastRune(m.providers.query)
-			m.providers.err = nil
-			m.ensureProviderSelection()
-		}
-	case "enter":
-		m.selectCurrentProvider()
-	default:
-		s := msg.String()
-		if utf8.RuneCountInString(s) == 1 && s >= " " && s != "\x7f" {
-			m.providers.query += s
-			m.providers.err = nil
-			m.ensureProviderSelection()
-		}
-	}
-	return m, nil
+	return m.handlePickerKey(msg, pickerTarget{
+		query:    &m.providers.query,
+		selected: &m.providers.selected,
+		err:      &m.providers.err,
+		close:    m.closeProviderBrowser,
+		move:     m.moveProviderSelection,
+		ensure:   m.ensureProviderSelection,
+		choose:   m.selectCurrentProvider,
+	})
 }
 
 func (m *model) moveProviderSelection(delta int) {
-	items := m.filteredProviders()
-	if len(items) == 0 {
-		m.providers.selected = 0
-		return
-	}
-	n := len(items)
-	m.providers.selected = (m.providers.selected + delta + n) % n
+	moveSelection(len(m.filteredProviders()), &m.providers.selected, delta)
 }
 
 func (m *model) ensureProviderSelection() {
-	items := m.filteredProviders()
-	if len(items) == 0 {
-		m.providers.selected = 0
-		return
-	}
-	if m.providers.selected >= len(items) {
-		m.providers.selected = len(items) - 1
-	}
-	if m.providers.selected < 0 {
-		m.providers.selected = 0
-	}
+	clampSelection(len(m.filteredProviders()), &m.providers.selected)
 }
 
 // selectCurrentProvider switches backends. A failed switch keeps the picker
