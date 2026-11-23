@@ -17,10 +17,7 @@ func TestNewModelKeepsTranscriptMouseWheelStateStable(t *testing.T) {
 	t.Parallel()
 
 	base := makeTestModel()
-	m, err := newModel(context.Background(), base.ag, "test", "dev", "", nil, Options{})
-	if err != nil {
-		t.Fatalf("new model: %v", err)
-	}
+	m := newModel(context.Background(), base.ag, "test", "dev", "", nil, Options{})
 	if !m.viewport.MouseWheelEnabled {
 		t.Fatal("MouseWheelEnabled = false, want transcript wheel scrolling")
 	}
@@ -52,10 +49,7 @@ func TestNewModelFilePickerUsesWorkingDirectory(t *testing.T) {
 	}
 
 	base := makeTestModel()
-	m, err := newModel(context.Background(), base.ag, "test", "dev", workingDir, nil, Options{})
-	if err != nil {
-		t.Fatalf("new model: %v", err)
-	}
+	m := newModel(context.Background(), base.ag, "test", "dev", workingDir, nil, Options{})
 	m.input.SetValue("@docs/file")
 	m.updateFilePicker()
 

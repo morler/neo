@@ -97,13 +97,10 @@ func TestNewModelCarriesGoalWiring(t *testing.T) {
 		t.Fatalf("NewManager: %v", err)
 	}
 	saves := 0
-	m, err := newModel(t.Context(), base.ag, "test", "dev", "", nil, Options{
+	m := newModel(t.Context(), base.ag, "test", "dev", "", nil, Options{
 		GoalManager: mgr,
 		GoalPersist: func() error { saves++; return nil },
 	})
-	if err != nil {
-		t.Fatalf("newModel: %v", err)
-	}
 	if m.goal != mgr {
 		t.Fatal("newModel dropped the goal manager")
 	}

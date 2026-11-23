@@ -124,10 +124,7 @@ func Run(ctx context.Context, ag *agent.Agent, model, version, cwd string, sk []
 	for _, option := range options {
 		option(&opts)
 	}
-	m, err := newModel(ctx, ag, model, version, cwd, sk, opts)
-	if err != nil {
-		return err
-	}
+	m := newModel(ctx, ag, model, version, cwd, sk, opts)
 	// AltScreen + MouseMode are properties of the View in v2 (see View()).
 	p := tea.NewProgram(m, programOptions(opts)...)
 	// Pipe agent events directly into the Bubble Tea program. This avoids a
@@ -150,7 +147,7 @@ func Run(ctx context.Context, ag *agent.Agent, model, version, cwd string, sk []
 			return false, ctx.Err()
 		}
 	})
-	_, err = p.Run()
+	_, err := p.Run()
 	if err != nil {
 		logx.Debug("tui exit", "error", err.Error())
 	} else {
@@ -301,17 +298,17 @@ type model struct {
 	verbose             bool
 }
 
-func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDir string, sk []skills.Skill, opts Options) (*model, error) {
+func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDir string, sk []skills.Skill, opts Options) *model {
 	// Start dark and let Bubble Tea report the terminal background
 	// asynchronously (see Init). Querying it here with lipgloss would block
 	// the first frame for up to four seconds on terminals that do not answer
 	// DA1.
 	styleName := "dark"
-	md, err := glamour.NewTermRenderer(
+	md, renderErr := glamour.NewTermRenderer(
 		glamour.WithStandardStyle(styleName),
 		glamour.WithWordWrap(0),
 	)
-	if err != nil {
+	if renderErr != nil {
 		md = nil
 	}
 
@@ -400,7 +397,7 @@ func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDi
 		version: version,
 	})
 	m.appendTranscript(ag.Transcript())
-	return m, nil
+	return m
 }
 
 // Init asks Bubble Tea for the terminal background without blocking the first
