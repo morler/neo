@@ -245,66 +245,82 @@ func toInput(req llm.Request) []inputItem {
 	for _, m := range req.Messages {
 		switch m.Role {
 		case llm.RoleAssistant:
-			var parts []contentPart
-			flushMessage := func() {
-				if len(parts) == 0 {
-					return
-				}
-				out = append(out, inputItem{Type: "message", Role: "assistant", Content: parts})
-				parts = nil
-			}
-			for _, b := range m.Content {
-				switch b.Type {
-				case "text":
-					if b.Text != "" {
-						parts = append(parts, contentPart{Type: "output_text", Text: b.Text})
-					}
-				case "tool_use":
-					flushMessage()
-					out = append(out, inputItem{
-						Type:      "function_call",
-						CallID:    b.ID,
-						Name:      b.Name,
-						Arguments: string(llm.MarshalToolInput(b.Input)),
-					})
-				case "raw":
-					if len(b.Raw) > 0 && replayableRawItem(b.Raw) {
-						flushMessage()
-						out = append(out, inputItem{Type: "raw", Raw: b.Raw})
-					}
-				}
-			}
-			flushMessage()
-
+			out = append(out, assistantInput(m.Content)...)
 		case llm.RoleUser, llm.RoleTool:
-			// A user message may carry tool_result blocks (the agent records tool
-			// outputs on a user-role message) and/or plain text and images.
-			var parts []contentPart
-			for _, b := range m.Content {
-				switch b.Type {
-				case "tool_result":
-					out = append(out, inputItem{
-						Type:   "function_call_output",
-						CallID: b.ToolUseID,
-						Output: b.Content,
-					})
-				case "text":
-					if b.Text != "" {
-						parts = append(parts, contentPart{Type: "input_text", Text: b.Text})
-					}
-				case "image":
-					if b.Source != nil && b.Source.Data != "" {
-						parts = append(parts, contentPart{
-							Type:     "input_image",
-							ImageURL: "data:" + b.Source.MediaType + ";base64," + b.Source.Data,
-						})
-					}
-				}
+			out = append(out, userInput(m.Content)...)
+		}
+	}
+	return out
+}
+
+// assistantInput converts one assistant message. Consecutive text becomes a
+// single output_text message, and each tool call or replayable raw item is its
+// own function_call or raw item, in the order they occurred.
+func assistantInput(content []llm.ContentBlock) []inputItem {
+	var out []inputItem
+	var parts []contentPart
+	flush := func() {
+		if len(parts) == 0 {
+			return
+		}
+		out = append(out, inputItem{Type: "message", Role: "assistant", Content: parts})
+		parts = nil
+	}
+	for _, b := range content {
+		switch b.Type {
+		case "text":
+			if b.Text != "" {
+				parts = append(parts, contentPart{Type: "output_text", Text: b.Text})
 			}
-			if len(parts) > 0 {
-				out = append(out, inputItem{Type: "message", Role: "user", Content: parts})
+		case "tool_use":
+			flush()
+			out = append(out, inputItem{
+				Type:      "function_call",
+				CallID:    b.ID,
+				Name:      b.Name,
+				Arguments: string(llm.MarshalToolInput(b.Input)),
+			})
+		case "raw":
+			if len(b.Raw) > 0 && replayableRawItem(b.Raw) {
+				flush()
+				out = append(out, inputItem{Type: "raw", Raw: b.Raw})
 			}
 		}
+	}
+	flush()
+	return out
+}
+
+// userInput converts one user-role message. A user message may carry
+// tool_result blocks (the agent records tool outputs on a user-role message)
+// and/or plain text and images; results stay where they appeared so the
+// provider can match them to their calls.
+func userInput(content []llm.ContentBlock) []inputItem {
+	var out []inputItem
+	var parts []contentPart
+	for _, b := range content {
+		switch b.Type {
+		case "tool_result":
+			out = append(out, inputItem{
+				Type:   "function_call_output",
+				CallID: b.ToolUseID,
+				Output: b.Content,
+			})
+		case "text":
+			if b.Text != "" {
+				parts = append(parts, contentPart{Type: "input_text", Text: b.Text})
+			}
+		case "image":
+			if b.Source != nil && b.Source.Data != "" {
+				parts = append(parts, contentPart{
+					Type:     "input_image",
+					ImageURL: "data:" + b.Source.MediaType + ";base64," + b.Source.Data,
+				})
+			}
+		}
+	}
+	if len(parts) > 0 {
+		out = append(out, inputItem{Type: "message", Role: "user", Content: parts})
 	}
 	return out
 }

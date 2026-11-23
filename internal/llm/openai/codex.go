@@ -152,75 +152,94 @@ func parseCodexStream(raw []byte) (*llm.Response, error) {
 		return toResponse(out)
 	}
 
-	var completed *apiResponse
-	var items []outputItem
+	var st streamParse
 	sc := bufio.NewScanner(bytes.NewReader(raw))
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		data, ok := strings.CutPrefix(line, "data:")
-		if !ok {
-			continue
-		}
-		data = strings.TrimSpace(data)
-		if data == "" || data == "[DONE]" {
-			continue
-		}
-
-		var ev struct {
-			Type     string          `json:"type"`
-			Response json.RawMessage `json:"response"`
-			Item     json.RawMessage `json:"item"`
-			Error    *responseError  `json:"error"`
-			Message  string          `json:"message"`
-		}
-		if err := json.Unmarshal([]byte(data), &ev); err != nil {
-			continue // ignore malformed event lines
-		}
-
-		switch ev.Type {
-		case "response.output_item.done":
-			// Each done event carries one fully-assembled output item; this is
-			// the authoritative source of content on the Codex backend.
-			var item outputItem
-			if err := json.Unmarshal(ev.Item, &item); err == nil {
-				item.Raw = append(item.Raw[:0], ev.Item...)
-				items = append(items, item)
-			}
-		case "response.completed", "response.incomplete":
-			var out apiResponse
-			if err := json.Unmarshal(ev.Response, &out); err != nil {
-				return nil, fmt.Errorf("decode %s: %w", ev.Type, err)
-			}
-			completed = &out
-		case "response.failed", "error":
-			if ev.Error != nil && ev.Error.Message != "" {
-				return nil, fmt.Errorf("openai-codex: %s", ev.Error.Message)
-			}
-			if ev.Message != "" {
-				return nil, fmt.Errorf("openai-codex: %s", ev.Message)
-			}
-			// response.failed may nest the error inside the response object.
-			if len(ev.Response) > 0 {
-				var out apiResponse
-				if err := json.Unmarshal(ev.Response, &out); err == nil && out.Error != nil {
-					return nil, fmt.Errorf("openai-codex: %s", out.Error.Message)
-				}
-			}
-			return nil, fmt.Errorf("openai-codex: request failed")
+		if err := st.consumeLine(sc.Text()); err != nil {
+			return nil, err
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("read codex stream: %w", err)
 	}
-	if completed == nil {
+	if st.completed == nil {
 		return nil, fmt.Errorf("openai-codex: stream ended without a completed response")
 	}
 	// The Codex backend leaves `output` empty on response.completed; fill it
 	// from the per-item done events. If the server did include output (public
 	// API shape), prefer it.
-	if len(completed.Output) == 0 {
-		completed.Output = items
+	if len(st.completed.Output) == 0 {
+		st.completed.Output = st.items
 	}
-	return toResponse(*completed)
+	return toResponse(*st.completed)
+}
+
+// streamParse collects the pieces of a streamed Codex response: the finished
+// output items and the terminal response envelope.
+type streamParse struct {
+	completed *apiResponse
+	items     []outputItem
+}
+
+// consumeLine folds one `data:` line into the response. Lines that carry no
+// payload are skipped, as are malformed ones: a single bad event should not
+// discard a response the server already assembled.
+func (st *streamParse) consumeLine(line string) error {
+	line = strings.TrimSpace(line)
+	data, ok := strings.CutPrefix(line, "data:")
+	if !ok {
+		return nil
+	}
+	data = strings.TrimSpace(data)
+	if data == "" || data == "[DONE]" {
+		return nil
+	}
+	var ev struct {
+		Type     string          `json:"type"`
+		Response json.RawMessage `json:"response"`
+		Item     json.RawMessage `json:"item"`
+		Error    *responseError  `json:"error"`
+		Message  string          `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(data), &ev); err != nil {
+		return nil // ignore malformed event lines
+	}
+	switch ev.Type {
+	case "response.output_item.done":
+		// Each done event carries one fully-assembled output item; this is
+		// the authoritative source of content on the Codex backend.
+		var item outputItem
+		if err := json.Unmarshal(ev.Item, &item); err == nil {
+			item.Raw = append(item.Raw[:0], ev.Item...)
+			st.items = append(st.items, item)
+		}
+	case "response.completed", "response.incomplete":
+		var out apiResponse
+		if err := json.Unmarshal(ev.Response, &out); err != nil {
+			return fmt.Errorf("decode %s: %w", ev.Type, err)
+		}
+		st.completed = &out
+	case "response.failed", "error":
+		return eventError(ev.Error, ev.Message, ev.Response)
+	}
+	return nil
+}
+
+// eventError reports why the server ended the stream with a failure. The
+// response.failed shape may nest the message inside the response object.
+func eventError(evErr *responseError, message string, response json.RawMessage) error {
+	if evErr != nil && evErr.Message != "" {
+		return fmt.Errorf("openai-codex: %s", evErr.Message)
+	}
+	if message != "" {
+		return fmt.Errorf("openai-codex: %s", message)
+	}
+	if len(response) > 0 {
+		var out apiResponse
+		if err := json.Unmarshal(response, &out); err == nil && out.Error != nil {
+			return fmt.Errorf("openai-codex: %s", out.Error.Message)
+		}
+	}
+	return fmt.Errorf("openai-codex: request failed")
 }

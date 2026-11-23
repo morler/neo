@@ -1,12 +1,10 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 type ModelChoice struct {
@@ -159,96 +157,22 @@ func modelChoiceMatches(choice ModelChoice, query string) bool {
 
 func (m *model) modelBrowserView() string {
 	items := m.filteredModels()
-	header := styAccent.Render("Select a model")
-	query := m.models.query
-	if query == "" {
-		query = styMuted.Render("Type to search")
-	} else {
-		query = styTool.Render(query)
+	choices := make([]pickerChoice, 0, len(items))
+	for _, item := range items {
+		choices = append(choices, pickerChoice{id: item.ID, name: item.Name, description: item.Description})
 	}
-
-	listHeight := m.height - 7
-	if listHeight < 3 {
-		listHeight = 3
-	}
-	start := 0
-	if m.models.selected >= listHeight {
-		start = m.models.selected - listHeight + 1
-	}
-	end := min(len(items), start+listHeight)
-
-	var lines []string
-	for i := start; i < end; i++ {
-		choice := items[i]
-		selected := i == m.models.selected
-		prefix := "  "
-		style := lipgloss.NewStyle()
-		if selected {
-			prefix = styTool.Render("›") + " "
-			style = lipgloss.NewStyle().Background(colCardBg)
-		}
-		name := choice.Name
-		if choice.ID == m.modelTag {
-			name += " " + styMuted.Render("(current)")
-		}
-		desc := choice.Description
-		if desc == "" {
-			desc = choice.ID
-		}
-		line := prefix + styTool.Render(padRight(choice.ID, 30)) + "  " + name
-		if desc != "" && desc != choice.ID {
-			line += "  " + styMuted.Render(desc)
-		}
-		lines = append(lines, style.Width(max(1, m.width-2)).Render(truncate(line, max(1, m.width-2))))
-	}
-	if len(lines) == 0 {
-		if m.models.loading {
-			lines = append(lines, styMuted.Render("Loading…"))
-		} else {
-			lines = append(lines, styMuted.Render("No models match."))
-		}
-	}
-
-	status := fmt.Sprintf("%d / %d", min(m.models.selected+1, len(items)), len(items))
-	if len(items) == 0 {
-		status = "0 / 0"
-	}
-	if m.models.loading && len(items) == 0 {
-		status = "loading…"
-	}
-	footer := strings.Join([]string{
-		styTool.Render("enter") + styMuted.Render(" select"),
-		styTool.Render("esc") + styMuted.Render(" exit"),
-		styTool.Render("↑/↓") + styMuted.Render(" browse"),
-	}, "    ")
-
-	var sb strings.Builder
-	sb.WriteString("\n")
-	sb.WriteString(header)
-	sb.WriteString("\n\n")
-	sb.WriteString(query)
-	sb.WriteString("\n")
-	if m.models.loading {
-		sb.WriteString(styMuted.Render("Fetching model catalog…"))
-		sb.WriteString("\n")
-	}
-	sb.WriteString("\n")
-	sb.WriteString(strings.Join(lines, "\n"))
-	if m.models.err != nil {
-		sb.WriteString("\n\n")
-		sb.WriteString(styErr.Render("! " + m.models.err.Error()))
-	}
-	used := strings.Count(sb.String(), "\n")
-	for used < m.height-3 {
-		sb.WriteString("\n")
-		used++
-	}
-	sb.WriteString(styDim.Render(strings.Repeat("─", max(1, m.width-1))))
-	sb.WriteString("\n")
-	sb.WriteString(footer)
-	if m.width > lipgloss.Width(footer)+lipgloss.Width(status)+2 {
-		sb.WriteString(strings.Repeat(" ", m.width-lipgloss.Width(footer)-lipgloss.Width(status)-2))
-		sb.WriteString(styMuted.Render(status))
-	}
-	return sb.String()
+	return m.renderPicker(pickerView{
+		title:       "Select a model",
+		query:       m.models.query,
+		items:       choices,
+		selected:    m.models.selected,
+		currentID:   m.modelTag,
+		idColumn:    modelBrowserIDColumn,
+		listHeight:  pickerListHeight(m.height, 7),
+		loading:     m.models.loading,
+		loadingNote: "Fetching model catalog…",
+		emptyNote:   "No models match.",
+		enterLabel:  "select",
+		err:         m.models.err,
+	})
 }

@@ -5,6 +5,9 @@ status: closed
 priority: low
 labels:
     - refactor
+relations:
+    related-to:
+        - 28
 created: "2026-11-23"
 updated: "2026-11-23"
 closed: "2026-11-23"

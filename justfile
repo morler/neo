@@ -96,6 +96,20 @@ lint:
     go vet ./...
     golangci-lint run
 
+# Score one file with supercov as a smoke test (needs TYPESAFE_API_KEY)
+quality file="cmd/neo/doctor.go":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ -z "${TYPESAFE_API_KEY:-}" ]; then
+      echo "error: TYPESAFE_API_KEY is not set" >&2
+      echo "see docs/developer/code-quality.md for the required environment" >&2
+      exit 1
+    fi
+    case "${TYPESAFE_BASE_URL:-}" in
+      */v1|*/v1/) echo "warning: TYPESAFE_BASE_URL must not end in /v1 (supercov appends /v1/systemone)" >&2 ;;
+    esac
+    exec supercov quality "{{file}}"
 # Print the version that would be stamped (for debugging)
 print-version:
     @echo {{version}}

@@ -303,15 +303,59 @@ func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDi
 	// asynchronously (see Init). Querying it here with lipgloss would block
 	// the first frame for up to four seconds on terminals that do not answer
 	// DA1.
-	styleName := "dark"
-	md, renderErr := glamour.NewTermRenderer(
+	const styleName = "dark"
+	absCWD := resolveWorkingDir(workingDir)
+	branch := gitBranch()
+	if version == "" {
+		version = "dev"
+	}
+	m := &model{
+		ctx:                ctx,
+		ag:                 ag,
+		modelTag:           modelTag,
+		providerTag:        strings.TrimSpace(opts.Provider),
+		mdStyleName:        styleName,
+		md:                 newMarkdownRenderer(styleName),
+		cwd:                displayCWD(absCWD),
+		branch:             branch,
+		viewport:           newTranscriptViewport(),
+		input:              newComposer(),
+		spin:               newStatusSpinner(),
+		files:              newFilePicker(absCWD),
+		skills:             sk,
+		afterSend:          opts.AfterSend,
+		goal:               opts.GoalManager,
+		goalPersist:        opts.GoalPersist,
+		modelChoices:       normalizeModelChoices(modelTag, opts.ModelChoices),
+		modelChoicesLoader: opts.ModelChoicesLoader,
+		modelSwitcher:      opts.ModelSwitcher,
+		providerChoices:    normalizeProviderChoices(opts.ProviderChoices),
+		providerSwitcher:   opts.ProviderSwitcher,
+		verbose:            opts.Verbose,
+		steer:              ag.Steer,
+	}
+	// Welcome banner shown once at the top of scrollback.
+	m.blocks = append(m.blocks, splashBlock{version: version})
+	m.appendTranscript(ag.Transcript())
+	return m
+}
+
+// newMarkdownRenderer builds the transcript renderer. A failure degrades to no
+// markdown rather than refusing to start: the composer must still work.
+func newMarkdownRenderer(styleName string) *glamour.TermRenderer {
+	md, err := glamour.NewTermRenderer(
 		glamour.WithStandardStyle(styleName),
 		glamour.WithWordWrap(0),
 	)
-	if renderErr != nil {
-		md = nil
+	if err != nil {
+		return nil
 	}
+	return md
+}
 
+// newComposer builds the input box: it grows and shrinks with its content and
+// shares the wrapping bar's background so the composer reads as one block.
+func newComposer() textarea.Model {
 	ta := textarea.New()
 	ta.Placeholder = defaultPlaceholder
 	ta.Prompt = "› "
@@ -339,65 +383,48 @@ func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDi
 	}
 	ta.SetStyles(taStyles)
 	ta.Focus()
+	return ta
+}
 
+// newTranscriptViewport builds the scrollback pane. Horizontal scrolling stays
+// off: the content is word-wrapped, and a horizontal trackpad swipe would
+// otherwise slide the whole transcript.
+func newTranscriptViewport() viewport.Model {
 	vp := viewport.New(viewport.WithWidth(80), viewport.WithHeight(20))
 	vp.MouseWheelEnabled = true
-	// Content is word-wrapped to the viewport width, so there is nothing to
-	// scroll to horizontally. A horizontal trackpad swipe emits a wheel-right
-	// (or shift+wheel) event that would otherwise slide the whole transcript.
 	vp.SetHorizontalStep(0)
+	return vp
+}
 
+func newStatusSpinner() spinner.Model {
 	sp := spinner.New()
 	sp.Spinner = statusSpinner
 	sp.Style = lipgloss.NewStyle().Foreground(colDotThinking)
+	return sp
+}
 
-	absCWD := workingDir
-	if absCWD == "" {
-		absCWD, _ = os.Getwd()
+// resolveWorkingDir falls back to the process working directory, which is what
+// relative tool paths are resolved against.
+func resolveWorkingDir(workingDir string) string {
+	if workingDir != "" {
+		return workingDir
 	}
-	cwd := absCWD
-	if home, err := os.UserHomeDir(); err == nil {
-		if rel, err := filepath.Rel(home, cwd); err == nil && !strings.HasPrefix(rel, "..") {
-			cwd = "~/" + rel
-		}
-	}
+	cwd, _ := os.Getwd()
+	return cwd
+}
 
-	branch := gitBranch()
-	if version == "" {
-		version = "dev"
+// displayCWD shortens a path under the home directory to "~/…" for the status
+// line. Anything outside home is shown in full.
+func displayCWD(dir string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return dir
 	}
-	providerTag := strings.TrimSpace(opts.Provider)
-	m := &model{
-		ctx:                ctx,
-		ag:                 ag,
-		modelTag:           modelTag,
-		providerTag:        providerTag,
-		mdStyleName:        styleName,
-		cwd:                cwd,
-		branch:             branch,
-		viewport:           vp,
-		input:              ta,
-		spin:               sp,
-		files:              newFilePicker(absCWD),
-		md:                 md,
-		skills:             sk,
-		afterSend:          opts.AfterSend,
-		goal:               opts.GoalManager,
-		goalPersist:        opts.GoalPersist,
-		modelChoices:       normalizeModelChoices(modelTag, opts.ModelChoices),
-		modelChoicesLoader: opts.ModelChoicesLoader,
-		modelSwitcher:      opts.ModelSwitcher,
-		providerChoices:    normalizeProviderChoices(opts.ProviderChoices),
-		providerSwitcher:   opts.ProviderSwitcher,
-		verbose:            opts.Verbose,
-		steer:              ag.Steer,
+	rel, err := filepath.Rel(home, dir)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return dir
 	}
-	// Welcome banner shown once at the top of scrollback.
-	m.blocks = append(m.blocks, splashBlock{
-		version: version,
-	})
-	m.appendTranscript(ag.Transcript())
-	return m
+	return "~/" + rel
 }
 
 // Init asks Bubble Tea for the terminal background without blocking the first
@@ -408,200 +435,13 @@ func (m *model) Init() tea.Cmd {
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
 	wasBusy := m.busy
-
-	switch msg := msg.(type) {
-	case tea.BackgroundColorMsg:
-		style := "dark"
-		if !msg.IsDark() {
-			style = "light"
+	res := m.handleMsg(msg)
+	if res.early {
+		if res.cmd != nil {
+			return m, res.cmd
 		}
-		m.setMarkdownStyle(style)
-		m.layout()
-
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.layout()
-		m.refreshViewport()
-
-	case tea.KeyMsg:
-		if m.providers.visible {
-			return m.handleProviderBrowserKey(msg)
-		}
-		if m.models.visible {
-			return m.handleModelBrowserKey(msg)
-		}
-		if m.approval != nil {
-			return m, m.handleApprovalKey(msg)
-		}
-		cmds = append(cmds, m.handleKey(msg))
-
-	case tea.PasteMsg:
-		if m.approval != nil {
-			m.clearApprovalSelection()
-			break
-		}
-		if m.models.visible || m.providers.visible || m.quitPending {
-			break
-		}
-		cmds = append(cmds, m.updateInput(msg))
-
-	case tea.MouseWheelMsg:
-		m.clearApprovalSelection()
-		// Some terminals and multiplexers report vertical trackpad gestures
-		// with Shift set. The viewport interprets those as horizontal wheel
-		// events, but Neo intentionally disables horizontal transcript scrolling,
-		// turning the gesture into a no-op. Vertical wheel buttons should always
-		// move through transcript history regardless of that modifier.
-		if msg.Button == tea.MouseWheelUp || msg.Button == tea.MouseWheelDown {
-			msg.Mod &^= tea.ModShift
-		}
-		var cmd tea.Cmd
-		m.viewport, cmd = m.viewport.Update(msg)
-		cmds = append(cmds, cmd)
-
-	case tea.MouseClickMsg, tea.MouseReleaseMsg, tea.MouseMotionMsg:
-		m.clearApprovalSelection()
-
-	case modelChoicesMsg:
-		m.modelChoicesLoading = false
-		m.models.loading = false
-		if msg.err != nil {
-			m.modelChoicesLoaded = false
-			if m.models.visible {
-				m.models.err = msg.err
-			}
-			m.layout()
-			break
-		}
-		m.modelChoicesLoaded = true
-		m.modelChoices = normalizeModelChoices(m.modelTag, msg.choices)
-		if m.models.visible {
-			m.models.err = nil
-			m.ensureModelSelection()
-		}
-		m.layout()
-
-	case agentEventMsg:
-		m.handleEvent(msg.ev)
-		// Tie the dot's color to whether a tool is currently running.
-		if len(m.inflight) > 0 {
-			m.setDotColor(colDotTool)
-		} else if m.busy {
-			m.setDotColor(colDotThinking)
-		}
-		m.layout()
-
-	case approvalRequestMsg:
-		logx.Debug("tui approval requested", "tool", msg.req.ToolName)
-		m.approval = &approvalState{req: msg.req, reply: msg.reply}
-		m.appendBlock(approvalBlock{req: msg.req})
-		m.layout()
-
-	case sendResultMsg:
-		elapsed := time.Since(m.busySince)
-		m.busy = false
-		m.clearInflight()
-		m.layout()
-		if m.sendCancel != nil {
-			m.sendCancel()
-			m.sendCancel = nil
-		}
-		canceled := errors.Is(msg.err, context.Canceled)
-		if canceled {
-			m.appendBlock(noticeBlock{text: "turn canceled"})
-			// Esc and Ctrl-C already paused the goal when they canceled the
-			// turn. A cancellation that arrived another way still must not
-			// fall through to a continuation, so it pauses the goal here.
-			m.interruptTurn("turn canceled")
-		} else if errors.Is(msg.err, agent.ErrMaxTurns) {
-			// EventMaxTurnsReached already appended a maxTurnsBlock
-			// describing this turn; don't also emit a result summary.
-		} else if msg.err != nil {
-			m.appendBlock(errorBlock{err: msg.err})
-		} else if summary, ok := m.resultSummary(msg.err, elapsed); ok {
-			m.appendBlock(summary)
-		}
-		if msg.saveAttempted {
-			m.recordPersistenceResult(msg.saveErr)
-			if msg.saveErr != nil {
-				m.appendBlock(errorBlock{err: fmt.Errorf("save session: %w", msg.saveErr)})
-			}
-		}
-		cmds = append(cmds, refreshBranch())
-		var recovered []string
-		if msg.err != nil && len(m.pendingSteering) > 0 {
-			recovered = append(recovered, m.pendingSteering...)
-			m.appendBlock(noticeBlock{text: "unapplied steering returned to the composer"})
-		}
-		if (msg.err != nil || msg.saveErr != nil) && m.queued != nil {
-			recovered = append(recovered, m.queued.displayText)
-			m.queued = nil
-			m.appendBlock(noticeBlock{text: "queued follow-up returned to the composer"})
-		}
-		if len(recovered) > 0 {
-			m.restoreInput(recovered...)
-		}
-		m.pendingSteering = nil
-		if m.quitPending {
-			if m.persistenceErr != nil {
-				m.quitPending = false
-				m.appendBlock(noticeBlock{text: "quit canceled because the session was not saved; press ctrl+c to retry"})
-				break
-			}
-			m.quitting = true
-			return m, tea.Quit
-		}
-		if m.queued != nil { // a successful turn starts its single follow-up
-			queued := m.queued
-			m.queued = nil
-			m.appendBlock(noticeBlock{text: "starting queued follow-up"})
-			cmds = append(cmds, m.submitUserTurn(queued.displayText, queued.agentText, queued.images))
-			break
-		}
-		// The turn ended and nothing else claimed it, so this is the one place
-		// an idle goal can start its next continuation. A user follow-up, a
-		// pending quit, a canceled turn, and a turn that could not be saved all
-		// skip it: input wins, and a goal should not advance on state the
-		// session could not record.
-		if msg.err == nil && msg.saveErr == nil {
-			cmds = append(cmds, m.maybeContinueGoal())
-		}
-
-	case persistenceRetryResultMsg:
-		m.recordPersistenceResult(msg.err)
-		if msg.err != nil {
-			m.quitPending = false
-			m.appendBlock(errorBlock{err: fmt.Errorf("save session: %w", msg.err)})
-			m.appendBlock(noticeBlock{text: "quit canceled because the session was not saved; press ctrl+c to retry"})
-			break
-		}
-		m.quitting = true
-		return m, tea.Quit
-
-	case spinner.TickMsg:
-		var cmd tea.Cmd
-		m.spin, cmd = m.spin.Update(msg)
-		if m.busy {
-			cmds = append(cmds, cmd)
-		} else {
-			m.spinning = false
-		}
-
-	case workflowEventMsg:
-		m.handleWorkflowEvent(msg.ev)
-
-	case branchMsg:
-		if strings.TrimSpace(msg.branch) != "" {
-			m.branch = msg.branch
-		}
-
-	default:
-		var cmd tea.Cmd
-		m.viewport, cmd = m.viewport.Update(msg)
-		cmds = append(cmds, cmd)
+		return m, nil
 	}
 
 	// The spinner drives elapsed-time displays, so it runs only while a turn
@@ -609,9 +449,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// that arrives after the turn ends is not rescheduled.
 	if m.busy && !wasBusy && !m.spinning {
 		m.spinning = true
-		cmds = append(cmds, m.spin.Tick)
+		res.cmds = append(res.cmds, m.spin.Tick)
 	}
-	return m, tea.Batch(cmds...)
+	return m, tea.Batch(res.cmds...)
 }
 
 func (m *model) View() tea.View {
@@ -883,54 +723,70 @@ func (m *model) resultSummary(err error, elapsed time.Duration) (resultSummaryBl
 		return resultSummaryBlock{}, false
 	}
 	maxTurns := errors.Is(err, agent.ErrMaxTurns)
-	workflowDone, workflowFailed, workflowSkipped := 0, 0, 0
-	workflowTotal := 0
-	if m.workflow != nil {
-		workflowDone, workflowFailed, workflowSkipped = workflowCounts(m.workflow.items)
-		workflowTotal = len(m.workflow.items)
-	}
+	done, failedCount, skipped, total := m.workflowCounts()
 	// Tool failures are intermediate warnings when the agent recovers and
 	// completes the turn. Direct commands and failed workflow items are final
 	// outcomes, so their receipts stay visibly incomplete.
-	failed := !maxTurns && (err != nil || (m.turn.direct && m.turn.errors > 0) || workflowFailed > 0)
+	failed := !maxTurns && (err != nil || (m.turn.direct && m.turn.errors > 0) || failedCount > 0)
+	label := m.turnSummaryLabel(maxTurns, failed)
+	detail := m.turnSummaryDetail(done, failedCount, skipped, total, failed, maxTurns)
+	return resultSummaryBlock{label: label, detail: detail, elapsed: elapsed, failed: failed}, true
+}
+
+// workflowCounts reports the checklist totals, all zero when there is none.
+func (m *model) workflowCounts() (done, failed, skipped, total int) {
+	if m.workflow == nil {
+		return 0, 0, 0, 0
+	}
+	done, failed, skipped = workflowCounts(m.workflow.items)
+	return done, failed, skipped, len(m.workflow.items)
+}
+
+// turnSummaryLabel picks the receipt headline: the skill or plan name when
+// there is one, and otherwise a phrase that says whether the turn succeeded.
+func (m *model) turnSummaryLabel(maxTurns, failed bool) string {
 	skillLabel := strings.TrimSpace(m.turn.label)
 	label := skillLabel
 	if label == "" {
 		label = "Done"
 	}
-	if maxTurns {
+	switch {
+	case maxTurns:
 		if skillLabel != "" {
-			label = skillLabel + " paused"
-		} else {
-			label = "Paused"
+			return skillLabel + " paused"
 		}
-	} else if m.turn.label == "" && m.workflow != nil && strings.TrimSpace(m.workflow.title) != "" {
-		label = strings.TrimSpace(m.workflow.title)
-	} else if m.turn.direct {
-		label = "Command complete"
+		return "Paused"
+	case m.turn.label == "" && m.workflow != nil && strings.TrimSpace(m.workflow.title) != "":
+		return strings.TrimSpace(m.workflow.title)
+	case m.turn.direct:
 		if failed {
-			label = "Command finished with issues"
+			return "Command finished with issues"
 		}
-	} else if failed {
+		return "Command complete"
+	case failed:
 		if skillLabel != "" {
-			label = skillLabel + " finished with issues"
-		} else {
-			label = "Finished with issues"
+			return skillLabel + " finished with issues"
 		}
+		return "Finished with issues"
 	}
+	return label
+}
 
-	parts := []string{}
-	if workflowTotal > 0 {
-		outcome := fmt.Sprintf("%d/%d complete", workflowDone, workflowTotal)
-		if workflowDone == workflowTotal {
-			outcome = fmt.Sprintf("%d/%d verified", workflowDone, workflowTotal)
+// turnSummaryDetail lists what the turn did: checklist progress, tool count,
+// recovered errors, and whether a max-turns stop expects a reply.
+func (m *model) turnSummaryDetail(done, failedCount, skipped, total int, failed, maxTurns bool) string {
+	var parts []string
+	if total > 0 {
+		outcome := fmt.Sprintf("%d/%d complete", done, total)
+		if done == total {
+			outcome = fmt.Sprintf("%d/%d verified", done, total)
 		}
 		parts = append(parts, outcome)
-		if workflowFailed > 0 {
-			parts = append(parts, fmt.Sprintf("%d failed", workflowFailed))
+		if failedCount > 0 {
+			parts = append(parts, fmt.Sprintf("%d failed", failedCount))
 		}
-		if workflowSkipped > 0 {
-			parts = append(parts, fmt.Sprintf("%d skipped", workflowSkipped))
+		if skipped > 0 {
+			parts = append(parts, fmt.Sprintf("%d skipped", skipped))
 		}
 	} else if m.turn.tools > 0 && !m.turn.direct {
 		parts = append(parts, fmt.Sprintf("%d %s", m.turn.tools, plural("tool", m.turn.tools)))
@@ -941,7 +797,7 @@ func (m *model) resultSummary(err error, elapsed time.Duration) (resultSummaryBl
 	if maxTurns {
 		parts = append(parts, "reply to continue")
 	}
-	return resultSummaryBlock{label: label, detail: strings.Join(parts, " · "), elapsed: elapsed, failed: failed}, true
+	return strings.Join(parts, " · ")
 }
 
 func plural(word string, n int) string {
@@ -1348,50 +1204,9 @@ func (m *model) handleEvent(e agent.Event) {
 			m.pendingSteering = m.pendingSteering[1:]
 		}
 	case agent.EventToolCall:
-		if e.Name == "workflow" {
-			m.turn.workflow = true
-			// The workflow tool mutates the checklist through workflowEventMsg;
-			// don't show a duplicate generic tool card.
-			break
-		}
-		m.turn.tools++
-		m.noteWorkflowActivity(capitalize(toolVerb(e.Name, e.Args)))
-		tc := &toolCallBlock{name: e.Name, args: e.Args, startAt: time.Now(), verbose: m.verbose}
-		m.trackToolCall(e.ToolUseID, tc)
-		if m.verbose {
-			m.appendBlock(*tc)
-		}
+		m.handleToolCallEvent(e)
 	case agent.EventToolResult:
-		if e.Name == "workflow" {
-			// Successful workflow calls are represented by the checklist, but
-			// failures may not produce a workflow event and must remain visible.
-			if e.IsError {
-				m.turn.errors++
-				m.appendBlock(toolResultBlock{name: e.Name, text: e.Text, isError: true})
-			}
-			break
-		}
-		elapsed := time.Duration(0)
-		completed := m.finishToolCall(e.ToolUseID)
-		if completed != nil {
-			elapsed = time.Since(completed.startAt)
-		}
-		// The agent tool reports a failed child inside a successful result.
-		failed := e.IsError || (e.Name == "agent" && !runStepOK(e.Text))
-		if failed {
-			m.turn.errors++
-		}
-		if !m.verbose && !failed && completed != nil {
-			completed.elapsed = elapsed
-			m.appendBlock(*completed)
-		}
-		// In concise mode, routine successful result bodies add no scannable
-		// information beyond the compact receipt, so only failures render.
-		// Direct ! commands are user-requested output, not intermediate agent
-		// activity, and must remain visible in either mode.
-		if m.verbose || failed || m.turn.direct {
-			m.appendBlock(toolResultBlock{name: e.Name, text: e.Text, isError: failed, elapsed: elapsed})
-		}
+		m.handleToolResultEvent(e)
 	case agent.EventError:
 		// The same error comes back from Send and is rendered once from
 		// sendResultMsg, which also knows whether it was a cancellation.
@@ -1399,6 +1214,57 @@ func (m *model) handleEvent(e agent.Event) {
 		m.appendBlock(maxTurnsBlock{limit: e.MaxTurns, label: m.turn.label})
 	case agent.EventDone:
 		m.clearInflight()
+	}
+}
+
+// handleToolCallEvent tracks a started call so its receipt can report elapsed
+// time later. The workflow tool is skipped: it mutates the checklist through
+// workflowEventMsg, and a generic card beside that would duplicate it.
+func (m *model) handleToolCallEvent(e agent.Event) {
+	if e.Name == "workflow" {
+		m.turn.workflow = true
+		return
+	}
+	m.turn.tools++
+	m.noteWorkflowActivity(capitalize(toolVerb(e.Name, e.Args)))
+	tc := &toolCallBlock{name: e.Name, args: e.Args, startAt: time.Now(), verbose: m.verbose}
+	m.trackToolCall(e.ToolUseID, tc)
+	if m.verbose {
+		m.appendBlock(*tc)
+	}
+}
+
+// handleToolResultEvent renders a finished call and counts it as recovered or
+// final. A successful workflow call is represented by the checklist, but a
+// failure may not produce a workflow event and must stay visible.
+func (m *model) handleToolResultEvent(e agent.Event) {
+	if e.Name == "workflow" {
+		if e.IsError {
+			m.turn.errors++
+			m.appendBlock(toolResultBlock{name: e.Name, text: e.Text, isError: true})
+		}
+		return
+	}
+	elapsed := time.Duration(0)
+	completed := m.finishToolCall(e.ToolUseID)
+	if completed != nil {
+		elapsed = time.Since(completed.startAt)
+	}
+	// The agent tool reports a failed child inside a successful result.
+	failed := e.IsError || (e.Name == "agent" && !runStepOK(e.Text))
+	if failed {
+		m.turn.errors++
+	}
+	if !m.verbose && !failed && completed != nil {
+		completed.elapsed = elapsed
+		m.appendBlock(*completed)
+	}
+	// In concise mode, routine successful result bodies add no scannable
+	// information beyond the compact receipt, so only failures render.
+	// Direct ! commands are user-requested output, not intermediate agent
+	// activity, and must remain visible in either mode.
+	if m.verbose || failed || m.turn.direct {
+		m.appendBlock(toolResultBlock{name: e.Name, text: e.Text, isError: failed, elapsed: elapsed})
 	}
 }
 

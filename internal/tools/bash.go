@@ -132,6 +132,23 @@ func (b Bash) Run(ctx context.Context, input map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	run, err := b.execute(ctx, cmd, timeout)
+	if err != nil {
+		return run.out, err
+	}
+	return run.out, run.err
+}
+
+// bashRun is the outcome of running one command: the capped output and, when
+// the command failed or was stopped, the error to report.
+type bashRun struct {
+	out string
+	err error
+}
+
+// execute starts the command, waits for it or its deadline, and turns whatever
+// ended it into one error.
+func (b Bash) execute(ctx context.Context, cmd string, timeout time.Duration) (bashRun, error) {
 	parent := ctx
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
@@ -146,7 +163,7 @@ func (b Bash) Run(ctx context.Context, input map[string]any) (string, error) {
 	c.Stdout = &buf
 	c.Stderr = &buf
 	if err := c.Start(); err != nil {
-		return buf.String(), fmt.Errorf("start bash command: %w", err)
+		return bashRun{out: buf.String()}, fmt.Errorf("start bash command: %w", err)
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -170,29 +187,32 @@ func (b Bash) Run(ctx context.Context, input map[string]any) (string, error) {
 		killProcessGroup(c)
 		runErr = <-done
 	}
+	return bashRun{out: buf.String(), err: commandError(runErr, ctxErr, parentErr, stopped, timeout)}, nil
+}
 
-	out := buf.String()
+// commandError describes why a command did not succeed. The output stays in
+// the caller's hands so the model still sees what ran.
+func commandError(runErr, ctxErr, parentErr error, stopped, timeout time.Duration) error {
 	if ctxErr != nil {
 		if ctxErr == context.DeadlineExceeded {
 			// The command's own deadline is not the only one: the agent's run
 			// budget can expire first. Blaming the requested timeout then
 			// tells the model a fast command was slow.
 			if parentErr == context.DeadlineExceeded {
-				return out, fmt.Errorf("bash command stopped after %s by the agent's deadline, before its %s timeout: %w", stopped.Round(time.Millisecond), timeout, ctxErr)
+				return fmt.Errorf("bash command stopped after %s by the agent's deadline, before its %s timeout: %w", stopped.Round(time.Millisecond), timeout, ctxErr)
 			}
-			return out, fmt.Errorf("bash command exceeded timeout %s: %w", timeout, ctxErr)
+			return fmt.Errorf("bash command exceeded timeout %s: %w", timeout, ctxErr)
 		}
-		return out, fmt.Errorf("bash command cancelled: %w", ctxErr)
+		return fmt.Errorf("bash command cancelled: %w", ctxErr)
 	}
-	if runErr != nil {
-		// Surface as an error so the agent marks the tool_result with is_error=true.
-		// Keep the captured output in the message so the model can see what happened.
-		if ee, ok := runErr.(*exec.ExitError); ok {
-			return out, fmt.Errorf("exit %d", ee.ExitCode())
-		}
-		return out, runErr
+	if runErr == nil {
+		return nil
 	}
-	return out, nil
+	// Surface as an error so the agent marks the tool_result with is_error=true.
+	if ee, ok := runErr.(*exec.ExitError); ok {
+		return fmt.Errorf("exit %d", ee.ExitCode())
+	}
+	return runErr
 }
 
 type boundedOutput struct {

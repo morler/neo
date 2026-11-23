@@ -2,11 +2,9 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 // ProviderChoice is one selectable backend in the /provider picker.
@@ -141,80 +139,20 @@ func providerChoiceMatches(choice ProviderChoice, query string) bool {
 
 func (m *model) providerBrowserView() string {
 	items := m.filteredProviders()
-	header := styAccent.Render("Select a provider")
-	query := m.providers.query
-	if query == "" {
-		query = styMuted.Render("Type to search")
-	} else {
-		query = styTool.Render(query)
+	choices := make([]pickerChoice, 0, len(items))
+	for _, item := range items {
+		choices = append(choices, pickerChoice{id: item.ID, name: item.Name, description: item.Description})
 	}
-
-	listHeight := m.height - 6
-	if listHeight < 3 {
-		listHeight = 3
-	}
-	start := 0
-	if m.providers.selected >= listHeight {
-		start = m.providers.selected - listHeight + 1
-	}
-	end := min(len(items), start+listHeight)
-
-	var lines []string
-	for i := start; i < end; i++ {
-		choice := items[i]
-		selected := i == m.providers.selected
-		prefix := "  "
-		style := lipgloss.NewStyle()
-		if selected {
-			prefix = styTool.Render("›") + " "
-			style = lipgloss.NewStyle().Background(colCardBg)
-		}
-		name := choice.Name
-		if choice.ID == m.providerTag {
-			name += " " + styMuted.Render("(current)")
-		}
-		line := prefix + styTool.Render(padRight(choice.ID, 18)) + "  " + name
-		if choice.Description != "" && choice.Description != choice.ID {
-			line += "  " + styMuted.Render(choice.Description)
-		}
-		lines = append(lines, style.Width(max(1, m.width-2)).Render(truncate(line, max(1, m.width-2))))
-	}
-	if len(lines) == 0 {
-		lines = append(lines, styMuted.Render("No providers match."))
-	}
-
-	status := fmt.Sprintf("%d / %d", min(m.providers.selected+1, len(items)), len(items))
-	if len(items) == 0 {
-		status = "0 / 0"
-	}
-	footer := strings.Join([]string{
-		styTool.Render("enter") + styMuted.Render(" switch"),
-		styTool.Render("esc") + styMuted.Render(" exit"),
-		styTool.Render("↑/↓") + styMuted.Render(" browse"),
-	}, "    ")
-
-	var sb strings.Builder
-	sb.WriteString("\n")
-	sb.WriteString(header)
-	sb.WriteString("\n\n")
-	sb.WriteString(query)
-	sb.WriteString("\n\n")
-	sb.WriteString(strings.Join(lines, "\n"))
-	if m.providers.err != nil {
-		sb.WriteString("\n\n")
-		sb.WriteString(styErr.Render("! " + m.providers.err.Error()))
-	}
-	used := strings.Count(sb.String(), "\n")
-	for used < m.height-3 {
-		sb.WriteString("\n")
-		used++
-	}
-	sb.WriteString(styDim.Render(strings.Repeat("─", max(1, m.width-1))))
-	sb.WriteString("\n")
-	sb.WriteString(footer)
-	if m.width > lipgloss.Width(footer)+lipgloss.Width(status)+2 {
-		sb.WriteString(strings.Repeat(" ", m.width-lipgloss.Width(footer)-lipgloss.Width(status)-2))
-		sb.WriteString(styMuted.Render(status))
-	}
-	return sb.String()
+	return m.renderPicker(pickerView{
+		title:      "Select a provider",
+		query:      m.providers.query,
+		items:      choices,
+		selected:   m.providers.selected,
+		currentID:  m.providerTag,
+		idColumn:   providerBrowserIDColumn,
+		listHeight: pickerListHeight(m.height, 6),
+		emptyNote:  "No providers match.",
+		enterLabel: "switch",
+		err:        m.providers.err,
+	})
 }

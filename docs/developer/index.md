@@ -12,4 +12,5 @@ Start here when changing Neo:
 - [Tools](tools.md) documents the built-in tool surface.
 - [Skills](skills.md) documents built-in and user-defined slash prompts.
 - [Prompt caching](prompt-caching.md) documents structured system prompt blocks.
+- [Code quality tooling](code-quality.md) documents qlty, supercov, and their environment.
 - [Teaching guides](guides/index.md) explain the core ideas in plain language.

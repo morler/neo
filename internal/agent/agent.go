@@ -334,145 +334,194 @@ func (a *Agent) takeSteering(closeIfEmpty bool) (pending []string, closed bool) 
 func (a *Agent) run(ctx context.Context) (string, error) {
 	var finalText strings.Builder
 	for turn := 0; turn < a.cfg.MaxTurns; turn++ {
-		provider, model, compactor := a.backend()
-		logx.Debug("agent turn start",
-			"turn", turn+1,
-			"max_turns", a.cfg.MaxTurns,
-			"messages", len(a.messages),
-			"provider", provider.Name(),
-			"model", model,
-		)
-		compaction, err := compactor.Compact(ctx, a.messages, a.promptTokens)
-		a.usage = addUsage(a.usage, compaction.Usage)
+		done, err := a.runTurn(ctx, turn, &finalText)
 		if err != nil {
-			logx.Debug("agent compaction error", "turn", turn+1, "error", err.Error())
-			a.emit(Event{Kind: EventError, Err: err})
-			return "", err
-		}
-		a.messages = compaction.Messages
-		resp, err := provider.Complete(ctx, llm.Request{
-			Model:        model,
-			System:       a.cfg.System,
-			SystemBlocks: a.cfg.SystemBlocks,
-			Messages:     a.messages,
-			Tools:        a.cfg.Tools.Specs(),
-		})
-		if err != nil {
-			logx.Debug("agent provider error", "turn", turn+1, "error", err.Error())
-			a.emit(Event{Kind: EventError, Err: err})
-			return "", err
-		}
-		a.usage = addUsage(a.usage, resp.Usage)
-		a.promptTokens = resp.Usage.PromptTokens()
-		logx.Debug("agent provider response",
-			"turn", turn+1,
-			"stop_reason", resp.StopReason,
-			"content_blocks", len(resp.Content),
-			"usage", resp.Usage,
-		)
-
-		// Build the assistant message and any matching tool_results, but do not
-		// commit either to the transcript until both are ready. This guarantees
-		// the transcript never contains a tool_use without its tool_result, even
-		// if a tool panics or an early return is added later.
-		assistantMsg := llm.Message{Role: llm.RoleAssistant, Content: resp.Content}
-		if !knownStopReason(resp.StopReason) {
-			a.appendSafeAssistantMessage(resp.Content)
-			a.processResponseText(resp.Content, &finalText)
-			err := fmt.Errorf("%w %q from %s", ErrUnexpectedStopReason, resp.StopReason, provider.Name())
-			logx.Debug("agent unexpected stop reason", "turn", turn+1, "stop_reason", resp.StopReason)
-			a.emit(Event{Kind: EventError, Err: err})
 			return strings.TrimSpace(finalText.String()), err
 		}
-		if resp.StopReason == "refusal" {
-			a.appendSafeAssistantMessage(resp.Content)
-			a.processResponseText(resp.Content, &finalText)
-			if err := ctx.Err(); err != nil {
-				logx.Debug("agent turn canceled after provider refusal", "turn", turn+1, "error", err.Error())
-				a.emit(Event{Kind: EventError, Err: err})
-				return strings.TrimSpace(finalText.String()), err
-			}
-			steering, closed := a.takeSteering(true)
-			if !closed {
-				content := a.appendSteering(nil, steering)
-				a.messages = append(a.messages, llm.Message{Role: llm.RoleUser, Content: content})
-				continue
-			}
-			logx.Debug("agent turn refused", "turn", turn+1)
-			a.emit(Event{Kind: EventDone})
+		if done {
 			return strings.TrimSpace(finalText.String()), nil
-		}
-		if resp.StopReason == "tool_use" && !hasToolUse(resp.Content) {
-			// Nothing to execute means nothing to reply with, so the next
-			// request would be identical and the loop would spin to MaxTurns.
-			// An adapter bug or an unfamiliar provider dialect should fail
-			// closed after one call, not burn 500.
-			a.appendSafeAssistantMessage(resp.Content)
-			a.processResponseText(resp.Content, &finalText)
-			err := fmt.Errorf("%w (from %s)", ErrMissingToolCall, provider.Name())
-			logx.Debug("agent tool_use stop with no tool call", "turn", turn+1)
-			a.emit(Event{Kind: EventError, Err: err})
-			return strings.TrimSpace(finalText.String()), err
-		}
-		if resp.StopReason == "model_context_window_exceeded" {
-			a.appendSafeAssistantMessage(resp.Content)
-			a.processResponseText(resp.Content, &finalText)
-			logx.Debug("agent model context window exceeded", "turn", turn+1)
-			a.emit(Event{Kind: EventError, Err: ErrContextWindowExceeded})
-			return strings.TrimSpace(finalText.String()), ErrContextWindowExceeded
-		}
-		toolResults, steering := a.processResponseContent(ctx, resp.Content, &finalText)
-
-		a.messages = append(a.messages, assistantMsg)
-		if len(toolResults) > 0 {
-			if err := ctx.Err(); err != nil {
-				a.messages = append(a.messages, llm.Message{Role: llm.RoleUser, Content: toolResults})
-				logx.Debug("agent turn canceled after tool results", "turn", turn+1, "error", err.Error())
-				a.emit(Event{Kind: EventError, Err: err})
-				return strings.TrimSpace(finalText.String()), err
-			}
-			if len(steering) == 0 {
-				steering, _ = a.takeSteering(false)
-			}
-			toolResults = a.appendSteering(toolResults, steering)
-			a.messages = append(a.messages, llm.Message{Role: llm.RoleUser, Content: toolResults})
-			continue
-		}
-
-		if resp.StopReason == "end_turn" || resp.StopReason == "stop_sequence" || resp.StopReason == "" {
-			if err := ctx.Err(); err != nil {
-				logx.Debug("agent turn canceled after provider response", "turn", turn+1, "error", err.Error())
-				a.emit(Event{Kind: EventError, Err: err})
-				return strings.TrimSpace(finalText.String()), err
-			}
-			steering, closed := a.takeSteering(true)
-			if !closed {
-				content := a.appendSteering(nil, steering)
-				a.messages = append(a.messages, llm.Message{Role: llm.RoleUser, Content: content})
-				continue
-			}
-			logx.Debug("agent turn complete", "turn", turn+1, "stop_reason", resp.StopReason)
-			a.emit(Event{Kind: EventDone})
-			return strings.TrimSpace(finalText.String()), nil
-		}
-		if resp.StopReason == "max_tokens" {
-			logx.Debug("agent max output tokens", "turn", turn+1)
-			a.emit(Event{Kind: EventError, Err: ErrMaxOutputTokens})
-			return strings.TrimSpace(finalText.String()), ErrMaxOutputTokens
-		}
-		if resp.StopReason == "pause_turn" {
-			if err := ctx.Err(); err != nil {
-				logx.Debug("agent turn canceled while paused", "turn", turn+1, "error", err.Error())
-				a.emit(Event{Kind: EventError, Err: err})
-				return strings.TrimSpace(finalText.String()), err
-			}
-			logx.Debug("agent provider requested continuation", "turn", turn+1)
-			continue
 		}
 	}
 	logx.Debug("agent max turns reached", "max_turns", a.cfg.MaxTurns)
 	a.emit(Event{Kind: EventMaxTurnsReached, MaxTurns: a.cfg.MaxTurns, Err: ErrMaxTurns})
 	return strings.TrimSpace(finalText.String()), ErrMaxTurns
+}
+
+// runTurn makes one provider request and applies its outcome. It reports
+// whether the conversation is over; finalText accumulates across turns, so the
+// caller owns it.
+func (a *Agent) runTurn(ctx context.Context, turn int, finalText *strings.Builder) (bool, error) {
+	resp, provider, err := a.requestTurn(ctx, turn)
+	if err != nil {
+		return true, err
+	}
+	if done, err := a.rejectStop(resp, finalText, turn, provider); done {
+		return true, err
+	}
+	if resp.StopReason == "refusal" {
+		return a.finishRefusal(ctx, resp, finalText, turn)
+	}
+	toolResults, steering := a.processResponseContent(ctx, resp.Content, finalText)
+	a.messages = append(a.messages, llm.Message{Role: llm.RoleAssistant, Content: resp.Content})
+	if len(toolResults) > 0 {
+		return a.commitToolResults(ctx, turn, toolResults, steering)
+	}
+	return a.finishStop(ctx, resp, finalText, turn)
+}
+
+// requestTurn compacts, sends the request, and records usage. It returns the
+// response together with the provider that produced it, since later branches
+// name it in their errors.
+func (a *Agent) requestTurn(ctx context.Context, turn int) (*llm.Response, llm.Provider, error) {
+	provider, model, compactor := a.backend()
+	logx.Debug("agent turn start",
+		"turn", turn+1,
+		"max_turns", a.cfg.MaxTurns,
+		"messages", len(a.messages),
+		"provider", provider.Name(),
+		"model", model,
+	)
+	compaction, err := compactor.Compact(ctx, a.messages, a.promptTokens)
+	a.usage = addUsage(a.usage, compaction.Usage)
+	if err != nil {
+		logx.Debug("agent compaction error", "turn", turn+1, "error", err.Error())
+		a.emit(Event{Kind: EventError, Err: err})
+		return nil, provider, err
+	}
+	a.messages = compaction.Messages
+	resp, err := provider.Complete(ctx, llm.Request{
+		Model:        model,
+		System:       a.cfg.System,
+		SystemBlocks: a.cfg.SystemBlocks,
+		Messages:     a.messages,
+		Tools:        a.cfg.Tools.Specs(),
+	})
+	if err != nil {
+		logx.Debug("agent provider error", "turn", turn+1, "error", err.Error())
+		a.emit(Event{Kind: EventError, Err: err})
+		return nil, provider, err
+	}
+	a.usage = addUsage(a.usage, resp.Usage)
+	a.promptTokens = resp.Usage.PromptTokens()
+	logx.Debug("agent provider response",
+		"turn", turn+1,
+		"stop_reason", resp.StopReason,
+		"content_blocks", len(resp.Content),
+		"usage", resp.Usage,
+	)
+	return resp, provider, nil
+}
+
+// failTurn records the response's non-tool content and reports err. The
+// branches that call it never run the tool calls, and persisting an unmatched
+// tool_use would make the next request invalid.
+func (a *Agent) failTurn(resp *llm.Response, finalText *strings.Builder, err error) error {
+	a.appendSafeAssistantMessage(resp.Content)
+	a.processResponseText(resp.Content, finalText)
+	a.emit(Event{Kind: EventError, Err: err})
+	return err
+}
+
+// rejectStop handles the stop reasons that end the conversation with an error.
+// It reports whether the turn is over and, if so, with what.
+func (a *Agent) rejectStop(resp *llm.Response, finalText *strings.Builder, turn int, provider llm.Provider) (bool, error) {
+	switch {
+	case !knownStopReason(resp.StopReason):
+		err := fmt.Errorf("%w %q from %s", ErrUnexpectedStopReason, resp.StopReason, provider.Name())
+		logx.Debug("agent unexpected stop reason", "turn", turn+1, "stop_reason", resp.StopReason)
+		return true, a.failTurn(resp, finalText, err)
+	case resp.StopReason == "tool_use" && !hasToolUse(resp.Content):
+		// Nothing to execute means nothing to reply with, so the next request
+		// would be identical and the loop would spin to MaxTurns. An adapter
+		// bug or an unfamiliar provider dialect should fail closed after one
+		// call, not burn 500.
+		err := fmt.Errorf("%w (from %s)", ErrMissingToolCall, provider.Name())
+		logx.Debug("agent tool_use stop with no tool call", "turn", turn+1)
+		return true, a.failTurn(resp, finalText, err)
+	case resp.StopReason == "model_context_window_exceeded":
+		logx.Debug("agent model context window exceeded", "turn", turn+1)
+		return true, a.failTurn(resp, finalText, ErrContextWindowExceeded)
+	}
+	return false, nil
+}
+
+// finishRefusal ends a refused turn, or continues it when steering input is
+// waiting.
+func (a *Agent) finishRefusal(ctx context.Context, resp *llm.Response, finalText *strings.Builder, turn int) (bool, error) {
+	a.appendSafeAssistantMessage(resp.Content)
+	a.processResponseText(resp.Content, finalText)
+	if err := ctx.Err(); err != nil {
+		logx.Debug("agent turn canceled after provider refusal", "turn", turn+1, "error", err.Error())
+		a.emit(Event{Kind: EventError, Err: err})
+		return true, err
+	}
+	if a.openSteering() {
+		return false, nil
+	}
+	logx.Debug("agent turn refused", "turn", turn+1)
+	a.emit(Event{Kind: EventDone})
+	return true, nil
+}
+
+// commitToolResults records the tool results and any steering for the next
+// request. The assistant message is already committed, so the transcript never
+// holds a tool_use without its tool_result.
+func (a *Agent) commitToolResults(ctx context.Context, turn int, results []llm.ContentBlock, steering []string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		a.messages = append(a.messages, llm.Message{Role: llm.RoleUser, Content: results})
+		logx.Debug("agent turn canceled after tool results", "turn", turn+1, "error", err.Error())
+		a.emit(Event{Kind: EventError, Err: err})
+		return true, err
+	}
+	if len(steering) == 0 {
+		steering, _ = a.takeSteering(false)
+	}
+	results = a.appendSteering(results, steering)
+	a.messages = append(a.messages, llm.Message{Role: llm.RoleUser, Content: results})
+	return false, nil
+}
+
+// finishStop handles the stop reasons that arrive after the assistant message
+// is part of the transcript.
+func (a *Agent) finishStop(ctx context.Context, resp *llm.Response, finalText *strings.Builder, turn int) (bool, error) {
+	switch resp.StopReason {
+	case "end_turn", "stop_sequence", "":
+		if err := ctx.Err(); err != nil {
+			logx.Debug("agent turn canceled after provider response", "turn", turn+1, "error", err.Error())
+			a.emit(Event{Kind: EventError, Err: err})
+			return true, err
+		}
+		if a.openSteering() {
+			return false, nil
+		}
+		logx.Debug("agent turn complete", "turn", turn+1, "stop_reason", resp.StopReason)
+		a.emit(Event{Kind: EventDone})
+		return true, nil
+	case "max_tokens":
+		logx.Debug("agent max output tokens", "turn", turn+1)
+		a.emit(Event{Kind: EventError, Err: ErrMaxOutputTokens})
+		return true, ErrMaxOutputTokens
+	case "pause_turn":
+		if err := ctx.Err(); err != nil {
+			logx.Debug("agent turn canceled while paused", "turn", turn+1, "error", err.Error())
+			a.emit(Event{Kind: EventError, Err: err})
+			return true, err
+		}
+		logx.Debug("agent provider requested continuation", "turn", turn+1)
+	}
+	return false, nil
+}
+
+// openSteering reports whether the conversation may take another turn,
+// recording the buffered steering message when there is one to deliver.
+func (a *Agent) openSteering() bool {
+	steering, closed := a.takeSteering(true)
+	if closed {
+		return false
+	}
+	content := a.appendSteering(nil, steering)
+	a.messages = append(a.messages, llm.Message{Role: llm.RoleUser, Content: content})
+	return true
 }
 
 func knownStopReason(reason string) bool {
@@ -643,14 +692,13 @@ func (a *Agent) executePreparedCalls(ctx context.Context, calls []preparedToolCa
 	return processed, results, nil
 }
 
+// skippedOutcome is what a call records when the turn ended before it ran.
+var skippedOutcome = toolOutcome{text: "skipped because the active turn was canceled", isError: true}
+
 func (a *Agent) executePreparedGroup(ctx context.Context, calls []preparedToolCall) []llm.ContentBlock {
-	runnable := 0
-	for _, call := range calls {
-		if call.tool != nil && call.lookupErr == "" && !call.approvalRequired {
-			runnable++
-		}
-	}
-	if len(calls) < 2 || runnable < 2 {
+	// Parallelism only pays off when more than one call can actually run, so a
+	// lone runnable call inside a larger group stays serial.
+	if len(calls) < 2 || countRunnable(calls) < 2 {
 		results := make([]llm.ContentBlock, 0, len(calls))
 		for _, call := range calls {
 			results = append(results, a.executePreparedSerial(ctx, call))
@@ -660,6 +708,26 @@ func (a *Agent) executePreparedGroup(ctx context.Context, calls []preparedToolCa
 
 	a.groupSeq++
 	groupID := fmt.Sprintf("parallel-%d", a.groupSeq)
+	a.announceGroup(calls, groupID)
+	outcomes := a.runGroup(ctx, calls, groupID)
+	return a.collectGroup(calls, outcomes, groupID)
+}
+
+// countRunnable reports how many calls can run without an approval barrier,
+// a missing tool, or a lookup failure.
+func countRunnable(calls []preparedToolCall) int {
+	n := 0
+	for _, call := range calls {
+		if call.tool != nil && call.lookupErr == "" && !call.approvalRequired {
+			n++
+		}
+	}
+	return n
+}
+
+// announceGroup emits the start event and one tool-call event per member, so
+// the transcript shows the group before any result arrives.
+func (a *Agent) announceGroup(calls []preparedToolCall, groupID string) {
 	refs := make([]ToolCallRef, len(calls))
 	for i, call := range calls {
 		refs[i] = ToolCallRef{ID: call.block.ID, Name: call.block.Name, Args: cloneInput(call.block.Input)}
@@ -668,7 +736,12 @@ func (a *Agent) executePreparedGroup(ctx context.Context, calls []preparedToolCa
 	for i, call := range calls {
 		a.emit(toolEvent(EventToolCall, call.block, groupID, len(calls), i, "", false))
 	}
+}
 
+// runGroup executes every call, in parallel where allowed, and returns the
+// outcome per position. A canceled turn fills the remaining slots with a
+// "skipped" outcome instead of running them.
+func (a *Agent) runGroup(ctx context.Context, calls []preparedToolCall, groupID string) []toolOutcome {
 	outcomes := make([]toolOutcome, len(calls))
 	sem := make(chan struct{}, a.cfg.MaxParallelTools)
 	var wg sync.WaitGroup
@@ -683,25 +756,34 @@ func (a *Agent) executePreparedGroup(ctx context.Context, calls []preparedToolCa
 		wg.Add(1)
 		go func(i int, call preparedToolCall) {
 			defer wg.Done()
-			if ctx.Err() != nil {
-				outcomes[i] = toolOutcome{text: "skipped because the active turn was canceled", isError: true}
-				return
-			}
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-				if ctx.Err() != nil {
-					outcomes[i] = toolOutcome{text: "skipped because the active turn was canceled", isError: true}
-					return
-				}
-				outcomes[i] = a.runPreparedTool(ctx, call)
-			case <-ctx.Done():
-				outcomes[i] = toolOutcome{text: "skipped because the active turn was canceled", isError: true}
-			}
+			outcomes[i] = a.runConcurrently(ctx, sem, call)
 		}(i, call)
 	}
 	wg.Wait()
+	return outcomes
+}
 
+// runConcurrently waits for a parallel slot and then runs one tool, reporting a
+// skip rather than starting work once the turn is canceled.
+func (a *Agent) runConcurrently(ctx context.Context, sem chan struct{}, call preparedToolCall) toolOutcome {
+	if ctx.Err() != nil {
+		return skippedOutcome
+	}
+	select {
+	case sem <- struct{}{}:
+		defer func() { <-sem }()
+		if ctx.Err() != nil {
+			return skippedOutcome
+		}
+		return a.runPreparedTool(ctx, call)
+	case <-ctx.Done():
+		return skippedOutcome
+	}
+}
+
+// collectGroup caps, emits, and converts the outcomes into tool_result blocks
+// in call order.
+func (a *Agent) collectGroup(calls []preparedToolCall, outcomes []toolOutcome, groupID string) []llm.ContentBlock {
 	results := make([]llm.ContentBlock, len(calls))
 	for i, call := range calls {
 		outcome := outcomes[i]

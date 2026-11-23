@@ -174,6 +174,13 @@ func pickerWindow(total, selected, limit int) (int, int) {
 	return start, end
 }
 
+// The command column tracks the longest command but is clamped so a very short
+// or very long command set still leaves room for the description beside it.
+const (
+	slashPickerMinCommandWidth = 10
+	slashPickerMaxCommandWidth = 24
+)
+
 func slashPickerCommandWidth(commands []slashCommand) int {
 	width := 0
 	for _, c := range commands {
@@ -181,11 +188,11 @@ func slashPickerCommandWidth(commands []slashCommand) int {
 			width = n
 		}
 	}
-	if width < 10 {
-		return 10
+	if width < slashPickerMinCommandWidth {
+		return slashPickerMinCommandWidth
 	}
-	if width > 24 {
-		return 24
+	if width > slashPickerMaxCommandWidth {
+		return slashPickerMaxCommandWidth
 	}
 	return width
 }

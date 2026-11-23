@@ -151,86 +151,117 @@ func readFileWindow(ctx context.Context, path string, offset, limit int) (string
 	if offset > 0 {
 		startLine = offset
 	}
-
-	var out strings.Builder
-	r := bufio.NewReader(f)
 	fileEmpty := false
 	if info, err := f.Stat(); err == nil {
 		fileEmpty = info.Size() == 0
 	}
-	lineNo := 1
-	selected := 0
-	wroteLine := false
-	inSelectedLine := false
-	lastLineEndedWithNewline := false
 
-	for limit <= 0 || selected < limit {
-		if ctx != nil {
-			if err := ctx.Err(); err != nil {
-				return out.String(), err
-			}
+	var out strings.Builder
+	w := &windowScanner{out: &out, startLine: startLine, limit: limit, lineNo: 1}
+	if err := w.scan(ctx, bufio.NewReader(f)); err != nil {
+		// A cancelled turn still returns what it read, since the caller may
+		// report it; a filesystem failure does not.
+		if w.canceled {
+			return out.String(), err
 		}
-
-		part, err := r.ReadSlice('\n')
-		if len(part) > 0 {
-			endsLine := part[len(part)-1] == '\n'
-			lastLineEndedWithNewline = endsLine
-			if endsLine {
-				part = part[:len(part)-1]
-			}
-
-			if lineNo >= startLine {
-				if !inSelectedLine {
-					if !wroteLine {
-						wroteLine = true
-					} else if err := appendReadFileChunk(&out, "\n"); err != nil {
-						return "", err
-					}
-					if err := appendReadFileChunk(&out, lineNumberPrefix(lineNo)); err != nil {
-						return "", err
-					}
-					inSelectedLine = true
-				}
-				if err := appendReadFileChunk(&out, string(part)); err != nil {
-					return "", err
-				}
-			}
-
-			if endsLine {
-				if lineNo >= startLine {
-					selected++
-					inSelectedLine = false
-				}
-				lineNo++
-			}
-		}
-
-		if err == nil {
-			continue
-		}
-		if err == bufio.ErrBufferFull {
-			continue
-		}
-		if err != io.EOF {
-			return "", err
-		}
-		if len(part) > 0 {
-			break
-		}
-		if lastLineEndedWithNewline && lineNo >= startLine && (limit <= 0 || selected < limit) {
-			if !wroteLine {
-				wroteLine = true
-			} else if err := appendReadFileChunk(&out, "\n"); err != nil {
-				return "", err
-			}
-		}
-		break
+		return "", err
 	}
-
-	if offset > 0 && !wroteLine && (!fileEmpty || offset != 1) {
+	if offset > 0 && !w.wroteLine && (!fileEmpty || offset != 1) {
 		return "", fmt.Errorf("read_file: offset %d is past end of file", offset)
 	}
 	return out.String(), nil
+}
+
+// windowScanner tracks the line window one read_file call asked for while the
+// reader hands it a line at a time.
+type windowScanner struct {
+	out       *strings.Builder
+	startLine int
+	limit     int
+
+	lineNo   int
+	selected int
+
+	wroteLine  bool
+	inSelected bool
+	canceled   bool
+
+	// lastEndedWithNewline distinguishes a file that ends with a newline from
+	// one that stops mid-line: only the former owes a trailing blank line.
+	lastEndedWithNewline bool
+}
+
+// more reports whether the window still has room for another line.
+func (w *windowScanner) more() bool { return w.limit <= 0 || w.selected < w.limit }
+
+// scan reads until the window is full or the input ends.
+func (w *windowScanner) scan(ctx context.Context, r *bufio.Reader) error {
+	for w.more() {
+		if err := ctx.Err(); err != nil {
+			w.canceled = true
+			return err
+		}
+		part, err := r.ReadSlice('\n')
+		if len(part) > 0 {
+			endsLine := part[len(part)-1] == '\n'
+			w.lastEndedWithNewline = endsLine
+			if endsLine {
+				part = part[:len(part)-1]
+			}
+			if err := w.consume(part, endsLine); err != nil {
+				return err
+			}
+		}
+		switch err {
+		case nil, bufio.ErrBufferFull:
+			continue
+		case io.EOF:
+			if len(part) == 0 && w.lastEndedWithNewline && w.more() && w.lineNo >= w.startLine {
+				return w.breakLine()
+			}
+			return nil
+		default:
+			return err
+		}
+	}
+	return nil
+}
+
+// consume appends one line fragment, adding the gutter when the fragment opens
+// a newly selected line.
+func (w *windowScanner) consume(part []byte, endsLine bool) error {
+	if w.lineNo >= w.startLine {
+		if !w.inSelected {
+			if err := w.breakLine(); err != nil {
+				return err
+			}
+			if err := appendReadFileChunk(w.out, lineNumberPrefix(w.lineNo)); err != nil {
+				return err
+			}
+			w.inSelected = true
+		}
+		if err := appendReadFileChunk(w.out, string(part)); err != nil {
+			return err
+		}
+	}
+	if endsLine {
+		if w.lineNo >= w.startLine {
+			w.selected++
+			w.inSelected = false
+		}
+		w.lineNo++
+	}
+	return nil
+}
+
+// breakLine separates two selected lines, and records the first with no
+// leading newline.
+func (w *windowScanner) breakLine() error {
+	if !w.wroteLine {
+		w.wroteLine = true
+		return nil
+	}
+	return appendReadFileChunk(w.out, "\n")
 }
 
 func appendReadFileChunk(out *strings.Builder, chunk string) error {

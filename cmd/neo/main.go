@@ -512,44 +512,20 @@ func runHeadless(ctx context.Context, args []string, agentName string, streams s
 		finishHeadless(opts, headlessResult{OK: false, ElapsedMS: time.Since(started).Milliseconds(), Provider: providerName, Model: model, Error: err.Error()}, streams)
 		return 1
 	}
-	cwd, _ := os.Getwd()
-	root := workspace.Root(cwd)
-	agentProfile, ok := loadProfile(cwd, agentName, streams.err)
+	ag, model, ok := headlessAgent(ctx, cfg, prov, model, agentName, streams)
 	if !ok {
 		return 1
 	}
-	// Skills are not advertised in headless runs: /name and $name invocation
-	// are interactive, so the catalog would only spend prompt tokens.
-	reg := newRegistry(cwd, root)
-	system, systemBlocks := chatSystem(cfg, cwd, nil, agentProfile, reg, streams.err)
-
-	var toolCalls, toolErrors int
-	ag := agent.New(agent.Config{
-		Model:        model,
-		System:       system,
-		SystemBlocks: systemBlocks,
-		Provider:     prov,
-		Tools:        reg,
-		Compactor:    chatCompactor(prov, model, cfg),
-		OnEvent: func(e agent.Event) {
-			switch e.Kind {
-			case agent.EventToolCall:
-				toolCalls++
-			case agent.EventToolResult:
-				if e.IsError {
-					toolErrors++
-				}
-			}
-		},
-	})
+	stats := &headlessStats{}
+	ag.SetEventHandler(stats.observe)
 	out, err := ag.Send(ctx, prompt)
 	result := headlessResult{
 		OK:         err == nil,
 		ElapsedMS:  time.Since(started).Milliseconds(),
 		Provider:   prov.Name(),
 		Model:      model,
-		ToolCalls:  toolCalls,
-		ToolErrors: toolErrors,
+		ToolCalls:  stats.calls,
+		ToolErrors: stats.errors,
 		Final:      out,
 	}
 	if err != nil {
@@ -560,6 +536,46 @@ func runHeadless(ctx context.Context, args []string, agentName string, streams s
 		return 1
 	}
 	return 0
+}
+
+// headlessStats counts the tool activity a run reports in its summary.
+type headlessStats struct {
+	calls  int
+	errors int
+}
+
+// observe is the agent's event hook during a headless run.
+func (s *headlessStats) observe(e agent.Event) {
+	switch e.Kind {
+	case agent.EventToolCall:
+		s.calls++
+	case agent.EventToolResult:
+		if e.IsError {
+			s.errors++
+		}
+	}
+}
+
+// headlessAgent builds the agent for one prompt. It shares the chat registry
+// but advertises no skills: /name and $name invocation are interactive, so the
+// catalog would only spend prompt tokens.
+func headlessAgent(ctx context.Context, cfg *config.Config, prov llm.Provider, model, agentName string, streams stdio) (*agent.Agent, string, bool) {
+	cwd, _ := os.Getwd()
+	root := workspace.Root(cwd)
+	agentProfile, ok := loadProfile(cwd, agentName, streams.err)
+	if !ok {
+		return nil, "", false
+	}
+	reg := newRegistry(cwd, root)
+	system, systemBlocks := chatSystem(cfg, cwd, nil, agentProfile, reg, streams.err)
+	return agent.New(agent.Config{
+		Model:        model,
+		System:       system,
+		SystemBlocks: systemBlocks,
+		Provider:     prov,
+		Tools:        reg,
+		Compactor:    chatCompactor(prov, model, cfg),
+	}), model, true
 }
 
 func parseHeadlessArgs(args []string, stdin io.Reader) (headlessOptions, string, error) {
@@ -681,60 +697,107 @@ func restoreSessionCWD(cwd string, errOut io.Writer) {
 }
 
 func runChatSession(ctx context.Context, store *session.Store, sess *session.Session, agentName string, streams stdio) int {
-	cfg, ok := loadConfig(streams.err)
+	setup, ok := prepareChat(ctx, store, sess, agentName, streams)
 	if !ok {
 		return 1
 	}
-	providerName, model := sessionBackend(cfg, sessionMetadata(sess), streams.err)
-	prov, err := chatSessionProvider(ctx, cfg, sess, providerName)
-	if err != nil && providerName != cfg.Provider {
-		fmt.Fprintf(streams.err, "warning: cannot resume with %s (%v); continuing with %s model %s\n", providerName, err, cfg.Provider, cfg.Model)
-		providerName, model = cfg.Provider, cfg.Model
-		prov, err = newProvider(cfg, cfg.Provider)
-		if err != nil {
-			fmt.Fprintln(streams.err, err)
-			return 1
-		}
-	} else if err != nil {
+	rt := setup.runtime
+	saveSession := func() error {
+		return saveChatSession(ctx, store, setup.sess, rt.ag, rt.goal, setup.cwd, setup.profile.Name)
+	}
+	if err := tui.Run(ctx, rt.ag, rt.model, Version, setup.cwd, setup.sk,
+		tui.WithAfterSend(saveSession),
+		tui.WithGoalManager(rt.goal),
+		tui.WithGoalPersist(saveSession),
+		tui.WithModelSwitcher(rt.providerName, modelChoices(setup.cfg, rt.providerName), rt.switchModel),
+		tui.WithModelChoicesLoader(modelChoicesLoader(setup.cfg, rt.providerName)),
+		tui.WithProviderSwitcher(providerChoices(setup.cfg), func(name string) (tui.ProviderState, error) {
+			return rt.switchProvider(ctx, name)
+		}),
+		tui.WithWorkflowEvents(setup.workflowEvents),
+		tui.WithVerbose(setup.cfg.VerboseEnabled()),
+		tui.WithIO(streams.in, streams.out),
+	); err != nil {
 		fmt.Fprintln(streams.err, err)
 		return 1
 	}
+	return 0
+}
 
+// chatSetup is everything an interactive session resolved before the TUI
+// starts. Each field is produced by one step of prepareChat, so a failure there
+// names the step that failed.
+type chatSetup struct {
+	cfg            *config.Config
+	sess           *session.Session
+	cwd            string
+	profile        profile.Profile
+	sk             []skills.Skill
+	runtime        *chatRuntime
+	workflowEvents <-chan workflow.Event
+}
+
+// chatRuntime is the state that keeps changing while a session runs: the active
+// backend, the model remembered per provider, and the agent those backends are
+// swapped into.
+type chatRuntime struct {
+	cfg  *config.Config
+	ag   *agent.Agent
+	goal *goal.Manager
+	// runner is nil when the working directory could not be read, which also
+	// disables the agent tool.
+	runner                   *subagent.AgentRunner
+	runnerFollowsCoordinator bool
+
+	provider       llm.Provider
+	providerName   string
+	model          string
+	providerModels map[string]string
+}
+
+// prepareChat resolves config, backend, session, tools, and system prompt in the
+// order each depends on the last.
+func prepareChat(ctx context.Context, store *session.Store, sess *session.Session, agentName string, streams stdio) (*chatSetup, bool) {
+	cfg, ok := loadConfig(streams.err)
+	if !ok {
+		return nil, false
+	}
+	providerName, model, prov, ok := resolveChatProvider(ctx, cfg, sess, streams)
+	if !ok {
+		return nil, false
+	}
 	cwd, _ := os.Getwd() // "" on failure → cwd-dependent capabilities are skipped
 	root := workspace.Root(cwd)
 	agentProfile, ok := loadProfile(cwd, agentName, streams.err)
 	if !ok {
-		return 1
+		return nil, false
 	}
-	// The session exists before the goal manager is built: the goal belongs to
-	// the session, so resuming restores it from the record just loaded.
-	if sess == nil {
-		var err error
-		adapterName := prov.Name()
-		sess, err = store.Create(ctx, session.Metadata{
-			CWD:        cwd,
-			Agent:      agentProfile.Name,
-			Model:      model,
-			Provider:   sessionProviderID(adapterName),
-			OpenAIAuth: adapterOpenAIAuth(adapterName),
-		})
-		if err != nil {
-			fmt.Fprintf(streams.err, "create session: %v\n", err)
-			return 1
-		}
+	sess, ok = ensureChatSession(ctx, store, sess, chatSessionMeta{
+		cwd:        cwd,
+		agent:      agentProfile.Name,
+		model:      model,
+		providerID: sessionProviderID(prov.Name()),
+		openAIAuth: adapterOpenAIAuth(prov.Name()),
+	}, streams)
+	if !ok {
+		return nil, false
 	}
 
-	// The chat agent is the primary coordinator. It gets the agent tool (as
-	// caller node 0) so it can spawn amnesiac subagents with self-contained
-	// prompts directly from the conversation. Sequencing is the agent's
-	// judgment, not a stored workflow artifact.
-	var extra []tools.Tool
-	var agentRunner *subagent.AgentRunner
-	var agentRunnerFollowsCoordinator bool
-	var workflowEvents <-chan workflow.Event
-	wf := make(chan workflow.Event, 128)
-	workflowEvents = wf
-	extra = append(extra, workflow.Tool{Events: wf})
+	rt, workflowEvents := buildChatRuntime(ctx, cfg, prov, providerName, model, sess, agentProfile, cwd, root, streams)
+	return &chatSetup{
+		cfg:            cfg,
+		sess:           sess,
+		cwd:            cwd,
+		profile:        agentProfile,
+		sk:             rt.sk,
+		runtime:        rt.runtime,
+		workflowEvents: workflowEvents,
+	}, true
+}
+
+// buildChatRuntime assembles the tools, the system prompt, and the agent they
+// run in, plus the event channel the TUI reads workflow progress from.
+func buildChatRuntime(ctx context.Context, cfg *config.Config, prov llm.Provider, providerName, model string, sess *session.Session, agentProfile profile.Profile, cwd, root string, streams stdio) (chatRuntimeSetup, <-chan workflow.Event) {
 	// The goal tool is always registered, even with no goal in the session, so
 	// the model's tool list never changes mid-conversation. Its manager owns the
 	// session goal; the tool cannot pause, resume, clear, or spend the budget.
@@ -742,22 +805,15 @@ func runChatSession(ctx context.Context, store *session.Store, sess *session.Ses
 	if goalWarning != "" {
 		fmt.Fprintln(streams.err, goalWarning)
 	}
-	extra = append(extra, goal.Tool{Manager: goalManager})
-	if cwd != "" {
-		var at subagent.AgentTool
-		workerProvider, workerModel, followsCoordinator := subagentBackend(ctx, cfg, prov, model)
-		agentRunnerFollowsCoordinator = followsCoordinator
-		at, _, agentRunner = chatAgentTool(workerProvider, workerModel, cwd, root, cfg)
-		extra = append(extra, at)
-	}
-	reg := newRegistry(cwd, root, extra...)
+	workflowEvents, extra, agentRunner, followsCoordinator := chatExtraTools(ctx, cfg, prov, model, cwd, root, goalManager)
 
+	reg := newRegistry(cwd, root, extra...)
 	// Skills are loaded once: the catalog is advertised in the system prompt
 	// (via chatSystem), and the same slice drives $name and /name expansion in
 	// the TUI.
 	sk := loadSkills(cfg, cwd, streams.err)
-
 	system, systemBlocks := chatSystem(cfg, cwd, sk, agentProfile, reg, streams.err)
+
 	var requiresApproval func(string, map[string]any) bool
 	if len(cfg.ToolApprovals) > 0 {
 		requiresApproval = approval.New(cfg.ToolApprovals).Requires
@@ -773,93 +829,163 @@ func runChatSession(ctx context.Context, store *session.Store, sess *session.Ses
 		Messages:         sess.Messages,
 		Usage:            sess.Usage,
 	})
+	return chatRuntimeSetup{
+		sk: sk,
+		runtime: &chatRuntime{
+			cfg:                      cfg,
+			ag:                       ag,
+			goal:                     goalManager,
+			runner:                   agentRunner,
+			runnerFollowsCoordinator: followsCoordinator,
+			provider:                 prov,
+			providerName:             providerName,
+			model:                    model,
+			providerModels:           map[string]string{providerName: model},
+		},
+	}, workflowEvents
+}
 
-	// saveSession writes the transcript and the goal together. Every goal
-	// transition that happens in this process goes through it, so the messages
-	// and the goal they belong to never disagree on disk.
-	saveSession := func() error {
-		return saveChatSession(ctx, store, sess, ag, goalManager, cwd, agentProfile.Name)
+// chatRuntimeSetup pairs the runtime with the skills its system prompt
+// advertised, since the TUI expands the same slice.
+type chatRuntimeSetup struct {
+	sk      []skills.Skill
+	runtime *chatRuntime
+}
+
+// resolveChatProvider builds the backend a session was recorded with, falling
+// back to the configured default when only that one can be built.
+func resolveChatProvider(ctx context.Context, cfg *config.Config, sess *session.Session, streams stdio) (string, string, llm.Provider, bool) {
+	providerName, model := sessionBackend(cfg, sessionMetadata(sess), streams.err)
+	prov, err := chatSessionProvider(ctx, cfg, sess, providerName)
+	if err == nil {
+		return providerName, model, prov, true
 	}
-
-	// The active backend moves with /provider, so both switchers read it from
-	// these variables rather than the startup provider captured above.
-	activeProvider, activeProviderName := prov, providerName
-	// providerModels remembers the last model used per provider, so switching
-	// away and back restores it instead of the provider's default.
-	providerModels := map[string]string{providerName: model}
-
-	switchModel := func(nextModel string) error {
-		prevModel := providerModels[activeProviderName]
-		if prevModel == "" {
-			_, prevModel = ag.Backend()
-		}
-		if err := setChatModel(activeProvider, cfg, ag, agentRunner, agentRunnerFollowsCoordinator, nextModel); err != nil {
-			return err
-		}
-		// Persist the choice with the backend it was made against, so the
-		// active provider cannot drift from the model written beside it.
-		if _, err := cfg.WriteBackend(activeProviderName, nextModel); err != nil {
-			restoreChatModel(activeProvider, cfg, ag, agentRunner, agentRunnerFollowsCoordinator, prevModel)
-			return err
-		}
-		providerModels[activeProviderName] = nextModel
-		cfg.Model = nextModel
-		return nil
-	}
-
-	switchProvider := func(name string) (tui.ProviderState, error) {
-		if !cfg.HasProvider(name) {
-			return tui.ProviderState{}, fmt.Errorf("unknown provider %q; available: %s",
-				name, strings.Join(cfg.ProviderNames(), ", "))
-		}
-		// Build the backend first: a missing key or subscription login fails
-		// here, before the running chat or the config file change.
-		next, err := checkedProvider(ctx, cfg, name)
-		if err != nil {
-			return tui.ProviderState{}, err
-		}
-		nextModel := providerModels[name]
-		if nextModel == "" {
-			nextModel = cfg.DefaultModelFor(name)
-		}
-		if nextModel == "" {
-			return tui.ProviderState{}, fmt.Errorf("provider %s has no default model; set default_model for it in neo.yaml", name)
-		}
-		// Apply the backend, then persist. A failed write restores the previous
-		// backend so a failed switch leaves nothing half-changed.
-		prevProvider, prevModel := activeProvider, providerModels[activeProviderName]
-		if prevModel == "" {
-			prevModel = model
-		}
-		if err := switchChatBackend(cfg, ag, agentRunner, agentRunnerFollowsCoordinator, next, name, nextModel, prevProvider, prevModel); err != nil {
-			return tui.ProviderState{}, err
-		}
-		activeProvider, activeProviderName = next, name
-		providerModels[name] = nextModel
-		cfg.Provider, cfg.Model = name, nextModel
-		return tui.ProviderState{
-			Provider: name,
-			Model:    nextModel,
-			Choices:  modelChoices(cfg, name),
-			Loader:   modelChoicesLoader(cfg, name),
-		}, nil
-	}
-
-	if err := tui.Run(ctx, ag, model, Version, cwd, sk,
-		tui.WithAfterSend(saveSession),
-		tui.WithGoalManager(goalManager),
-		tui.WithGoalPersist(saveSession),
-		tui.WithModelSwitcher(providerName, modelChoices(cfg, providerName), switchModel),
-		tui.WithModelChoicesLoader(modelChoicesLoader(cfg, providerName)),
-		tui.WithProviderSwitcher(providerChoices(cfg), switchProvider),
-		tui.WithWorkflowEvents(workflowEvents),
-		tui.WithVerbose(cfg.VerboseEnabled()),
-		tui.WithIO(streams.in, streams.out),
-	); err != nil {
+	if providerName == cfg.Provider {
 		fmt.Fprintln(streams.err, err)
-		return 1
+		return "", "", nil, false
 	}
-	return 0
+	fmt.Fprintf(streams.err, "warning: cannot resume with %s (%v); continuing with %s model %s\n", providerName, err, cfg.Provider, cfg.Model)
+	prov, err = newProvider(cfg, cfg.Provider)
+	if err != nil {
+		fmt.Fprintln(streams.err, err)
+		return "", "", nil, false
+	}
+	return cfg.Provider, cfg.Model, prov, true
+}
+
+// chatSessionMeta is the metadata a fresh session is created with.
+type chatSessionMeta struct {
+	cwd        string
+	agent      string
+	model      string
+	providerID string
+	openAIAuth string
+}
+
+// ensureChatSession creates the session when the caller has none, and returns
+// the one to use either way. The session exists before the goal manager is
+// built: the goal belongs to the session, so resuming restores it from the
+// record just loaded.
+func ensureChatSession(ctx context.Context, store *session.Store, sess *session.Session, meta chatSessionMeta, streams stdio) (*session.Session, bool) {
+	if sess != nil {
+		return sess, true
+	}
+	created, err := store.Create(ctx, session.Metadata{
+		CWD:        meta.cwd,
+		Agent:      meta.agent,
+		Model:      meta.model,
+		Provider:   meta.providerID,
+		OpenAIAuth: meta.openAIAuth,
+	})
+	if err != nil {
+		fmt.Fprintf(streams.err, "create session: %v\n", err)
+		return nil, false
+	}
+	return created, true
+}
+
+// chatExtraTools registers the tools that are not part of the built-in
+// registry: workflow events, the goal tool, and — when the working directory
+// is readable — the agent tool.
+//
+// The chat agent is the primary coordinator. It gets the agent tool (as caller
+// node 0) so it can spawn amnesiac subagents with self-contained prompts
+// directly from the conversation. Sequencing is the agent's judgment, not a
+// stored workflow artifact.
+func chatExtraTools(ctx context.Context, cfg *config.Config, prov llm.Provider, model, cwd, root string, goalManager *goal.Manager) (<-chan workflow.Event, []tools.Tool, *subagent.AgentRunner, bool) {
+	wf := make(chan workflow.Event, 128)
+	extra := []tools.Tool{workflow.Tool{Events: wf}, goal.Tool{Manager: goalManager}}
+	var agentRunner *subagent.AgentRunner
+	followsCoordinator := false
+	if cwd != "" {
+		workerProvider, workerModel, follows := subagentBackend(ctx, cfg, prov, model)
+		followsCoordinator = follows
+		var at subagent.AgentTool
+		at, _, agentRunner = chatAgentTool(workerProvider, workerModel, cwd, root, cfg)
+		extra = append(extra, at)
+	}
+	return wf, extra, agentRunner, followsCoordinator
+}
+
+// switchModel changes the model and persists the choice beside the backend it
+// was made against, so the active provider cannot drift from the written model.
+func (r *chatRuntime) switchModel(nextModel string) error {
+	prevModel := r.providerModels[r.providerName]
+	if prevModel == "" {
+		_, prevModel = r.ag.Backend()
+	}
+	if err := setChatModel(r.provider, r.cfg, r.ag, r.runner, r.runnerFollowsCoordinator, nextModel); err != nil {
+		return err
+	}
+	if _, err := r.cfg.WriteBackend(r.providerName, nextModel); err != nil {
+		restoreChatModel(r.provider, r.cfg, r.ag, r.runner, r.runnerFollowsCoordinator, prevModel)
+		return err
+	}
+	r.providerModels[r.providerName] = nextModel
+	r.cfg.Model = nextModel
+	r.model = nextModel
+	return nil
+}
+
+// switchProvider builds the named backend, swaps it in, and persists it. Every
+// failure leaves the running session and the config file untouched.
+func (r *chatRuntime) switchProvider(ctx context.Context, name string) (tui.ProviderState, error) {
+	if !r.cfg.HasProvider(name) {
+		return tui.ProviderState{}, fmt.Errorf("unknown provider %q; available: %s",
+			name, strings.Join(r.cfg.ProviderNames(), ", "))
+	}
+	// Build the backend first: a missing key or subscription login fails here,
+	// before the running chat or the config file change.
+	next, err := checkedProvider(ctx, r.cfg, name)
+	if err != nil {
+		return tui.ProviderState{}, err
+	}
+	nextModel := r.providerModels[name]
+	if nextModel == "" {
+		nextModel = r.cfg.DefaultModelFor(name)
+	}
+	if nextModel == "" {
+		return tui.ProviderState{}, fmt.Errorf("provider %s has no default model; set default_model for it in neo.yaml", name)
+	}
+	// Apply the backend, then persist. A failed write restores the previous
+	// backend so a failed switch leaves nothing half-changed.
+	prevProvider, prevModel := r.provider, r.providerModels[r.providerName]
+	if prevModel == "" {
+		prevModel = r.model
+	}
+	if err := switchChatBackend(r.cfg, r.ag, r.runner, r.runnerFollowsCoordinator, next, name, nextModel, prevProvider, prevModel); err != nil {
+		return tui.ProviderState{}, err
+	}
+	r.provider, r.providerName = next, name
+	r.model = nextModel
+	r.providerModels[name] = nextModel
+	r.cfg.Provider, r.cfg.Model = name, nextModel
+	return tui.ProviderState{
+		Provider: name,
+		Model:    nextModel,
+		Choices:  modelChoices(r.cfg, name),
+		Loader:   modelChoicesLoader(r.cfg, name),
+	}, nil
 }
 
 func saveChatSession(ctx context.Context, store *session.Store, sess *session.Session, ag *agent.Agent, goals *goal.Manager, cwd, agentName string) error {

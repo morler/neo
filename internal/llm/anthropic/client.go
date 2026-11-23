@@ -214,47 +214,11 @@ func (c *Client) Complete(ctx context.Context, req llm.Request) (*llm.Response, 
 		"tools", len(req.Tools),
 		"payload", logx.PayloadValue(string(body)),
 	)
-
 	// Streaming is the transport, not a UI feature: nothing is emitted as it
 	// arrives. It keeps a long generation from being one long request, and the
 	// Messages API requires it above a max_tokens threshold, so raising
 	// defaultMaxTokens later does not need another transport change.
-	//
-	// streamed is assigned by the attempt and read after it succeeds. The retry
-	// helper deals in buffered bodies, which a stream has no equivalent of, so
-	// the assembled response comes back this way rather than through it.
-	var streamed *llm.Response
-	result, err := retry.Do(ctx, retry.Options{
-		Provider:       c.Name(),
-		ErrorLabel:     "anthropic",
-		MaxRetries:     c.MaxRetries,
-		BaseDelay:      c.BaseDelay,
-		RetryAfterBody: parseRetryAfterBody,
-	}, func(ctx context.Context) (retry.AttemptResult, error) {
-		streamed = nil
-		// The idle guard cancels this context when the stream stalls, so it
-		// is per attempt: the outer ctx stays clean for the retry decision.
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		resp, err := c.send(ctx, body)
-		if err != nil {
-			return retry.AttemptResult{}, err
-		}
-		body := retry.IdleBody(resp.Body, retry.IdleTimeout, cancel)
-		defer body.Close()
-		retryAfter := retry.ParseRetryAfterHeader(resp.Header.Get("Retry-After"), time.Now())
-
-		if resp.StatusCode >= 400 {
-			raw, readErr := io.ReadAll(body)
-			return retry.AttemptResult{Body: raw, Status: resp.StatusCode, RetryAfter: retryAfter}, readErr
-		}
-		parsed, err := parseStream(body)
-		if err != nil {
-			return retry.AttemptResult{Status: resp.StatusCode, RetryAfter: retryAfter}, err
-		}
-		streamed = parsed
-		return retry.AttemptResult{Status: resp.StatusCode, RetryAfter: retryAfter}, nil
-	})
+	streamed, result, err := c.sendWithRetry(ctx, body)
 	if err != nil {
 		return nil, err
 	}
@@ -274,6 +238,53 @@ func (c *Client) Complete(ctx context.Context, req llm.Request) (*llm.Response, 
 		"usage", streamed.Usage,
 	)
 	return streamed, nil
+}
+
+// sendWithRetry runs one streaming attempt under the shared retry policy and
+// returns both the assembled response and the last attempt's status.
+//
+// streamed is assigned by the attempt and read after it succeeds. The retry
+// helper deals in buffered bodies, which a stream has no equivalent of, so the
+// assembled response comes back this way rather than through it.
+func (c *Client) sendWithRetry(ctx context.Context, body []byte) (*llm.Response, retry.AttemptResult, error) {
+	var streamed *llm.Response
+	result, err := retry.Do(ctx, retry.Options{
+		Provider:       c.Name(),
+		ErrorLabel:     "anthropic",
+		MaxRetries:     c.MaxRetries,
+		BaseDelay:      c.BaseDelay,
+		RetryAfterBody: parseRetryAfterBody,
+	}, c.streamAttempt(body, &streamed))
+	return streamed, result, err
+}
+
+// streamAttempt returns the function one retry attempt runs. cancel is scoped
+// to the attempt: the idle guard cancels that context when the stream stalls,
+// while the outer ctx stays clean for the retry decision.
+func (c *Client) streamAttempt(body []byte, streamed **llm.Response) retry.AttemptFunc {
+	return func(ctx context.Context) (retry.AttemptResult, error) {
+		*streamed = nil
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		resp, err := c.send(ctx, body)
+		if err != nil {
+			return retry.AttemptResult{}, err
+		}
+		body := retry.IdleBody(resp.Body, retry.IdleTimeout, cancel)
+		defer body.Close()
+		retryAfter := retry.ParseRetryAfterHeader(resp.Header.Get("Retry-After"), time.Now())
+
+		if resp.StatusCode >= 400 {
+			raw, readErr := io.ReadAll(body)
+			return retry.AttemptResult{Body: raw, Status: resp.StatusCode, RetryAfter: retryAfter}, readErr
+		}
+		parsed, err := parseStream(body)
+		if err != nil {
+			return retry.AttemptResult{Status: resp.StatusCode, RetryAfter: retryAfter}, err
+		}
+		*streamed = parsed
+		return retry.AttemptResult{Status: resp.StatusCode, RetryAfter: retryAfter}, nil
+	}
 }
 
 // send issues one POST and returns the live response with its body unread, so

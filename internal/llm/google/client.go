@@ -225,15 +225,18 @@ type response struct {
 	PromptFeedback *struct {
 		BlockReason string `json:"blockReason"`
 	} `json:"promptFeedback,omitempty"`
-	Usage *struct {
-		PromptTokenCount     int `json:"promptTokenCount"`
-		CandidatesTokenCount int `json:"candidatesTokenCount"`
-		ThoughtsTokenCount   int `json:"thoughtsTokenCount"`
-		CachedTokenCount     int `json:"cachedContentTokenCount"`
-	} `json:"usageMetadata,omitempty"`
+	Usage *usageMetadata `json:"usageMetadata,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
+}
+
+// usageMetadata is Gemini's token accounting for one response.
+type usageMetadata struct {
+	PromptTokenCount     int `json:"promptTokenCount"`
+	CandidatesTokenCount int `json:"candidatesTokenCount"`
+	ThoughtsTokenCount   int `json:"thoughtsTokenCount"`
+	CachedTokenCount     int `json:"cachedContentTokenCount"`
 }
 
 type candidate struct {
@@ -418,63 +421,91 @@ func toTools(specs []llm.ToolSpec) []tool {
 }
 
 func toLLMResponse(out response) (*llm.Response, error) {
-	if out.Error != nil {
-		return nil, fmt.Errorf("google: %s", out.Error.Message)
-	}
-	if len(out.Candidates) == 0 {
-		if out.PromptFeedback != nil && out.PromptFeedback.BlockReason != "" {
-			return nil, fmt.Errorf("google: prompt blocked with %s", out.PromptFeedback.BlockReason)
-		}
-		return nil, fmt.Errorf("google: no candidates returned")
-	}
-	cand := out.Candidates[0]
-	if cand.FinishReason != "" && cand.FinishReason != "STOP" && cand.FinishReason != "MAX_TOKENS" {
-		if cand.FinishMessage != "" {
-			return nil, fmt.Errorf("google: generation stopped with %s: %s", cand.FinishReason, cand.FinishMessage)
-		}
-		return nil, fmt.Errorf("google: generation stopped with %s", cand.FinishReason)
+	cand, err := validateResponse(out)
+	if err != nil {
+		return nil, err
 	}
 	blocks := make([]llm.ContentBlock, 0, len(cand.Content.Parts))
 	missingIDs := map[string]int{}
 	for _, p := range cand.Content.Parts {
-		raw := preservedPart(p)
-		if p.Thought && p.FunctionCall == nil {
-			blocks = append(blocks, llm.ContentBlock{Type: "raw", Raw: raw})
-			continue
-		}
-		if p.Text != "" {
-			blocks = append(blocks, llm.ContentBlock{Type: "text", Text: p.Text, Raw: raw})
-		}
-		if p.FunctionCall != nil {
-			id := p.FunctionCall.ID
-			if id == "" {
-				missingIDs[p.FunctionCall.Name]++
-				id = p.FunctionCall.Name
-				if n := missingIDs[p.FunctionCall.Name]; n > 1 {
-					id = fmt.Sprintf("%s_%d", id, n)
-				}
-			}
-			input := p.FunctionCall.Args
-			if input == nil {
-				input = map[string]any{}
-			}
-			blocks = append(blocks, llm.ContentBlock{Type: "tool_use", ID: id, Name: p.FunctionCall.Name, Input: input, Raw: raw})
-		}
-		if p.Text == "" && p.FunctionCall == nil && len(raw) > 0 {
-			blocks = append(blocks, llm.ContentBlock{Type: "raw", Raw: raw})
-		}
+		blocks = append(blocks, partsToBlocks(p, missingIDs)...)
 	}
 	resp := &llm.Response{Content: blocks, StopReason: stopReason(cand)}
 	if out.Usage != nil {
-		resp.Usage = llm.Usage{
-			// promptTokenCount includes cachedContentTokenCount; llm.Usage
-			// partitions them, so take the cached count back out.
-			InputTokens:     max(0, out.Usage.PromptTokenCount-out.Usage.CachedTokenCount),
-			OutputTokens:    out.Usage.CandidatesTokenCount + out.Usage.ThoughtsTokenCount,
-			CacheReadTokens: out.Usage.CachedTokenCount,
-		}
+		resp.Usage = usageFrom(out.Usage)
 	}
 	return resp, nil
+}
+
+// validateResponse rejects the envelope-level failures before any part is
+// read, and returns the candidate to convert.
+func validateResponse(out response) (candidate, error) {
+	if out.Error != nil {
+		return candidate{}, fmt.Errorf("google: %s", out.Error.Message)
+	}
+	if len(out.Candidates) == 0 {
+		if out.PromptFeedback != nil && out.PromptFeedback.BlockReason != "" {
+			return candidate{}, fmt.Errorf("google: prompt blocked with %s", out.PromptFeedback.BlockReason)
+		}
+		return candidate{}, fmt.Errorf("google: no candidates returned")
+	}
+	cand := out.Candidates[0]
+	if cand.FinishReason != "" && cand.FinishReason != "STOP" && cand.FinishReason != "MAX_TOKENS" {
+		if cand.FinishMessage != "" {
+			return candidate{}, fmt.Errorf("google: generation stopped with %s: %s", cand.FinishReason, cand.FinishMessage)
+		}
+		return candidate{}, fmt.Errorf("google: generation stopped with %s", cand.FinishReason)
+	}
+	return cand, nil
+}
+
+// partsToBlocks converts one response part. Thought parts carry no text of
+// their own, so they and anything unrecognized are preserved as raw blocks for
+// the next request rather than dropped.
+func partsToBlocks(p part, missingIDs map[string]int) []llm.ContentBlock {
+	raw := preservedPart(p)
+	if p.Thought && p.FunctionCall == nil {
+		return []llm.ContentBlock{{Type: "raw", Raw: raw}}
+	}
+	var blocks []llm.ContentBlock
+	if p.Text != "" {
+		blocks = append(blocks, llm.ContentBlock{Type: "text", Text: p.Text, Raw: raw})
+	}
+	if p.FunctionCall != nil {
+		blocks = append(blocks, toolUseBlock(p.FunctionCall, missingIDs, raw))
+	}
+	if p.Text == "" && p.FunctionCall == nil && len(raw) > 0 {
+		blocks = append(blocks, llm.ContentBlock{Type: "raw", Raw: raw})
+	}
+	return blocks
+}
+
+// toolUseBlock names a call, synthesizing an id from the function name when
+// Gemini supplied none and disambiguating repeats within one response.
+func toolUseBlock(call *functionCall, missingIDs map[string]int, raw json.RawMessage) llm.ContentBlock {
+	id := call.ID
+	if id == "" {
+		missingIDs[call.Name]++
+		id = call.Name
+		if n := missingIDs[call.Name]; n > 1 {
+			id = fmt.Sprintf("%s_%d", id, n)
+		}
+	}
+	input := call.Args
+	if input == nil {
+		input = map[string]any{}
+	}
+	return llm.ContentBlock{Type: "tool_use", ID: id, Name: call.Name, Input: input, Raw: raw}
+}
+
+// usageFrom partitions Gemini's counts the way llm.Usage expects: the prompt
+// count includes the cached count, and thoughts bill as output.
+func usageFrom(usage *usageMetadata) llm.Usage {
+	return llm.Usage{
+		InputTokens:     max(0, usage.PromptTokenCount-usage.CachedTokenCount),
+		OutputTokens:    usage.CandidatesTokenCount + usage.ThoughtsTokenCount,
+		CacheReadTokens: usage.CachedTokenCount,
+	}
 }
 
 func preservedPart(p part) json.RawMessage {
