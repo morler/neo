@@ -122,16 +122,6 @@ func (u apiUsage) toLLM() llm.Usage {
 	}
 }
 
-type apiResponse struct {
-	Content    []llm.ContentBlock `json:"content"`
-	StopReason string             `json:"stop_reason"`
-	Usage      *apiUsage          `json:"usage,omitempty"`
-	Error      *struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
-}
-
 // systemPayload renders the request's system prompt for the API. When the
 // request carries SystemBlocks it emits a content-block array, attaching a
 // cache_control breakpoint to each block flagged for caching; otherwise it
