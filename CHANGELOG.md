@@ -49,6 +49,8 @@ All notable changes to Neo will be documented in this file.
 
 ### Fixed
 
+- Compaction no longer re-fires on the next turn right after summarizing: the
+  transcript must grow by a further 20% before it is compacted again.
 - Context-size estimation now counts an inline image as a fixed 1,500-token
   reserve instead of its base64 payload. A single screenshot used to estimate
   as ~100k tokens of text, past the default compaction trigger, which started a

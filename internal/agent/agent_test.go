@@ -1281,7 +1281,7 @@ func TestAgent_AccumulatesCompactionAndAnswerUsageExactlyOnce(t *testing.T) {
 		Provider: prov,
 		Tools:    tools.NewRegistry(),
 		Messages: messages,
-		Compactor: compact.Summarizer{
+		Compactor: &compact.Summarizer{
 			Provider:      prov,
 			Model:         "test-model",
 			TriggerTokens: 1,
@@ -1313,7 +1313,7 @@ func TestAgent_CountsUsageFromUnusableCompactionResponse(t *testing.T) {
 		Model:    "test-model",
 		Provider: prov,
 		Messages: messages,
-		Compactor: compact.Summarizer{
+		Compactor: &compact.Summarizer{
 			Provider:      prov,
 			Model:         "test-model",
 			TriggerTokens: 1,

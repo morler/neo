@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/owainlewis/neo/internal/llm"
 )
@@ -17,7 +18,19 @@ const (
 	DefaultContextWindowTokens = 200_000
 	DefaultKeepRecent          = 20
 
+	// triggerRatio is the share of the context window that may fill before the
+	// transcript is summarized. 0.70 leaves a third of the window for the model
+	// to answer in and for the summary to be re-sent, which matters because the
+	// summary request itself adds tokens.
 	triggerRatio = 0.70
+
+	// growthFloor is how much the transcript must grow past the post-compaction
+	// size before compacting again. Without it, a compaction that leaves the
+	// transcript just under the trigger can re-fire on the next turn, paying for
+	// a summary each time. 1.2 means a fifth of the current size must be new
+	// work: enough that ordinary turns never trip it, small enough that a long
+	// session still compacts before it reaches the window.
+	growthFloor = 1.2
 )
 
 const summarySystem = `You summarize coding agent transcripts. Produce a compact summary that preserves:
@@ -37,6 +50,12 @@ const summaryPreamble = "[Earlier conversation was compacted to fit the context 
 // oldest turns, replacing them with a single user message that carries the
 // summary. The most recent messages are kept verbatim, cut at a safe split
 // point so no tool_result loses its tool_use.
+//
+// It also carries the one piece of state the growth floor needs: the size that
+// triggered the previous compaction. Callers must hold a *Summarizer, not a
+// copy, or that state is lost between turns. Compact takes a mutex because a
+// compaction can be reached from a different goroutine than the turn that
+// scheduled it.
 type Summarizer struct {
 	Provider llm.Provider
 	Model    string
@@ -46,17 +65,26 @@ type Summarizer struct {
 	// KeepRecent is the number of trailing messages preserved verbatim
 	// (default DefaultKeepRecent).
 	KeepRecent int
+	// LastCompactedTokens is the size, in the same units as the promptTokens
+	// argument, that triggered the previous compaction; 0 before the first one.
+	// The growth floor compares the next size against it. A /model or /provider
+	// switch builds a new summarizer, which starts with no floor: the window
+	// and the cached prefix both changed, so the previous size says nothing
+	// about the new one.
+	LastCompactedTokens int
+
+	mu sync.Mutex
 }
 
 // NewSummarizer builds a Summarizer with default thresholds.
-func NewSummarizer(p llm.Provider, model string) Summarizer {
-	return Summarizer{Provider: p, Model: model}
+func NewSummarizer(p llm.Provider, model string) *Summarizer {
+	return &Summarizer{Provider: p, Model: model}
 }
 
 // NewSummarizerForContextWindow builds a Summarizer whose trigger is derived
 // from an optional context-window override. A non-positive override preserves
 // NewSummarizer's default behavior.
-func NewSummarizerForContextWindow(p llm.Provider, model string, contextWindowTokens int) Summarizer {
+func NewSummarizerForContextWindow(p llm.Provider, model string, contextWindowTokens int) *Summarizer {
 	s := NewSummarizer(p, model)
 	if contextWindowTokens > 0 {
 		s.TriggerTokens = TriggerTokensForContextWindow(contextWindowTokens)
@@ -73,7 +101,10 @@ func TriggerTokensForContextWindow(contextWindowTokens int) int {
 	return int(float64(contextWindowTokens) * triggerRatio)
 }
 
-func (s Summarizer) Compact(ctx context.Context, messages []llm.Message, promptTokens int) (Result, error) {
+func (s *Summarizer) Compact(ctx context.Context, messages []llm.Message, promptTokens int) (Result, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	trigger := s.TriggerTokens
 	if trigger <= 0 {
 		trigger = TriggerTokensForContextWindow(DefaultContextWindowTokens)
@@ -88,6 +119,13 @@ func (s Summarizer) Compact(ctx context.Context, messages []llm.Message, promptT
 		size = EstimateTokens(messages)
 	}
 	if len(messages) <= keep || size < trigger {
+		return Result{Messages: messages}, nil
+	}
+	// A compaction that just ran leaves the transcript smaller; a turn or two
+	// later it can be back over the same trigger without having grown much. The
+	// floor makes the transcript prove it grew by a fifth before paying for
+	// another summary.
+	if s.LastCompactedTokens > 0 && float64(size) < float64(s.LastCompactedTokens)*growthFloor {
 		return Result{Messages: messages}, nil
 	}
 	split := SafeSplitPoint(messages, len(messages)-keep)
@@ -105,14 +143,22 @@ func (s Summarizer) Compact(ctx context.Context, messages []llm.Message, promptT
 		Type: "text",
 		Text: summaryPreamble + summary,
 	}}})
-	return Result{Messages: append(out, messages[split:]...), Usage: usage}, nil
+	compacted := append(out, messages[split:]...)
+	// Record the size that triggered this compaction. The floor is compared
+	// against the same measurement the caller passes in — the provider's
+	// reported prompt size once one exists, otherwise the estimate — so
+	// recording the pre-compaction size keeps both sides on one scale. Using
+	// the kept transcript's estimate instead would mix a whole-request figure
+	// with a messages-only one.
+	s.LastCompactedTokens = size
+	return Result{Messages: compacted, Usage: usage}, nil
 }
 
 // summarize asks the provider for a summary of head. A head ending before a
 // fresh user turn gets a user instruction. A head ending in a completed tool
 // exchange gets the instruction through the system prompt so its role sequence
 // remains provider-valid.
-func (s Summarizer) summarize(ctx context.Context, head []llm.Message) (string, llm.Usage, error) {
+func (s *Summarizer) summarize(ctx context.Context, head []llm.Message) (string, llm.Usage, error) {
 	msgs := make([]llm.Message, 0, len(head)+1)
 	msgs = append(msgs, head...)
 	system := summarySystem

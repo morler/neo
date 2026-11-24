@@ -87,7 +87,7 @@ func TestAgentRunnerCompactorUsesConfiguredContextWindow(t *testing.T) {
 		ContextWindowTokens: 100,
 	}
 
-	compactor, ok := r.compactor(prov, "small-model").(compact.Summarizer)
+	compactor, ok := r.compactor(prov, "small-model").(*compact.Summarizer)
 	if !ok {
 		t.Fatalf("compactor = %T, want compact.Summarizer", r.compactor(prov, "small-model"))
 	}

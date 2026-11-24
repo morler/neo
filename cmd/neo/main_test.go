@@ -441,7 +441,7 @@ func TestSaveChatSession_PersistsCompactionAndAnswerUsage(t *testing.T) {
 		Model:    "test-model",
 		Provider: prov,
 		Messages: messages,
-		Compactor: compact.Summarizer{
+		Compactor: &compact.Summarizer{
 			Provider:      prov,
 			Model:         "test-model",
 			TriggerTokens: 1,
@@ -532,7 +532,7 @@ func TestChatCompactorUsesContextWindowOverride(t *testing.T) {
 	got := chatCompactor(&llmtest.FakeProvider{}, "m", &config.Config{
 		Compaction: config.Compaction{ContextWindowTokens: 1_000_000},
 	})
-	s, ok := got.(compact.Summarizer)
+	s, ok := got.(*compact.Summarizer)
 	if !ok {
 		t.Fatalf("compactor = %T, want compact.Summarizer", got)
 	}

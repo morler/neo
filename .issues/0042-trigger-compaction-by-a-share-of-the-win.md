@@ -1,7 +1,7 @@
 ---
 id: 42
 title: Trigger compaction by a share of the window with a growth floor
-status: open
+status: in-progress
 priority: high
 labels:
     - feature

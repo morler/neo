@@ -54,6 +54,13 @@ keeps the built-in 200,000-token default for both. The trigger measures the
 prompt size the provider reported for the previous request, so it accounts for
 the system prompt and tool definitions rather than the transcript alone.
 
+The trigger is 70% of that window: 140,000 tokens at the default, and 700,000
+for a 1M-token model, so a large window is not compacted as if it were a small
+one. After a compaction, the transcript must also grow by another 20% before it
+is compacted again, which stops a summary from re-firing on the next turn just
+because the kept tail is still near the trigger. Neither number is a config
+key: `context_window_tokens` is the only compaction setting.
+
 The embedded source, including annotated provider examples, is
 [`internal/config/defaults/neo.yaml`](https://github.com/owainlewis/neo/blob/main/internal/config/defaults/neo.yaml).
 
