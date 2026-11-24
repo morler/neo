@@ -18,4 +18,7 @@ Start here when changing Neo:
 - [Token budget design](../design/token-budget.md) explains the four rules behind
   the fixed-floor budget, the frozen prefix, and the compaction trigger; it also
   records which switches were deliberately not added.
+- [Embedded JS batch tool design](../design/js-batch-tool.md) records why Neo runs
+  model-written JavaScript through the `script` tool, which tools it may call,
+  what it deliberately does not do, and what the engine costs in binary size.
 - [Teaching guides](guides/index.md) explain the core ideas in plain language.
