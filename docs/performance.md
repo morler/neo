@@ -35,7 +35,7 @@ budgets:
   built-in skill catalog — must remain at or below 8,500 bytes. It is 8,084
   (5,022 for nine tool definitions, 3,062 for the prompt);
 - the same floor with the opt-in script tool enabled must remain at or below
-  9,500 bytes. It is 9,227 (5,726 and 3,501).
+  9,500 bytes. It is 9,374 (5,873 and 3,501).
 
 Re-measure the binary before adding a dependency: the ceiling is generous on
 purpose, and a second engine-sized cost would use it up.
@@ -70,8 +70,14 @@ exists:
 | **Fixed floor** | **8,084** | **~2,020** |
 
 These are the default surface, which has no script tool. Turning the tool on
-adds 704 bytes of schema and 439 bytes of prompt, for a floor of 9,227; that is
+adds 851 bytes of schema and 439 bytes of prompt, for a floor of 9,374; that is
 `scriptFloorByteBudget`, checked separately by `TestScriptFloorBudget`.
+
+The schema grew by 147 bytes on 2026-11-24 when the description was corrected:
+it had claimed a script could not write, long after write_file and edit_file
+were reachable, and a model that reads a narrower capability than it has stops
+choosing the tool. `TestScriptSpecMatchesGlobals` now fails if the text and the
+whitelist drift apart again.
 
 These figures are the basis of `fixedFloorByteBudget` (8,500) and the 1,400 /
 3,000 prompt budgets in `cmd/neo/performance_test.go`; if one moves
@@ -88,8 +94,8 @@ tasks, one run each, against a build with and without the tool registered:
 | conditional single-line edit | same | **+6.7%** |
 | locate one line in a 2,001-line file | same | **+10.6%** |
 
-Request counts did not fall. Input rose by the tool's fixed cost — 704 bytes of
-schema and 439 bytes of prompt, re-sent on every request — and nothing offset
+Request counts did not fall. Input rose by the tool's fixed cost — then 704 bytes
+of schema and 439 bytes of prompt, re-sent on every request — and nothing offset
 it: in all three free-form runs the model chose `bash` and `grep` and never
 called the script tool. A run with an explicit instruction to use it did, but
 spent three failed calls discovering the calling convention.

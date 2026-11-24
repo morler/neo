@@ -94,13 +94,19 @@ func (Script) Name() string { return "script" }
 // preference.
 func (Script) ParallelSafe(map[string]any) bool { return false }
 
+// Spec is the model's only description of what a script can reach, so it lists
+// the whitelist that globals actually builds. It said "no write" for as long as
+// it took someone to notice a script had been able to write since the approval
+// gate landed; the model read the conservative text and routed around the tool.
+// TestScriptSpecMatchesGlobals now fails if the two drift apart again.
 func (Script) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: "script",
-		Description: `Run JavaScript that can call tools, returning its last expression's value.
-Use it when a later step depends on an earlier result: filter, count, or branch over tool output inside the script instead of sending that output back and forth.
-Available inside the script: tools.read_file({path, offset?, limit?}) -> string. Nothing else is defined; there is no bash, no write, and no import.
-Write synchronous code. The last expression is the result; strings come back as-is and other values as JSON.`,
+		Description: `Run JavaScript that calls tools and returns its last expression's value.
+Use it when a later step depends on an earlier result: filter, count, or branch over tool output inside the script instead of sending it back and forth.
+Inside the script: tools.read_file, tools.grep, tools.glob, tools.write_file, tools.edit_file, with the same arguments as at top level. All return strings; grep returns "path:line:text" lines, glob one path per line.
+No bash, no import, no network. Writes pass the same approval a top-level call does.
+Synchronous only; top-level await is an error. The last expression is the result: strings as-is, other values JSON.`,
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

@@ -44,8 +44,8 @@ const (
 const fixedFloorByteBudget = 8_500
 
 // scriptFloorByteBudget covers the same surface with `features.script` on:
-// measured 2026-11-24 at 9,227 bytes (5,726 tool definitions + 3,501 prompt).
-// The script schema is 704 and its prompt section 439. Rounded up to the next
+// measured 2026-11-24 at 9,374 bytes (5,873 tool definitions + 3,501 prompt).
+// The script schema is 851 and its prompt section 439. Rounded up to the next
 // 500, matching how every other ceiling here was chosen.
 const scriptFloorByteBudget = 9_500
 

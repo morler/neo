@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -153,5 +154,43 @@ func TestScriptHonorsCancellation(t *testing.T) {
 	cancel()
 	if _, err := s.Run(ctx, map[string]any{"source": "1"}); err == nil {
 		t.Fatal("expected cancellation")
+	}
+}
+
+// TestScriptSpecMatchesGlobals pins the description to the whitelist it
+// describes. The text said "no write" long after a script could write, and a
+// model that reads a narrower capability than it has simply stops choosing the
+// tool, so the drift is a behaviour bug rather than a typo.
+func TestScriptSpecMatchesGlobals(t *testing.T) {
+	s, _ := newScript(t)
+	out, err := runScript(t, s, `Object.keys(tools).sort().join(",")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual := strings.Split(out, ",")
+
+	description := tools.Script{}.Spec().Description
+	var documented []string
+	for _, field := range strings.Fields(description) {
+		if name, ok := strings.CutPrefix(field, "tools."); ok {
+			documented = append(documented, strings.TrimRight(name, ",."))
+		}
+	}
+	sort.Strings(documented)
+
+	if strings.Join(documented, ",") != strings.Join(actual, ",") {
+		t.Fatalf("description names %v, globals expose %v", documented, actual)
+	}
+}
+
+// TestScriptDescriptionStatesTheReturnShapes covers the one detail a model
+// cannot infer: grep and glob return text lines, not arrays, so a script that
+// calls .filter on the result would fail for a reason the text could prevent.
+func TestScriptDescriptionStatesTheReturnShapes(t *testing.T) {
+	description := tools.Script{}.Spec().Description
+	for _, want := range []string{"path:line:text", "All return strings", "No bash", "no import"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("description lacks %q", want)
+		}
 	}
 }

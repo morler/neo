@@ -1,7 +1,7 @@
 ---
 id: 78
 title: Correct the script tool schema description so it matches the exposed tools
-status: open
+status: in-progress
 priority: high
 labels:
     - bug
