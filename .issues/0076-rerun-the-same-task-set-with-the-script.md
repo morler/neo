@@ -1,7 +1,7 @@
 ---
 id: 76
 title: Rerun the same task set with the script tool and decide keep or revert
-status: open
+status: in-progress
 priority: medium
 labels:
     - performance

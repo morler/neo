@@ -76,6 +76,27 @@ These figures are the basis of `fixedFloorByteBudget` (9,500) and the 1,400 /
 3,000 prompt budgets in `cmd/neo/performance_test.go`; if one moves
 intentionally, move both or the docs and the gate disagree.
 
+### The script tool's measured cost and benefit
+
+Measured 2026-11-24 on `openrouter` / `particle-ai/particle-1`, three fixed
+tasks, one run each, against a build with and without the tool registered:
+
+| Task | requests | input tokens |
+| --- | ---: | ---: |
+| count TODOs across files | same | **+8.7%** |
+| conditional single-line edit | same | **+6.7%** |
+| locate one line in a 2,001-line file | same | **+10.6%** |
+
+Request counts did not fall. Input rose by the tool's fixed cost — 704 bytes of
+schema and 439 bytes of prompt, re-sent on every request — and nothing offset
+it: in all three free-form runs the model chose `bash` and `grep` and never
+called the script tool. A run with an explicit instruction to use it did, but
+spent three failed calls discovering the calling convention.
+
+So the numbers here say what the tool costs, not what it is worth. Until a
+measurement shows a task where it earns the fixed cost back, treat it as a
+capability that must be asked for rather than one that pays for itself.
+
 ### Measuring a real run
 
 A run's actual cost comes from the provider, not from an estimate:
