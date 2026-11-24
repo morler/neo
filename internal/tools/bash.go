@@ -264,7 +264,9 @@ func (b *boundedOutput) String() string {
 		return string(append(append([]byte(nil), b.head...), b.tail...))
 	}
 	omitted := b.total - len(b.head) - len(b.tail)
-	marker := fmt.Sprintf("\n\n[bash output truncated: omitted %d bytes; showing first %d and last %d bytes]\n\n", omitted, len(b.head), len(b.tail))
+	marker := fmt.Sprintf("\n\n[bash output truncated: omitted %d bytes; showing first %d and last %d bytes. "+
+		"Rerun with output narrowed in the command itself, for example `| tail -n 200` or `| grep pattern`]\n\n",
+		omitted, len(b.head), len(b.tail))
 	out := make([]byte, 0, len(b.head)+len(marker)+len(b.tail))
 	out = append(out, b.head...)
 	out = append(out, marker...)

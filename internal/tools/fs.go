@@ -3,6 +3,7 @@ package tools
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -164,6 +165,9 @@ func readFileWindow(ctx context.Context, path string, offset, limit int) (string
 		if w.canceled {
 			return out.String(), err
 		}
+		if errors.Is(err, errReadSelectionTooLarge) {
+			return "", tooLargeAdvice(startLine, limit, w.lineNo, w.selected)
+		}
 		return "", err
 	}
 	if offset > 0 && !w.wroteLine && (!fileEmpty || offset != 1) {
@@ -266,10 +270,33 @@ func (w *windowScanner) breakLine() error {
 
 func appendReadFileChunk(out *strings.Builder, chunk string) error {
 	if out.Len()+len(chunk) > MaxReadBytes {
-		return fmt.Errorf("read_file: selection exceeds %d bytes; narrow with offset/limit", MaxReadBytes)
+		return errReadSelectionTooLarge
 	}
 	_, _ = out.WriteString(chunk)
 	return nil
+}
+
+// errReadSelectionTooLarge reports a window that does not fit the byte cap. The
+// message is a sentinel so the caller can turn it into a concrete next call
+// once the scanner knows where it stopped; an error alone tells the model to
+// "narrow with offset/limit" without saying how.
+var errReadSelectionTooLarge = errors.New("read_file: selection exceeds the byte cap")
+
+// tooLargeAdvice turns a failed window into the next call the model can make:
+// resume at the first line that did not fit. When the call set a limit, that
+// limit is reused unchanged, because it was the caller's own choice and the
+// lines after the cut are still unread. Without a limit, it suggests half the
+// lines that overflowed, which fits by construction for lines of similar length
+// and needs no second copy of the byte budget.
+func tooLargeAdvice(startLine, limit, stoppedAt, lines int) error {
+	next := max(stoppedAt, startLine)
+	if limit > 0 {
+		return fmt.Errorf("%w; retry with offset=%d, limit=%d", errReadSelectionTooLarge, next, limit)
+	}
+	// Halving the number of lines that already overflowed leaves headroom for
+	// the same average line length without recomputing the byte budget.
+	maxLines := max(lines/2, 1)
+	return fmt.Errorf("%w; retry with offset=%d, limit=%d", errReadSelectionTooLarge, next, maxLines)
 }
 
 type WriteFile struct {

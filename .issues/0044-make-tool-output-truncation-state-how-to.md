@@ -1,7 +1,7 @@
 ---
 id: 44
 title: Make read_file and bash truncation suggest the next call
-status: open
+status: in-progress
 priority: medium
 labels:
     - feature

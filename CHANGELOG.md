@@ -47,6 +47,13 @@ All notable changes to Neo will be documented in this file.
   denominator. An empty session says so instead of printing zeros, and `/clear`
   resets the totals with the transcript.
 
+### Changed
+
+- Truncated tool output now says what to do next. `read_file` reports the first
+  line that did not fit and a limit that will fit (`retry with offset=N,
+  limit=M`), and `bash` suggests narrowing the command itself (`| tail -n 200`,
+  `| grep pattern`) alongside the byte counts it already reported.
+
 ### Fixed
 
 - A model stuck reissuing the same tool call with the same arguments now gets a

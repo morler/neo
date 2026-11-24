@@ -163,3 +163,22 @@ valve for a loop that keeps changing shape; this guard is the inner one for a
 loop that repeats the same call and can be named. A turn stopped here reports
 `repeated tool call` and records the refusal in the transcript as a failed tool
 result, so it is distinguishable from a cancellation.
+
+## Truncation
+
+Every tool result is bounded by `MaxOutputBytes` (64 KiB, roughly 16k tokens).
+Two tools say what to do when a result hits the cap, and the wording matters
+because a model will copy it:
+
+- `read_file` fails with `read_file: selection exceeds the byte cap; retry with
+  offset=N, limit=M`. `N` is the first line that did not fit, so the retry
+  resumes rather than restarting; `M` is the caller's own limit when it set one,
+  or half the number of lines that overflowed. The advice is derived from the
+  real truncation point, not from a second byte budget, so a suggested call is
+  known to fit.
+- `bash` keeps its head-and-tail marker (`omitted N bytes; showing first A and
+  last B bytes`) and adds what to change in the command: `| tail -n 200` or
+  `| grep pattern`. It cannot suggest a different call because the output is
+  already gone by the time truncation happens.
+
+`grep` and `glob` have their own `max_matches` limits and are not affected.
