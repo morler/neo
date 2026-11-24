@@ -285,6 +285,11 @@ type model struct {
 	// group holds several. The status line reads it; receipts are appended
 	// as each result arrives.
 	inflight map[string]*toolCallBlock
+	// subCalls maps a script sub-call's ID to the index of its row in blocks,
+	// and subScripts maps a script's tool-use ID to everything its sub-calls
+	// produced, so the rows can be settled or summarized when it ends.
+	subCalls   map[string]int
+	subScripts map[string]*scriptRun
 	// workflow is the checklist block for the current turn, if the workflow
 	// tool created one. It lives in the transcript like any other block and
 	// is updated in place until the next turn starts.
@@ -1270,13 +1275,23 @@ func (m *model) handleEvent(e agent.Event) {
 // time later. The workflow tool is skipped: it mutates the checklist through
 // workflowEventMsg, and a generic card beside that would duplicate it.
 func (m *model) handleToolCallEvent(e agent.Event) {
+	// A sub-call names its parent through GroupID. GroupSize is zero because a
+	// script's calls arrive one at a time and their number is unknown up front,
+	// which is exactly how a parallel group differs from this.
+	if e.GroupID != "" && e.GroupSize == 0 {
+		m.startScriptSubCall(e)
+		return
+	}
 	if e.Name == "workflow" {
 		m.turn.workflow = true
 		return
 	}
 	m.turn.tools++
 	m.noteWorkflowActivity(capitalize(toolVerb(e.Name, e.Args)))
-	tc := &toolCallBlock{name: e.Name, args: e.Args, startAt: time.Now(), verbose: m.verbose}
+	tc := &toolCallBlock{
+		name: e.Name, args: e.Args, startAt: time.Now(), verbose: m.verbose,
+		toolUseID: e.ToolUseID, groupID: e.GroupID,
+	}
 	m.trackToolCall(e.ToolUseID, tc)
 	if m.verbose {
 		m.appendBlock(*tc)
@@ -1287,6 +1302,10 @@ func (m *model) handleToolCallEvent(e agent.Event) {
 // final. A successful workflow call is represented by the checklist, but a
 // failure may not produce a workflow event and must stay visible.
 func (m *model) handleToolResultEvent(e agent.Event) {
+	if e.GroupID != "" && e.GroupSize == 0 {
+		m.finishScriptSubCall(e)
+		return
+	}
 	if e.Name == "workflow" {
 		if e.IsError {
 			m.turn.errors++
@@ -1480,4 +1499,68 @@ func gitBranch() string {
 		return "no-git"
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// scriptRun is the bookkeeping for one script's sub-calls: which rows belong to
+// it and how many failed. Rows stay on screen after the script ends, because
+// removing them would move everything rendered below, and the cheap alternative
+// — blanking them — leaves gaps.
+type scriptRun struct {
+	rows     []int
+	calls    int
+	failures int
+}
+
+// startScriptSubCall appends one row beneath the script's receipt.
+//
+// Rows are appended at the end of the transcript rather than inserted after the
+// parent. That is deliberate: inserting would renumber every block below it,
+// and the rule this UI keeps is that work below the composer never moves.
+// Because a script's calls arrive one at a time and their count is unknown,
+// the parallel-group approach of reserving every row up front cannot apply —
+// there is no number to reserve.
+func (m *model) startScriptSubCall(e agent.Event) {
+	run := m.subScripts[e.GroupID]
+	if run == nil {
+		run = &scriptRun{}
+		if m.subScripts == nil {
+			m.subScripts = map[string]*scriptRun{}
+		}
+		m.subScripts[e.GroupID] = run
+	}
+	if m.subCalls == nil {
+		m.subCalls = map[string]int{}
+	}
+	row := subCallBlock{name: e.Name, args: e.Args, startAt: time.Now()}
+	m.blocks = append(m.blocks, row)
+	m.subCalls[e.ToolUseID] = len(m.blocks) - 1
+	run.rows = append(run.rows, len(m.blocks)-1)
+	run.calls++
+	m.invalidateRenderedFrom(len(m.blocks) - 1)
+	m.refreshViewport()
+}
+
+// finishScriptSubCall settles one row in place. It never appends, so a
+// completed call does not move anything that was already rendered.
+func (m *model) finishScriptSubCall(e agent.Event) {
+	idx, ok := m.subCalls[e.ToolUseID]
+	if !ok || idx >= len(m.blocks) {
+		return
+	}
+	row, ok := m.blocks[idx].(subCallBlock)
+	if !ok {
+		return
+	}
+	row.done = true
+	row.isError = e.IsError
+	row.elapsed = time.Since(row.startAt)
+	m.blocks[idx] = row
+	m.invalidateRenderedFrom(idx)
+	m.refreshViewport()
+	if e.IsError {
+		if run := m.subScripts[e.GroupID]; run != nil {
+			run.failures++
+		}
+		m.turn.errors++
+	}
 }

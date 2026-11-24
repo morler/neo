@@ -81,6 +81,23 @@ The rows are preallocated from the parent group-start event using the first line
 
 Single subagents keep the existing tree rendering. Nested tree rendering is unchanged and remains below its owning row if nested delegation is enabled later.
 
+### Script sub-calls
+
+A script runs other tools, and those calls are shown as rows under the script's own receipt:
+
+```text
+· Ran script                                3s
+  ├ Read internal/agent/agent.go           <1s
+  ├ Read internal/tui/model.go              1s
+  └ Read internal/tools/tool.go            <1s
+```
+
+Rows are appended as the calls happen and settled in place: a finished call changes its glyph and elapsed time, never its position or line count.
+
+This deliberately does not follow the parallel-group rule of reserving every row before work starts. A parallel group knows its members up front, so one group-start event can declare the final height. A script's calls appear one at a time and their number is not known until it ends, so there is no height to reserve. The rule that survives is the one that matters to the reader: nothing already rendered above moves. Rows are never removed or blanked when the script ends, because removing them would renumber the blocks below and blanking them would leave gaps.
+
+A failed row uses the error glyph and stays visible. The parent receipt still carries the script's own outcome, which is what decides the turn's result — a script may catch a failed tool call and succeed.
+
 ### Status line
 
 The fixed status line shows only the most useful concurrency summary:

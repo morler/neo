@@ -148,6 +148,10 @@ type toolCallBlock struct {
 	args    map[string]any
 	startAt time.Time
 	elapsed time.Duration
+	// toolUseID and groupID exist so a sub-call can find the block it belongs
+	// under. They are not rendered.
+	toolUseID string
+	groupID   string
 	// verbose selects full tool-card rendering. When false (the default),
 	// the block renders as a single concise status line instead.
 	verbose bool
@@ -354,4 +358,35 @@ func wrap(s string, width int) string {
 		return s
 	}
 	return lipgloss.NewStyle().Width(width).Render(s)
+}
+
+// subCallBlock is one tool call a script made. It renders as a muted row under
+// the script's own receipt, so the work is visible without turning the terminal
+// into a tree view.
+type subCallBlock struct {
+	name    string
+	args    map[string]any
+	startAt time.Time
+	elapsed time.Duration
+	// done and isError settle the row in place: the glyph and elapsed time
+	// change, the line count does not.
+	done    bool
+	isError bool
+}
+
+func (b subCallBlock) render(width int, _ *glamour.TermRenderer) string {
+	glyph := styDim.Render("├")
+	text := toolReceiptLine(b.name, b.args)
+	if b.done {
+		if b.isError {
+			glyph = styErr.Render("├")
+		} else {
+			glyph = styOK.Render("├")
+		}
+	}
+	line := "  " + glyph + " " + styMuted.Render(text)
+	if b.elapsed > 0 {
+		line += styDim.Render("  " + formatElapsed(b.elapsed))
+	}
+	return truncate(line, max(width, 1))
 }
