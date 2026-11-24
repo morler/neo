@@ -1,7 +1,7 @@
 ---
 id: 63
 title: Add the moejs module dependency and third-party notices
-status: in-progress
+status: closed
 priority: high
 labels:
     - config
@@ -12,6 +12,7 @@ relations:
         - 56
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
