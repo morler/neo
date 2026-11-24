@@ -19,6 +19,7 @@ type slashCommand struct {
 
 var baseSlashCommands = []slashCommand{
 	{"/clear", "clear the current transcript"},
+	{"/codemode", "turn the JavaScript script tool on or off"},
 	{"/goal", "set or manage a standing goal"},
 	{"/help", "show this list"},
 	{"/model", "select the active model"},

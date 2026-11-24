@@ -219,6 +219,46 @@ func (a *Agent) SetBackend(provider llm.Provider, model string, compactor compac
 	return nil
 }
 
+// SetTools replaces the tool registry between turns. It exists for switches
+// that change what the model can call — the script tool is one — where
+// rebuilding the whole agent would discard the transcript.
+//
+// Like SetBackend it is a between-turns operation; the lock keeps a concurrent
+// reader from seeing a half-switched registry.
+func (a *Agent) SetTools(reg *tools.Registry) error {
+	if reg == nil {
+		return fmt.Errorf("tool registry is required")
+	}
+	a.backendMu.Lock()
+	a.cfg.Tools = reg
+	a.backendMu.Unlock()
+	return nil
+}
+
+// SetPrompt replaces the system prompt and its cached blocks, which must move
+// together: a capability section is part of the prompt, so switching tools
+// without switching the prompt would leave instructions for a tool that is gone.
+func (a *Agent) SetPrompt(system string, blocks []llm.SystemBlock) {
+	a.backendMu.Lock()
+	a.cfg.System = system
+	a.cfg.SystemBlocks = blocks
+	a.backendMu.Unlock()
+}
+
+// tools returns the active registry under the same lock SetTools takes.
+func (a *Agent) tools() *tools.Registry {
+	a.backendMu.RLock()
+	defer a.backendMu.RUnlock()
+	return a.cfg.Tools
+}
+
+// prompt returns the active system prompt under the same lock SetPrompt takes.
+func (a *Agent) prompt() (string, []llm.SystemBlock) {
+	a.backendMu.RLock()
+	defer a.backendMu.RUnlock()
+	return a.cfg.System, a.cfg.SystemBlocks
+}
+
 func (a *Agent) backend() (llm.Provider, string, compact.Compactor) {
 	a.backendMu.RLock()
 	defer a.backendMu.RUnlock()
@@ -398,6 +438,7 @@ func (a *Agent) runTurn(ctx context.Context, turn int, finalText *strings.Builde
 // name it in their errors.
 func (a *Agent) requestTurn(ctx context.Context, turn int) (*llm.Response, llm.Provider, error) {
 	provider, model, compactor := a.backend()
+	system, blocks := a.prompt()
 	logx.Debug("agent turn start",
 		"turn", turn+1,
 		"max_turns", a.cfg.MaxTurns,
@@ -415,10 +456,10 @@ func (a *Agent) requestTurn(ctx context.Context, turn int) (*llm.Response, llm.P
 	a.messages = compaction.Messages
 	resp, err := provider.Complete(ctx, llm.Request{
 		Model:        model,
-		System:       a.cfg.System,
-		SystemBlocks: a.cfg.SystemBlocks,
+		System:       system,
+		SystemBlocks: blocks,
 		Messages:     a.messages,
-		Tools:        a.cfg.Tools.Specs(),
+		Tools:        a.tools().Specs(),
 	})
 	if err != nil {
 		logx.Debug("agent provider error", "turn", turn+1, "error", err.Error())
@@ -655,7 +696,7 @@ func (a *Agent) processResponseContent(ctx context.Context, content []llm.Conten
 			return results, steering
 		}
 
-		if !a.cfg.Tools.ParallelSafe(block.Name, block.Input) {
+		if !a.tools().ParallelSafe(block.Name, block.Input) {
 			result := a.executeSerialBlock(ctx, block)
 			results = append(results, result)
 			i++
@@ -667,7 +708,7 @@ func (a *Agent) processResponseContent(ctx context.Context, content []llm.Conten
 		}
 
 		j := i
-		for j < len(content) && content[j].Type == "tool_use" && a.cfg.Tools.ParallelSafe(content[j].Name, content[j].Input) {
+		for j < len(content) && content[j].Type == "tool_use" && a.tools().ParallelSafe(content[j].Name, content[j].Input) {
 			j++
 		}
 		prepared := make([]preparedToolCall, 0, j-i)
@@ -923,7 +964,7 @@ func (a *Agent) prepareToolWithoutRepeatGuard(block llm.ContentBlock) preparedTo
 // prepareToolWithoutRepeatGuard; a nil guard skips repeat counting.
 func (a *Agent) prepareToolWithRepeatGuard(block llm.ContentBlock, guard *repeatGuard) preparedToolCall {
 	call := preparedToolCall{block: block}
-	t, ok := a.cfg.Tools.Get(block.Name)
+	t, ok := a.tools().Get(block.Name)
 	if !ok {
 		call.lookupErr = fmt.Sprintf("unknown tool: %s", block.Name)
 		return call

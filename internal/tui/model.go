@@ -39,19 +39,39 @@ type Options struct {
 	ModelSwitcher      func(string) error
 	ProviderChoices    []ProviderChoice
 	ProviderSwitcher   ProviderSwitcher
-	SessionID          string
-	SessionLister      func(context.Context) ([]SessionChoice, error)
-	SessionOpener      func(string) error
-	WorkflowEvents     <-chan workflow.Event
-	Verbose            bool
-	Input              io.Reader
-	Output             io.Writer
+	// ScriptSwitcher turns the JavaScript `script` tool on or off for this
+	// session and persists the choice. The TUI never builds a registry: it asks
+	// the CLI boundary, which owns tool composition and the config write.
+	ScriptSwitcher ScriptSwitcher
+	// ScriptEnabled reports the current state for `/codemode status`.
+	ScriptEnabled  func() bool
+	SessionID      string
+	SessionLister  func(context.Context) ([]SessionChoice, error)
+	SessionOpener  func(string) error
+	WorkflowEvents <-chan workflow.Event
+	Verbose        bool
+	Input          io.Reader
+	Output         io.Writer
 }
+
+// ScriptSwitcher enables or disables the script tool and reports the state it
+// ended in. A failure leaves the previous state in place and is shown to the
+// user, so a write error cannot look like a successful switch.
+type ScriptSwitcher func(on bool) error
 
 type Option func(*Options)
 
 func WithAfterSend(fn func() error) Option {
 	return func(opts *Options) { opts.AfterSend = fn }
+}
+
+// WithScriptSwitcher enables /codemode. The callback owns both the config write
+// and the agent's tool/prompt swap, because the TUI has neither.
+func WithScriptSwitcher(switcher ScriptSwitcher, current func() bool) Option {
+	return func(opts *Options) {
+		opts.ScriptSwitcher = switcher
+		opts.ScriptEnabled = current
+	}
 }
 
 // WithGoalManager gives the TUI the session's goal manager. The TUI never
@@ -256,7 +276,13 @@ type model struct {
 	files     filePicker
 	models    modelBrowser
 	providers providerBrowser
-	sessions  sessionBrowser
+
+	// scriptSwitcher and scriptEnabled back /codemode. They are nil when the
+	// caller did not offer the switch, and the command says so rather than
+	// pretending to work.
+	scriptSwitcher ScriptSwitcher
+	scriptEnabled  func() bool
+	sessions       sessionBrowser
 
 	// lastInputHeight is the textarea height the current layout was computed
 	// for. When the textarea grows/shrinks (DynamicHeight), this lets us
@@ -372,6 +398,8 @@ func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDi
 		modelSwitcher:      opts.ModelSwitcher,
 		providerChoices:    normalizeProviderChoices(opts.ProviderChoices),
 		providerSwitcher:   opts.ProviderSwitcher,
+		scriptSwitcher:     opts.ScriptSwitcher,
+		scriptEnabled:      opts.ScriptEnabled,
 		sessionID:          strings.TrimSpace(opts.SessionID),
 		sessionLister:      opts.SessionLister,
 		sessionOpener:      opts.SessionOpener,
@@ -643,6 +671,8 @@ func (m *model) handleSlashCommand(line string) tea.Cmd {
 	switch cmd {
 	case "/help":
 		m.appendBlock(helpBlock{commands: m.slashCommands()})
+	case "/codemode":
+		return m.handleCodeModeCommand(strings.TrimSpace(strings.TrimPrefix(line, cmd)))
 	case "/goal":
 		return m.handleGoalCommand(strings.TrimSpace(strings.TrimPrefix(line, cmd)))
 	case "/model":
@@ -1563,4 +1593,56 @@ func (m *model) finishScriptSubCall(e agent.Event) {
 		}
 		m.turn.errors++
 	}
+}
+
+// handleCodeModeCommand implements /codemode. The tool is off by default
+// because it costs prompt bytes on every request, so this command is how a
+// session opts in without editing the config by hand.
+//
+// It is idle-only: switching changes the model's tool list and system prompt,
+// and doing that mid-turn would leave a request in flight describing tools the
+// agent no longer has.
+func (m *model) handleCodeModeCommand(rest string) tea.Cmd {
+	arg := strings.ToLower(strings.TrimSpace(rest))
+	if m.scriptSwitcher == nil || m.scriptEnabled == nil {
+		m.appendBlock(errorBlock{err: fmt.Errorf("/codemode is unavailable in this session")})
+		return nil
+	}
+	if m.busy {
+		m.appendBlock(errorBlock{err: fmt.Errorf("/codemode is unavailable while a turn is running")})
+		return nil
+	}
+
+	switch arg {
+	case "":
+		m.appendBlock(errorBlock{err: fmt.Errorf("usage: /codemode on|off|status")})
+		return nil
+	case "status":
+		m.appendBlock(noticeBlock{text: m.codeModeStatusLine()})
+		return nil
+	case "on", "off":
+		want := arg == "on"
+		if current := m.scriptEnabled(); current == want {
+			m.appendBlock(noticeBlock{text: m.codeModeStatusLine()})
+			return nil
+		}
+		if err := m.scriptSwitcher(want); err != nil {
+			m.appendBlock(errorBlock{err: fmt.Errorf("codemode: %w", err)})
+			return nil
+		}
+		m.appendBlock(noticeBlock{text: m.codeModeStatusLine()})
+		return nil
+	default:
+		m.appendBlock(errorBlock{err: fmt.Errorf("unknown /codemode argument %q — use on, off, or status", arg)})
+		return nil
+	}
+}
+
+// codeModeStatusLine states both the state and what it costs, because "on" by
+// itself does not tell a user why the next request is larger.
+func (m *model) codeModeStatusLine() string {
+	if m.scriptEnabled != nil && m.scriptEnabled() {
+		return "codemode on: the script tool is available (+~1.1 KB prompt per request)"
+	}
+	return "codemode off: the script tool is not registered"
 }

@@ -6,6 +6,16 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
+- Added the JavaScript `script` tool: it runs model-written code that can call
+  `read_file`, `grep`, `glob`, `write_file`, and `edit_file`, returning its last
+  expression's value. Each scripted call passes the same approval matcher a
+  top-level call would, so `tool_approvals` keeps its meaning one level down,
+  and the prompt names `script` as the requester. Scripts are bounded by a
+  deadline, the engine's memory limit, and the 64 KiB tool-output cap, and their
+  sub-calls appear as rows under the script's own receipt. It is off by default:
+  a measurement found no task where the model chose it over `bash`, and it costs
+  1,143 bytes of prompt per request. Turn it on with `--script`,
+  `features.script: true`, or `/codemode on` in chat.
 - `/sessions` lists saved sessions inside the TUI and switches to one without
   leaving the terminal. The running session is saved first and the chosen one
   must still load, so a failed save or a deleted session reports the error in

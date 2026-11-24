@@ -6,9 +6,12 @@ import (
 	"testing"
 
 	"github.com/owainlewis/neo/internal/config"
+	"github.com/owainlewis/neo/internal/goal"
 	"github.com/owainlewis/neo/internal/llm"
 	"github.com/owainlewis/neo/internal/profile"
 	"github.com/owainlewis/neo/internal/skills"
+	"github.com/owainlewis/neo/internal/subagent"
+	"github.com/owainlewis/neo/internal/workflow"
 )
 
 // Two budgets, because the prompt is no longer one size. The core is sent on
@@ -33,17 +36,18 @@ const (
 // on every request, so growth here is paid per turn, which is what rule 3 of
 // docs/design/token-budget.md asks a test to prevent.
 //
-// Measured on 2026-11-24 as 8,084 bytes (9 tool definitions 5,022 + system
-// prompt with the built-in skill catalog 3,062), rounded up to the next 500 so
-// ordinary wording edits do not fail on a handful of bytes. Re-measure with
+// It covers the default chat surface, which has no script tool. That tool is
+// off unless the config or --script turns it on, because a measurement found no
+// task where the model chose it over bash; keeping it out of the default is what
+// keeps this ceiling where it was. Re-measure with
 // `go test ./cmd/neo/ -run TestFixedPromptFloorBudget -v` after adding a tool.
-// Raising it buys tokens on every request of every session, so it is a product
-// decision, not a fix for a red test.
-// Raised from 8,500 when the script tool was registered: measured 2026-11-24 at
-// 9,227 bytes (5,726 tool definitions + 3,501 prompt). The script schema is 704
-// of the tools and its prompt section 439 of the prompt. Rounded up to the next
-// 500, matching how the previous value was chosen.
-const fixedFloorByteBudget = 9_500
+const fixedFloorByteBudget = 8_500
+
+// scriptFloorByteBudget covers the same surface with `features.script` on:
+// measured 2026-11-24 at 9,227 bytes (5,726 tool definitions + 3,501 prompt).
+// The script schema is 704 and its prompt section 439. Rounded up to the next
+// 500, matching how every other ceiling here was chosen.
+const scriptFloorByteBudget = 9_500
 
 func TestChatSystemPromptSizeBudgets(t *testing.T) {
 	headless, _ := chatSystem(&config.Config{}, "", nil, profile.Profile{}, newRegistry("", ""), io.Discard)
@@ -166,7 +170,7 @@ func TestFixedPromptFloorKeepsTheTailUncached(t *testing.T) {
 // that quietly lost a tool would make the budget easier to pass without anyone
 // noticing the prompt no longer describes the real tool surface.
 func TestFixedFloorCoversTheWholeChatSurface(t *testing.T) {
-	want := []string{"agent", "bash", "edit_file", "glob", "goal", "grep", "read_file", "script", "workflow", "write_file"}
+	want := []string{"agent", "bash", "edit_file", "glob", "goal", "grep", "read_file", "workflow", "write_file"}
 	names := chatRegistry().Names()
 	if len(names) != len(want) {
 		t.Fatalf("chat registry has %d tools %v, want %d", len(names), names, len(want))
@@ -200,4 +204,38 @@ func BenchmarkChatSystem(b *testing.B) {
 		}
 	}
 	b.ReportMetric(float64(len(prompt)), "prompt_bytes")
+}
+
+// TestScriptFloorBudget covers the same measurement with the tool turned on.
+// It exists because the previous version of this file measured only the default
+// surface and would have kept passing after the tool's cost grew.
+func TestScriptFloorBudget(t *testing.T) {
+	on := true
+	cfg := &config.Config{}
+	cfg.Features.Script = &on
+	reg := registryFor(cfg, "", "", workflow.Tool{}, subagent.AgentTool{}, goal.Tool{})
+	schemas, err := json.Marshal(reg.Specs())
+	if err != nil {
+		t.Fatalf("marshal tool specs: %v", err)
+	}
+	prompt, _ := chatSystem(cfg, "", skills.Defaults(), profile.Profile{}, reg, io.Discard)
+	total := len(schemas) + len(prompt)
+	t.Logf("script floor: tools %d + prompt %d = %d bytes (budget %d)",
+		len(schemas), len(prompt), total, scriptFloorByteBudget)
+	if total > scriptFloorByteBudget {
+		t.Fatalf("script floor = %d bytes, budget = %d, over by %d",
+			total, scriptFloorByteBudget, total-scriptFloorByteBudget)
+	}
+}
+
+// TestScriptToolIsOffByDefault is the decision itself, as a test: registering
+// the tool has to be a deliberate act, because it costs prompt bytes on every
+// request and a measurement found no task where the model chose it.
+func TestScriptToolIsOffByDefault(t *testing.T) {
+	if (&config.Config{}).ScriptEnabled() {
+		t.Fatal("script tool is enabled by default")
+	}
+	if _, ok := registryFor(&config.Config{}, "", "").Get("script"); ok {
+		t.Fatal("default registry contains the script tool")
+	}
 }

@@ -170,6 +170,12 @@ func run(args []string, streams stdio) int {
 		fmt.Fprintln(streams.err, err)
 		return 2
 	}
+	args, scriptFlag, err := takeScriptFlag(args)
+	if err != nil {
+		fmt.Fprintln(streams.err, err)
+		return 2
+	}
+	scriptOverride = scriptFlag
 
 	// `neo` with no subcommand defaults to chat — the common case.
 	if len(args) == 0 {
@@ -242,6 +248,28 @@ func takeAgentFlag(args []string) ([]string, string, error) {
 		return nil, "", errAgentNeedsName
 	}
 	return out, strings.TrimSpace(name), nil
+}
+
+// takeScriptFlag extracts the global --script switch. The tool is off by
+// default because it costs prompt bytes on every request, so the flag is the
+// per-invocation way to turn it on without editing the config.
+func takeScriptFlag(args []string) ([]string, *bool, error) {
+	var out []string
+	var on *bool
+	for _, arg := range args {
+		switch arg {
+		case "--script":
+			v := true
+			on = &v
+			continue
+		case "--no-script":
+			v := false
+			on = &v
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out, on, nil
 }
 
 // loadProfile resolves --agent. An unknown name is fatal: continuing with the
@@ -349,6 +377,13 @@ AGENT PROMPTS:
     neo --agent=assistant
     neo run --agent=reviewer "review the current diff"
 
+OPT-IN TOOLS:
+  --script           Register the JavaScript script tool for this run.
+  --no-script        Leave it unregistered, overriding features.script.
+                     The tool costs ~1.1 KB of prompt per request, so it is
+                     off unless asked for. In chat, /codemode on|off|status
+                     changes it and writes the choice to features.script.
+
 HEADLESS RUN:
   neo run --json --timeout 10m "Review this repo without changing files"
   cat prompt.md | neo run --json
@@ -367,6 +402,22 @@ func printVersion(w io.Writer) {
 }
 
 func newRegistry(cwd, root string, extra ...tools.Tool) *tools.Registry {
+	base := []tools.Tool{
+		tools.Bash{Timeout: tools.DefaultBashTimeout, CWD: cwd},
+		tools.Grep{Root: root},
+		tools.Glob{Root: root},
+	}
+	return tools.NewRegistry(append(append(base, tools.NewFileTools()...), extra...)...)
+}
+
+// registryFor is the composition root's single decision about the script tool.
+// It is off unless the config or --script says otherwise: the tool costs fixed
+// prompt bytes on every request, and a measurement found no task where the model
+// chose it on its own.
+//
+// When it is on, the script tool receives the same file tools the registry
+// holds, so a read inside a script records the file a later edit checks.
+func registryFor(cfg *config.Config, cwd, root string, extra ...tools.Tool) *tools.Registry {
 	files := append([]tools.Tool{
 		tools.Grep{Root: root},
 		tools.Glob{Root: root},
@@ -374,9 +425,9 @@ func newRegistry(cwd, root string, extra ...tools.Tool) *tools.Registry {
 	base := append([]tools.Tool{
 		tools.Bash{Timeout: tools.DefaultBashTimeout, CWD: cwd},
 	}, files...)
-	// The script tool gets the same values the registry holds, so a read inside
-	// a script records the file the agent later edits.
-	base = append(base, tools.NewScript(files))
+	if cfg != nil && cfg.ScriptEnabled() {
+		base = append(base, tools.NewScript(files))
+	}
 	return tools.NewRegistry(append(base, extra...)...)
 }
 
@@ -476,11 +527,19 @@ func capabilitySections(reg *tools.Registry) string {
 	return b.String()
 }
 
+// scriptOverride carries --script / --no-script from argument parsing into
+// loadConfig. A package-level value keeps the flag out of five call signatures
+// that have no other reason to know about it; it is written once at startup.
+var scriptOverride *bool
+
 func loadConfig(errOut io.Writer) (*config.Config, bool) {
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(errOut, "config: %v\n", err)
 		return nil, false
+	}
+	if scriptOverride != nil {
+		cfg.SetScript(*scriptOverride)
 	}
 	return cfg, true
 }
@@ -614,7 +673,7 @@ func headlessAgent(ctx context.Context, cfg *config.Config, prov llm.Provider, m
 	if !ok {
 		return nil, "", false
 	}
-	reg := newRegistry(cwd, root)
+	reg := registryFor(cfg, cwd, root)
 	system, systemBlocks := chatSystem(cfg, cwd, nil, agentProfile, reg, streams.err)
 	return agent.New(agent.Config{
 		Model:        model,
@@ -808,6 +867,7 @@ func runOneChatSession(ctx context.Context, store *session.Store, sess *session.
 				return nil
 			},
 		),
+		tui.WithScriptSwitcher(rt.switchCodeMode, setup.cfg.ScriptEnabled),
 		tui.WithWorkflowEvents(setup.workflowEvents),
 		tui.WithVerbose(setup.cfg.VerboseEnabled()),
 		tui.WithIO(streams.in, streams.out),
@@ -889,6 +949,15 @@ type chatRuntime struct {
 	providerName   string
 	model          string
 	providerModels map[string]string
+
+	// The pieces /codemode needs to rebuild the tool list and prompt without
+	// discarding the transcript: the registry is composed from cwd, root, and
+	// the extra tools the session added.
+	cwd     string
+	root    string
+	extra   []tools.Tool
+	profile profile.Profile
+	sk      []skills.Skill
 }
 
 // prepareChat resolves config, backend, session, tools, and system prompt in the
@@ -943,7 +1012,7 @@ func buildChatRuntime(ctx context.Context, cfg *config.Config, prov llm.Provider
 	}
 	workflowEvents, extra, agentRunner, followsCoordinator := chatExtraTools(ctx, cfg, prov, model, cwd, root, goalManager)
 
-	reg := newRegistry(cwd, root, extra...)
+	reg := registryFor(cfg, cwd, root, extra...)
 	// Skills are loaded once: the catalog is advertised in the system prompt
 	// (via chatSystem), and the same slice drives $name and /name expansion in
 	// the TUI.
@@ -977,6 +1046,11 @@ func buildChatRuntime(ctx context.Context, cfg *config.Config, prov llm.Provider
 			providerName:             providerName,
 			model:                    model,
 			providerModels:           map[string]string{providerName: model},
+			cwd:                      cwd,
+			root:                     root,
+			extra:                    extra,
+			profile:                  agentProfile,
+			sk:                       sk,
 		},
 	}, workflowEvents
 }
@@ -1065,6 +1139,44 @@ func chatExtraTools(ctx context.Context, cfg *config.Config, prov llm.Provider, 
 
 // switchModel changes the model and persists the choice beside the backend it
 // was made against, so the active provider cannot drift from the written model.
+
+// switchCodeMode turns the script tool on or off for the running chat. It
+// rebuilds the registry and the system prompt from the same inputs the session
+// was created with, swaps both into the agent, and only then persists the
+// choice — so a failed write leaves the session as it was.
+//
+// The transcript is untouched: switching tools must not look like starting over.
+func (r *chatRuntime) switchCodeMode(on bool) error {
+	if r.ag == nil {
+		return fmt.Errorf("codemode is unavailable without an agent")
+	}
+	previous := r.cfg.ScriptEnabled()
+	if previous == on {
+		return nil
+	}
+
+	r.cfg.SetScript(on)
+	reg := registryFor(r.cfg, r.cwd, r.root, r.extra...)
+	system, blocks := chatSystem(r.cfg, r.cwd, r.sk, r.profile, reg, io.Discard)
+	if err := r.ag.SetTools(reg); err != nil {
+		r.cfg.SetScript(previous)
+		return err
+	}
+	r.ag.SetPrompt(system, blocks)
+
+	if _, err := r.cfg.WriteFeature("script", on); err != nil {
+		// Put the old capability back before reporting, or the session would
+		// claim a setting the next start would not reproduce.
+		r.cfg.SetScript(previous)
+		reg = registryFor(r.cfg, r.cwd, r.root, r.extra...)
+		system, blocks = chatSystem(r.cfg, r.cwd, r.sk, r.profile, reg, io.Discard)
+		_ = r.ag.SetTools(reg)
+		r.ag.SetPrompt(system, blocks)
+		return err
+	}
+	return nil
+}
+
 func (r *chatRuntime) switchModel(nextModel string) error {
 	prevModel := r.providerModels[r.providerName]
 	if prevModel == "" {

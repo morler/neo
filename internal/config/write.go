@@ -171,3 +171,85 @@ func needsYAMLQuotes(value string) bool {
 	// A ': ' sequence would start a nested mapping.
 	return strings.Contains(value, ": ")
 }
+
+// WriteFeature persists one boolean under the `features:` mapping, leaving every
+// other line as it was. Unlike the top-level scalars this has to find an indented
+// block, so it edits the child line inside that block rather than appending a
+// second `features:` key.
+//
+// It returns the path that was written.
+func (c *Config) WriteFeature(name string, on bool) (string, error) {
+	value := "false"
+	if on {
+		value = "true"
+	}
+	base := embeddedConfigYAML
+	path := ""
+	if c != nil && c.source != "" && c.source != "embedded" {
+		b, err := os.ReadFile(c.source)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", c.source, err)
+		}
+		path = c.source
+		base = b
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return "", fmt.Errorf("cannot save the config: no config file and no home directory")
+		}
+		path = filepath.Join(home, userConfigDir, userConfigName)
+	}
+
+	out := setFeatureScalar(base, name, value)
+	if err := atomicfile.WritePreserveMode(path, out, 0o644, 0o755); err != nil {
+		return "", fmt.Errorf("save %s: %w", path, err)
+	}
+	return path, nil
+}
+
+// setFeatureScalar rewrites `name:` inside the top-level `features:` block,
+// inserting both the block and the key when they are missing.
+func setFeatureScalar(b []byte, name, value string) []byte {
+	lines := strings.SplitAfter(string(b), "\n")
+	inFeatures := false
+	insertAt := -1
+	for i, line := range lines {
+		content := strings.TrimRight(line, "\r\n")
+		trimmed := strings.TrimSpace(content)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		indented := content[0] == ' ' || content[0] == '\t'
+		if !indented {
+			inFeatures = trimmed == "features:"
+			if inFeatures {
+				insertAt = i + 1
+			}
+			continue
+		}
+		if !inFeatures {
+			continue
+		}
+		key, sep, comment, ok := splitTopLevelScalar(trimmed)
+		if !ok || key != name {
+			insertAt = i + 1
+			continue
+		}
+		indent := content[:len(content)-len(strings.TrimLeft(content, " \t"))]
+		lines[i] = indent + name + ":" + sep + yamlScalar(value) + comment + line[len(content):]
+		return []byte(strings.Join(lines, ""))
+	}
+
+	indent := "  "
+	newLine := indent + name + ": " + yamlScalar(value) + "\n"
+	if insertAt < 0 {
+		text := strings.Join(lines, "")
+		if text != "" && !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		text += "features:\n" + newLine
+		return []byte(text)
+	}
+	lines = append(lines[:insertAt], append([]string{newLine}, lines[insertAt:]...)...)
+	return []byte(strings.Join(lines, ""))
+}

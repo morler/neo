@@ -33,9 +33,11 @@ estimate `compact.EstimateTokens` uses.
 
 | Component | Bytes | ~Tokens |
 | --- | ---: | ---: |
-| 10 tool definitions (chat registry) | 5,726 | 1,432 |
-| System prompt with built-in skill catalog | 3,501 | 875 |
-| **Fixed floor** | **9,227** | **~2,307** |
+| 9 tool definitions (chat registry) | 5,022 | 1,255 |
+| System prompt with built-in skill catalog | 3,062 | 765 |
+| **Fixed floor** | **8,084** | **~2,020** |
+
+The opt-in script tool adds 1,143 bytes when enabled (704 schema, 439 prompt).
 
 Largest definitions: `agent` 808 B, `goal` 775 B, `grep` 645 B, `workflow`
 536 B. A project `AGENTS.md` adds an uncached tail on top.
@@ -43,8 +45,8 @@ Largest definitions: `agent` 808 B, `goal` 775 B, `grep` 645 B, `workflow`
 What gates these numbers:
 
 - `cmd/neo/performance_test.go` enforces 1,400 bytes for the core prompt, 3,000
-  for the chat prompt, and 9,500 for the fixed floor (tool schemas plus chat
-  prompt, measured here as 9,227). The same test renders the cacheable prefix
+  for the chat prompt, 8,500 for the fixed floor (tool schemas plus chat prompt,
+  measured here as 8,084), and 9,500 for that floor with the script tool on. The same test renders the cacheable prefix
   twice and fails if the bytes differ.
 - `docs/performance.md` records the same three budgets and the token baseline,
   so the doc and the gate cannot drift apart quietly.

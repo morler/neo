@@ -121,6 +121,11 @@ type Features struct {
 	AgentsFile    *bool `yaml:"agents_file"`    // load AGENTS.md into the chat system prompt
 	Skills        *bool `yaml:"skills"`         // discover and expand $name and /name skills
 	PromptCaching *bool `yaml:"prompt_caching"` // cache the static system prompt prefix
+	// Script registers the JavaScript `script` tool. It is off by default: the
+	// tool costs 1,143 bytes of fixed prompt on every request and a measurement
+	// found no case where the model chose it over bash on its own. Turning it on
+	// is a decision the session pays for deliberately, not a default.
+	Script *bool `yaml:"script"`
 }
 
 // AgentsFileEnabled reports whether AGENTS.md loading is on (default: true).
@@ -128,6 +133,14 @@ func (c *Config) AgentsFileEnabled() bool { return featureEnabled(c.Features.Age
 
 // SkillsEnabled reports whether skill loading is on (default: true).
 func (c *Config) SkillsEnabled() bool { return featureEnabled(c.Features.Skills, true) }
+
+// ScriptEnabled reports whether the JavaScript `script` tool is registered
+// (default: false).
+func (c *Config) ScriptEnabled() bool { return featureEnabled(c.Features.Script, false) }
+
+// SetScript records the script-tool preference in memory, so a switch made in
+// the TUI survives the prompt rebuild that follows it.
+func (c *Config) SetScript(on bool) { c.Features.Script = &on }
 
 // PromptCachingEnabled reports whether the static system prompt is marked for
 // provider-side prompt caching (default: true).
