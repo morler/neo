@@ -19,7 +19,11 @@ CGO_ENABLED=0 go build \
   ./cmd/neo
 
 binary_bytes="$(wc -c < "$binary" | tr -d '[:space:]')"
-binary_budget_bytes=$((20 * 1024 * 1024))
+# 28 MiB, raised from 20 when the embedded JavaScript engine was linked in.
+# The engine accounts for ~5.83 MiB of the current 22.96 MiB; the rest of the
+# room is normal growth. Lowering this is a product decision, not a fix for a
+# red check.
+binary_budget_bytes=$((28 * 1024 * 1024))
 
 echo "Neo performance baseline"
 echo "go: $goversion"

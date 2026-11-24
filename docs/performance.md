@@ -25,7 +25,9 @@ between hosts to be useful gates.
 Three deterministic size measurements have deliberately generous regression
 budgets:
 
-- the stripped binary must remain at or below 20 MiB;
+- the stripped binary must remain at or below 28 MiB. It was 17.13 MiB before
+  the embedded JavaScript engine landed and 22.96 MiB after, of which the
+  engine is 5.83 MiB; the remaining room is ordinary growth;
 - the system prompt must remain at or below 1,400 bytes for the core prompt and
   2,600 bytes for the chat prompt, which adds the workflow and delegation
   sections that only exist where those tools do;
@@ -33,6 +35,9 @@ budgets:
   built-in skill catalog — must remain at or below 8,500 bytes. It was 8,084
   when the budget was set (5,022 for nine tool definitions, 3,062 for the
   prompt).
+
+Re-measure the binary before adding a dependency: the ceiling is generous on
+purpose, and a second engine-sized cost would use it up.
 
 The binary budget is checked by `just performance`. The prompt and fixed-floor
 budgets are normal Go tests, so CI checks them without running timing
