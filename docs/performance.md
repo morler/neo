@@ -106,6 +106,33 @@ So the numbers here say what the tool costs, not what it is worth. Until a
 measurement shows a task where it earns the fixed cost back, treat it as a
 capability that must be asked for rather than one that pays for itself.
 
+### Re-measured after the description and prompt were corrected
+
+The same three tasks, three runs each, re-measured 2026-11-24 after the schema
+description was corrected and the prompt rewritten around task shapes with a
+worked example. `NEO_LOG` was on, so a `script` call is counted from the log
+rather than inferred from the final answer. Medians:
+
+| Task | requests (off → on) | input tokens (off → on) | runs that called `script` |
+| --- | --- | --- | ---: |
+| count TODOs across files | 3 → 3 | 6,344 → 7,213 (**+13.7%**) | **3 / 3** |
+| conditional single-line edit | 4 → 4 | 9,362 → 9,068 (−3.1%) | 0 / 3 |
+| locate one line in a 2,001-line file | 3 → 3 | 6,319 → 7,219 (**+14.2%**) | 0 / 3 |
+
+The first row is the change the correction was for: the model now chooses the
+tool every time on a counting task, and its scripts do the counting
+(`grep`, then `split`/`filter`, returning a count) instead of reading the list
+back and judging it. The other two rows did not move, which is the intended
+shape — a single conditional edit and a single line lookup are the cases the
+prompt tells it not to script.
+
+Request counts still do not fall. Counting across three files already took
+three requests without the tool, so there was no round trip for a script to
+save; the +13.7% is the fixed cost of having the tool registered, now visible
+in a run that uses it. The honest summary is narrow: the tool is chosen when a
+task matches the shapes the prompt names, and it still costs prompt bytes on
+every request whether or not it is chosen.
+
 ### Measuring a real run
 
 A run's actual cost comes from the provider, not from an estimate:

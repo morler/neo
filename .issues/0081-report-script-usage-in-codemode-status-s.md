@@ -1,7 +1,7 @@
 ---
 id: 81
 title: Report script usage in /codemode status so the user can judge the opt-in cost
-status: in-progress
+status: closed
 priority: low
 labels:
     - tui
@@ -11,6 +11,7 @@ relations:
         - 78
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
