@@ -10,6 +10,9 @@ relations:
         - 77
     depends-on:
         - 75
+    related-to:
+        - 80
+        - 79
 created: "2026-11-24"
 updated: "2026-11-24"
 closed: "2026-11-24"
