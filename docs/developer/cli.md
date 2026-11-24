@@ -42,7 +42,7 @@ the agent they were started with, so `neo resume` keeps it unless a different
 
 - `neo` with no subcommand defaults to chat.
 - `neo run` executes one prompt without opening the TUI, prints the final answer, and exits. It is intended for scripts and eval harnesses.
-- `neo run` applies a `10m` timeout, does not create or update sessions, and supports `--json` for a machine-readable summary containing elapsed time and tool counts.
+- `neo run` applies a `10m` timeout, does not create or update sessions, and supports `--json` for a machine-readable summary containing elapsed time and tool counts. The summary also carries `requests`, the provider calls the run actually made, and `usage` with the same `input_tokens`, `cache_creation_tokens`, `cache_read_tokens`, and `output_tokens` figures a saved session records. `requests` counts what crossed the provider boundary, so a compaction summary call is included even though the agent loop never asked for it, and `usage` sums every response including that one. Both fields are always present, including on a failed run.
 - Headless runs receive the standard tool registry and do not use interactive `tool_approvals`. Run Neo inside a VM or sandbox that provides the required filesystem, process, network, and credential boundaries.
 - The removed `--permission` option returns migration guidance instead of being silently accepted.
 - `neo run` accepts prompt text as arguments. Piped stdin is the prompt when no argument is given (`cat prompt.md | neo run --json`), and is prepended to the arguments when one of them is `-` (`git diff | neo run "Review this diff" -`). stdin is not read otherwise, so a harness that holds an idle pipe open cannot block the run.

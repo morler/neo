@@ -36,6 +36,10 @@ All notable changes to Neo will be documented in this file.
 - `/model` now persists the chosen model to the config file it loaded, rewriting
   only `model:` so the next launch starts on the same model. A write failure
   restores the previous model and reports the error.
+- `neo run --json` now reports `requests`, the provider calls the run made,
+  and `usage`, the token totals broken into input, cache-write, cache-read, and
+  output. Both include the compaction summary call, so a scripted consumer sees
+  the full cost of a run rather than only the turns the agent loop asked for.
 - Added `/usage` to show what the session spent in provider tokens: the prompt
   total with its input, cache-write, and cache-read parts, the output total,
   and the share of the prompt served from the cache. The parts are the same

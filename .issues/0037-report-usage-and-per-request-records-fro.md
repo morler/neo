@@ -1,7 +1,7 @@
 ---
 id: 37
 title: Add usage totals to the headless JSON result
-status: open
+status: in-progress
 priority: high
 labels:
     - feature

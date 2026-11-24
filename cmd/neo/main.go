@@ -479,14 +479,16 @@ type headlessOptions struct {
 }
 
 type headlessResult struct {
-	OK         bool   `json:"ok"`
-	ElapsedMS  int64  `json:"elapsed_ms"`
-	Provider   string `json:"provider"`
-	Model      string `json:"model"`
-	ToolCalls  int    `json:"tool_calls"`
-	ToolErrors int    `json:"tool_errors"`
-	Final      string `json:"final,omitempty"`
-	Error      string `json:"error,omitempty"`
+	OK         bool      `json:"ok"`
+	ElapsedMS  int64     `json:"elapsed_ms"`
+	Provider   string    `json:"provider"`
+	Model      string    `json:"model"`
+	Requests   int       `json:"requests"`
+	Usage      llm.Usage `json:"usage"`
+	ToolCalls  int       `json:"tool_calls"`
+	ToolErrors int       `json:"tool_errors"`
+	Final      string    `json:"final,omitempty"`
+	Error      string    `json:"error,omitempty"`
 }
 
 func runHeadless(ctx context.Context, args []string, agentName string, streams stdio) int {
@@ -512,7 +514,11 @@ func runHeadless(ctx context.Context, args []string, agentName string, streams s
 		finishHeadless(opts, headlessResult{OK: false, ElapsedMS: time.Since(started).Milliseconds(), Provider: providerName, Model: model, Error: err.Error()}, streams)
 		return 1
 	}
-	ag, model, ok := headlessAgent(ctx, cfg, prov, model, agentName, streams)
+	// Count requests at the provider boundary, so both agent turns and the
+	// compactor's summary call are included. The agent's own events cannot
+	// answer this: EventDone fires once per finished turn, not per request.
+	counted := &countingProvider{inner: prov}
+	ag, model, ok := headlessAgent(ctx, cfg, counted, model, agentName, streams)
 	if !ok {
 		return 1
 	}
@@ -520,10 +526,15 @@ func runHeadless(ctx context.Context, args []string, agentName string, streams s
 	ag.SetEventHandler(stats.observe)
 	out, err := ag.Send(ctx, prompt)
 	result := headlessResult{
-		OK:         err == nil,
-		ElapsedMS:  time.Since(started).Milliseconds(),
-		Provider:   prov.Name(),
-		Model:      model,
+		OK:        err == nil,
+		ElapsedMS: time.Since(started).Milliseconds(),
+		Provider:  prov.Name(),
+		Model:     model,
+		Requests:  counted.calls,
+		// Usage() sums every provider response, including the compaction call,
+		// which never surfaces as an event. Counting events instead would
+		// under-report a run that compacted.
+		Usage:      ag.Usage(),
 		ToolCalls:  stats.calls,
 		ToolErrors: stats.errors,
 		Final:      out,
@@ -554,6 +565,23 @@ func (s *headlessStats) observe(e agent.Event) {
 			s.errors++
 		}
 	}
+}
+
+// countingProvider counts the calls that reach a provider, so a headless run
+// can report how many requests it cost. The agent's events cannot answer that:
+// EventDone fires once per finished turn, not once per request, and a call the
+// compactor makes never emits an event at all. Wrapping the provider at the CLI
+// boundary keeps the count accurate without teaching the agent loop to count.
+type countingProvider struct {
+	inner llm.Provider
+	calls int
+}
+
+func (p *countingProvider) Name() string { return p.inner.Name() }
+
+func (p *countingProvider) Complete(ctx context.Context, req llm.Request) (*llm.Response, error) {
+	p.calls++
+	return p.inner.Complete(ctx, req)
 }
 
 // headlessAgent builds the agent for one prompt. It shares the chat registry

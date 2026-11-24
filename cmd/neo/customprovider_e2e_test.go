@@ -22,6 +22,10 @@ type customBackend struct {
 	requests []recordedRequest
 	// respond produces the response body for the nth request (0-based).
 	respond func(n int) (status int, body string)
+	// respondTo, when set, supersedes respond and also receives the recorded
+	// request, so a test can vary the answer by request shape. Compaction is the
+	// clearest case: its summary call is the only one without tool definitions.
+	respondTo func(n int, req recordedRequest) (status int, body string)
 }
 
 type recordedRequest struct {
@@ -76,7 +80,13 @@ func (b *customBackend) start(t *testing.T) *httptest.Server {
 		b.requests = append(b.requests, recorded)
 		b.mu.Unlock()
 
-		status, body := b.respond(n)
+		var status int
+		var body string
+		if b.respondTo != nil {
+			status, body = b.respondTo(n, recorded)
+		} else {
+			status, body = b.respond(n)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
@@ -93,12 +103,19 @@ func (b *customBackend) recorded(t *testing.T) []recordedRequest {
 }
 
 func textResponse(text string) (int, string) {
+	return usageTextResponse(text, 11, 7)
+}
+
+// usageTextResponse is textResponse with explicit token counts, for tests that
+// drive compaction: the agent compacts on the prompt size the provider reports,
+// so a stub that always reports a tiny prompt never triggers it.
+func usageTextResponse(text string, promptTokens, completionTokens int) (int, string) {
 	body, err := json.Marshal(map[string]any{
 		"choices": []any{map[string]any{
 			"message":       map[string]any{"role": "assistant", "content": text},
 			"finish_reason": "stop",
 		}},
-		"usage": map[string]any{"prompt_tokens": 11, "completion_tokens": 7},
+		"usage": map[string]any{"prompt_tokens": promptTokens, "completion_tokens": completionTokens},
 	})
 	if err != nil {
 		panic(err)
@@ -107,6 +124,11 @@ func textResponse(text string) (int, string) {
 }
 
 func toolCallResponse(id, name, arguments string) (int, string) {
+	return usageToolCallResponse(id, name, arguments, 5, 3)
+}
+
+// usageToolCallResponse is toolCallResponse with explicit token counts.
+func usageToolCallResponse(id, name, arguments string, promptTokens, completionTokens int) (int, string) {
 	body, err := json.Marshal(map[string]any{
 		"choices": []any{map[string]any{
 			"message": map[string]any{
@@ -120,7 +142,7 @@ func toolCallResponse(id, name, arguments string) (int, string) {
 			},
 			"finish_reason": "tool_calls",
 		}},
-		"usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 3},
+		"usage": map[string]any{"prompt_tokens": promptTokens, "completion_tokens": completionTokens},
 	})
 	if err != nil {
 		panic(err)
