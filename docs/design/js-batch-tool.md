@@ -1,8 +1,8 @@
 # Embedded JS Batch Tool - Design Spec
 
-> **Status:** Accepted. The contracts live in the tasks that implement them, not
-> here: this note records why the tool exists and where its edges are. Building
-> it is issue #56's chain, starting at #63.
+> **Status:** Implemented, off by default. The contracts live in the tasks that
+> implemented them, not here: this note records why the tool exists and where
+> its edges are. See [Tools](../developer/tools.md) for how to turn it on.
 
 ## 1. The Problem
 
@@ -36,6 +36,13 @@ The script is not a shell and not a plugin. It is a way to turn several known
 steps into one request. A script that reads three files, keeps the one line
 that matters, and returns it costs one provider round trip and puts one line in
 the transcript.
+
+The tool is **off by default**. A measurement on three fixed tasks found that
+the model chose `bash` and `grep` every time, so a default session paid 1,143
+bytes of prompt per request for a capability it never used. Turning it on is
+therefore a decision: `--script`, `features.script: true`, or `/codemode on`,
+and the last one writes the choice back to the config. The measurements are in
+[Performance](../performance.md).
 
 The tools available inside a script are a **closed whitelist**, chosen by Neo,
 not by the model. The list starts with reads and grows only through the

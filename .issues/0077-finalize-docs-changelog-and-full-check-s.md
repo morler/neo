@@ -1,7 +1,7 @@
 ---
 id: 77
 title: Finalize docs, changelog, and full check suite for the script tool
-status: open
+status: in-progress
 priority: medium
 labels:
     - docs
