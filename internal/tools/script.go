@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/MoeForge/moejs"
 	"github.com/MoeForge/moejs/engine"
@@ -16,6 +18,19 @@ import (
 // wrapper can evaluate it without the model's text becoming part of the
 // wrapper's own body.
 const scriptSourceKey = "__neo_source"
+
+// Defaults for one script. Both are sized so an ordinary script never notices
+// them and a runaway one ends quickly: 5 minutes is longer than any read-only
+// batch on a large repository, and 64 MiB is four times what a script can put
+// into the transcript (MaxOutputBytes).
+//
+// These are not config knobs. Nothing has measured a case that needs them
+// changed, and docs/design/token-budget.md sets the precedent: an unmeasured
+// switch is a second behaviour nobody tests.
+const (
+	DefaultScriptTimeout     = 5 * time.Minute
+	DefaultScriptMemoryLimit = 64 << 20
+)
 
 // scriptWrapper evaluates the model's source and normalizes its result.
 //
@@ -51,6 +66,16 @@ type Script struct {
 	// approval gate that comes with them land in later steps; each one adds an
 	// explicit line to globals.
 	Read ReadFile
+
+	// Timeout bounds one script. Zero means DefaultScriptTimeout. A script that
+	// has not finished by then is interrupted, which is the only way to stop a
+	// loop the engine cannot otherwise see the end of.
+	Timeout time.Duration
+	// MemoryLimit bounds what the script's heap may retain, in bytes. Zero means
+	// DefaultScriptMemoryLimit. It is the engine's own limit, so a script that
+	// allocates past it stops with a typed error rather than being killed by the
+	// host after the machine is already under pressure.
+	MemoryLimit int64
 }
 
 func (Script) Name() string { return "script" }
@@ -81,6 +106,20 @@ Write synchronous code. The last expression is the result; strings come back as-
 	}
 }
 
+func (s Script) timeout() time.Duration {
+	if s.Timeout > 0 {
+		return s.Timeout
+	}
+	return DefaultScriptTimeout
+}
+
+func (s Script) memoryLimit() int64 {
+	if s.MemoryLimit > 0 {
+		return s.MemoryLimit
+	}
+	return DefaultScriptMemoryLimit
+}
+
 func (s Script) Run(ctx context.Context, input map[string]any) (string, error) {
 	source, err := mustString(input, "source")
 	if err != nil {
@@ -101,7 +140,7 @@ func (s Script) Run(ctx context.Context, input map[string]any) (string, error) {
 		return "", fmt.Errorf("script wrapper does not compile: %w", err)
 	}
 
-	rt := moejs.NewRuntime(moejs.Options{})
+	rt := moejs.NewRuntime(moejs.Options{MemoryLimit: s.memoryLimit()})
 	if err := rt.SetGlobal("tools", s.globals(ctx)); err != nil {
 		return "", fmt.Errorf("script setup: %w", err)
 	}
@@ -109,11 +148,59 @@ func (s Script) Run(ctx context.Context, input map[string]any) (string, error) {
 		return "", fmt.Errorf("script setup: %w", err)
 	}
 
+	// One deadline covers both the script's own budget and the caller's
+	// cancellation, so an interrupted turn reports its real cause instead of
+	// waiting out the script's timeout. AfterFunc is what lets the engine stop:
+	// RunScript is a single blocking call and cannot select on ctx itself.
+	runCtx, cancel := context.WithTimeout(ctx, s.timeout())
+	defer cancel()
+	stop := context.AfterFunc(runCtx, func() { rt.Interrupt(context.Cause(runCtx)) })
+	defer stop()
+
 	result, err := rt.RunScript(wrapper)
 	if err != nil {
 		return "", describeScriptError(err)
 	}
-	return scriptResult(rt, result)
+	return s.limitOutput(scriptResult(rt, result))
+}
+
+// limitOutput caps what one script contributes to the transcript. The agent
+// applies the same cap as a backstop for every tool, but capping here keeps a
+// large script result from being built into a string first.
+//
+// The marker matches the agent's wording so a reader cannot tell which layer
+// truncated, and the suggestion is the same one that layer gives.
+func (s Script) limitOutput(result string, err error) (string, error) {
+	if err != nil {
+		return "", err
+	}
+	if len(result) <= MaxOutputBytes {
+		return result, nil
+	}
+	originalBytes := len(result)
+	originalLines := strings.Count(result, "\n") + 1
+	marker := fmt.Sprintf("\n\n[tool output truncated: original %d bytes across %d lines; showing first %d bytes. Re-run the tool with narrower output to inspect the rest.]",
+		originalBytes, originalLines, MaxOutputBytes)
+	keep := MaxOutputBytes - len(marker)
+	if keep <= 0 {
+		return trimToBytes(marker, MaxOutputBytes), nil
+	}
+	return trimToBytes(result, keep) + marker, nil
+}
+
+// trimToBytes cuts at a rune boundary so the result stays valid UTF-8.
+func trimToBytes(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if len(s) <= limit {
+		return s
+	}
+	s = s[:limit]
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 // globals builds the tool namespace. Every entry is an explicit edit here.
@@ -172,6 +259,19 @@ func scriptResult(rt *moejs.Runtime, result engine.Value) (string, error) {
 // runs. Both are reported as syntax errors so the model does not go looking for
 // a runtime bug it cannot find.
 func describeScriptError(err error) error {
+	// A memory limit and a deadline both surface as an interrupt. Telling them
+	// apart matters: one means "allocate less", the other "finish sooner", and a
+	// model given the wrong one retries the wrong thing.
+	var limit *moejs.MemoryLimitError
+	if errors.As(err, &limit) {
+		return fmt.Errorf("script exceeded its memory limit: %w", err)
+	}
+	var interrupted *moejs.InterruptedError
+	if errors.As(err, &interrupted) {
+		// The interrupt's value is already in the message, including whether it
+		// was a deadline or a cancellation, so no second wording is needed.
+		return fmt.Errorf("script stopped: %w", err)
+	}
 	var syntax *moejs.SyntaxError
 	if errors.As(err, &syntax) {
 		return fmt.Errorf("script has a syntax error: %w", err)
