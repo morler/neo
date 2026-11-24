@@ -1,7 +1,7 @@
 ---
 id: 77
 title: Finalize docs, changelog, and full check suite for the script tool
-status: in-progress
+status: closed
 priority: medium
 labels:
     - docs
@@ -10,6 +10,7 @@ relations:
         - 76
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
