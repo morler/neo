@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -954,6 +955,26 @@ func (a *Agent) runPreparedTool(ctx context.Context, call preparedToolCall) tool
 		GroupSize: call.groupSize,
 		GroupPos:  call.groupPos,
 	})
+	// A tool that runs other tools reports them here. The events carry the
+	// parent's group identity, so a UI can nest them without a second field:
+	// GroupID is the parent's tool-use ID and GroupPos orders the sub-calls.
+	ctx = tools.WithSubCallSink(ctx, func(sub tools.SubCall) {
+		kind := EventToolCall
+		if sub.Done {
+			kind = EventToolResult
+		}
+		a.emit(Event{
+			Kind:      kind,
+			Name:      sub.Name,
+			Args:      cloneInput(sub.Args),
+			ToolUseID: sub.ID,
+			GroupID:   call.block.ID,
+			GroupSize: 0, // unknown while the script runs; the UI appends rows
+			GroupPos:  subPosition(sub.ID),
+			Text:      sub.Text,
+			IsError:   sub.IsError,
+		})
+	})
 	logx.Debug("tool call", "name", name, "args", logx.SafeAny(input))
 	if call.refused != "" {
 		logx.Debug("tool call refused as a repeat", "name", name)
@@ -1081,4 +1102,20 @@ func cloneValue(v any) any {
 	default:
 		return v
 	}
+}
+
+// subPosition reads the ordinal a sub-call's ID carries. The tools package
+// builds it as "<parent>#<n>", so the number after the last '#' is the position
+// within the parent. An ID that does not follow the shape sorts last rather
+// than failing: a UI row in the wrong place is better than a dropped event.
+func subPosition(id string) int {
+	i := strings.LastIndex(id, "#")
+	if i < 0 || i == len(id)-1 {
+		return 0
+	}
+	n, err := strconv.Atoi(id[i+1:])
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n - 1
 }

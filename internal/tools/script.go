@@ -205,9 +205,21 @@ func trimToBytes(s string, limit int) string {
 
 // globals builds the tool namespace. Every entry is an explicit edit here.
 func (s Script) globals(ctx context.Context) map[string]any {
+	// The counter numbers sub-calls within this one script execution, so the
+	// agent can tell two read_file calls apart even when the arguments match.
+	calls := &subCallCounter{}
 	return map[string]any{
-		"read_file": s.hostTool(ctx, s.Read),
+		"read_file": s.hostTool(ctx, s.Read, calls),
 	}
+}
+
+// subCallCounter numbers the calls one script makes. It is not shared and not
+// concurrent: a script runs on one goroutine, which is why the tool is serial.
+type subCallCounter struct{ n int }
+
+func (c *subCallCounter) next(parent string) string {
+	c.n++
+	return fmt.Sprintf("%s#%d", parent, c.n)
 }
 
 // hostTool adapts one Go tool into a synchronous JS function.
@@ -215,7 +227,16 @@ func (s Script) globals(ctx context.Context) map[string]any {
 // The arguments are converted to Go before the tool runs, so nothing the script
 // does to its own object afterwards can change what executes. An error thrown
 // here surfaces as a JS exception, which is how a script sees a failed tool.
-func (s Script) hostTool(ctx context.Context, t Tool) moejs.NativeFunc {
+func (s Script) hostTool(ctx context.Context, t Tool, calls *subCallCounter) moejs.NativeFunc {
+	// The parent's tool-use ID is what the agent already knows: reusing
+	// CallMetadata means this file needs no second context key and no import of
+	// the agent package.
+	parent, _ := CallMetadataFrom(ctx)
+	report := func(id, name string, input map[string]any, text string, isError, done bool) {
+		ReportSubCall(ctx, SubCall{
+			ID: id, Name: name, Args: input, Text: text, IsError: isError, Done: done,
+		})
+	}
 	return func(r *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
 		input := map[string]any{}
 		if len(args) > 0 {
@@ -223,10 +244,16 @@ func (s Script) hostTool(ctx context.Context, t Tool) moejs.NativeFunc {
 				input = converted
 			}
 		}
+		id := calls.next(parent.ToolUseID)
+		name := t.Name()
+		report(id, name, input, "", false, false)
+
 		out, err := t.Run(ctx, input)
 		if err != nil {
+			report(id, name, input, err.Error(), true, true)
 			return engine.Undefined(), err
 		}
+		report(id, name, input, out, false, true)
 		return engine.StringValue(engine.FromGoString(out)), nil
 	}
 }

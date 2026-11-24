@@ -50,6 +50,12 @@ func DefaultBudget() Budget {
 type AgentEvent struct {
 	Kind string `json:"kind"` // "start" | "tool" | "text" | "error" | "usage" | "done" | "fail"
 	Body string `json:"body,omitempty"`
+
+	// CallID and GroupPos identify a sub-call made inside a tool, such as one
+	// read_file inside a script. Both are empty for ordinary events, so a
+	// consumer that does not care about nesting can ignore them.
+	CallID   string `json:"call_id,omitempty"`
+	GroupPos int    `json:"group_pos,omitempty"`
 }
 
 // Event tags an agent event with the execution that produced it.

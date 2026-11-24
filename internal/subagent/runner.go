@@ -116,7 +116,14 @@ func translate(e agent.Event) (AgentEvent, bool) {
 		if e.Name == "agent" {
 			return AgentEvent{}, false
 		}
-		return AgentEvent{Kind: "tool", Body: summarize(e.Name, e.Args)}, true
+		// A sub-call inside a tool carries the parent's group identity; keep it
+		// so the UI can nest the row instead of showing a flat list.
+		ev := AgentEvent{Kind: "tool", Body: summarize(e.Name, e.Args)}
+		if e.GroupSize == 0 && e.GroupID != "" {
+			ev.CallID = e.ToolUseID
+			ev.GroupPos = e.GroupPos
+		}
+		return ev, true
 	case agent.EventToolResult:
 		if e.IsError {
 			return AgentEvent{Kind: "tool", Body: e.Name + " error: " + e.Text}, true
