@@ -1,7 +1,7 @@
 ---
 id: 46
 title: Document the token budget, the frozen prefix and the cache switches
-status: open
+status: in-progress
 priority: medium
 labels:
     - docs

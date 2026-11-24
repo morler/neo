@@ -1,12 +1,12 @@
 # Neo Token Budget
 
-> **Status:** Proposed. No behavior below ships yet; the table maps each piece
-> to its issue.
+> **Status:** Implemented. The rules below describe shipped behavior; the task
+> table records what each piece changed and which issue it came from.
 
 Neo re-sends the system prompt, every tool definition, and the whole transcript
 on every turn. Input cost therefore grows with the square of the conversation.
 This note records the four rules that keep that cost down, what Neo spends
-today, and the seven tasks that follow from it.
+today, and the work that followed from it.
 
 Adapted from the killi project (`../killi/docs/decisions.md`, decisions 9, 10,
 26, 28, 36, 43, 48), which measures 36.6k input tokens per task at 84% cached.
@@ -40,28 +40,30 @@ estimate `compact.EstimateTokens` uses.
 Largest definitions: `agent` 808 B, `goal` 775 B, `grep` 645 B, `workflow`
 536 B. A project `AGENTS.md` adds an uncached tail on top.
 
-Two facts worth noting:
+What gates these numbers:
 
-- `cmd/neo/performance_test.go` enforces 1,400 bytes for the core prompt and
-  2,600 for the chat prompt, but **nothing gates the tool schemas**, which are
-  the larger half.
-- `docs/performance.md` still states a single 2,048-byte budget, which predates
-  the split into two.
+- `cmd/neo/performance_test.go` enforces 1,400 bytes for the core prompt, 2,600
+  for the chat prompt, and 8,500 for the fixed floor (tool schemas plus chat
+  prompt, measured here as 8,084). The same test renders the cacheable prefix
+  twice and fails if the bytes differ.
+- `docs/performance.md` records the same three budgets and the token baseline,
+  so the doc and the gate cannot drift apart quietly.
 
 ## Tasks
 
-| Issue | Task | Why it matters |
-| --- | --- | --- |
-| #47 | Correct the stale 2,048-byte budget in `performance.md` | One-line doc fix, do it now |
-| #41 | Count an inline image as a fixed reserve | `maxImageBytes` is 5 MB; base64 at 4 chars/token estimates ~1.7M tokens, so one screenshot blows the 140k trigger |
-| #36 | Show session usage with `/usage` | Minimum observable: nobody can currently tell whether caching works |
-| #38 | Gate the fixed floor and the frozen prefix in one test | Turns rules 1 and 3 into a failing test instead of a convention |
-| #42 | Trigger compaction by a share of the window | Constant 140k under-uses a 1M window and can re-fire right after a compaction |
-| #43 | Repeated-call breaker: warn at 8, stop at 12 | `MaxTurns` is 500; a looping model burns turns until then |
-| #44 | Truncation suggests the next call | `read_file` says "narrow with offset/limit" without saying how |
+All landed:
 
-Dependency order: #47 alone; #41 → #42 → #43; #36 → #38 → #44; #43 and #44
-feed #46 (docs, after behavior lands) and #45 (baseline, after measurement).
+| Issue | Change | Why it mattered |
+| --- | --- | --- |
+| #36 | `/usage` reports the session's tokens and cache hit rate | Minimum observable: nobody could tell whether caching worked |
+| #37 | `neo run --json` reports `requests` and `usage` | The same figures for scripted runs, including compaction calls |
+| #38 | One test gates the fixed floor and the frozen prefix | Turns rules 1 and 3 into a failing test instead of a convention |
+| #41 | An inline image counts as a fixed `ImageTokenReserve` | One screenshot estimated as ~100k tokens and started a compaction loop |
+| #42 | Trigger is 70% of the window, with a 20% growth floor after each compaction | A fixed 140k under-used a 1M window and could re-fire immediately |
+| #43 | Repeat guard: reminders at 3, 5, 8; the 12th call is refused | `MaxTurns` is 500; a looping model burned every remaining turn |
+| #44 | Truncation names the next call | "Narrow with offset/limit" did not say where or by how much |
+| #45 | Token baseline and measurement protocol in `performance.md` | Every later change can cite one basis for comparison |
+| #47 | The stale single 2,048-byte budget is gone | The doc now describes all three budgets |
 
 ## Deferred On Purpose
 

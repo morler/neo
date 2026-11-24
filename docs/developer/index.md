@@ -15,4 +15,7 @@ Start here when changing Neo:
 - [Code quality tooling](code-quality.md) documents qlty, supercov, and their environment.
 - [Performance](../performance.md) records the binary, prompt, and token baselines
   and how to measure them.
+- [Token budget design](../design/token-budget.md) explains the four rules behind
+  the fixed-floor budget, the frozen prefix, and the compaction trigger; it also
+  records which switches were deliberately not added.
 - [Teaching guides](guides/index.md) explain the core ideas in plain language.

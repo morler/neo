@@ -58,7 +58,11 @@ Allowed to change the prefix, because they start a new cache lineage:
 
 - `/clear`, which drops the transcript;
 - `/provider` and `/model`, which change the backend the prefix is cached for;
-- compaction, which rewrites the oldest messages into one summary.
+- compaction, which rewrites the oldest messages into one summary;
+- starting a new session or resuming a saved one, which builds the blocks again.
+
+Nothing else may. A reminder, a steering message, or a tool result is appended
+to the end of the conversation, never inserted before the breakpoint.
 
 `cmd/neo/performance_test.go` enforces the contract: `TestFixedPromptFloorBudget`
 renders the same session state twice and fails if the base block or the tool
