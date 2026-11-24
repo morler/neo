@@ -1,7 +1,7 @@
 ---
 id: 38
 title: Gate the prompt plus tool schema budget with one test
-status: in-progress
+status: closed
 priority: high
 labels:
     - feature
@@ -12,6 +12,7 @@ relations:
         - 36
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
