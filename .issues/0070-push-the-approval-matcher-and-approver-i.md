@@ -1,7 +1,7 @@
 ---
 id: 70
 title: Push the approval matcher and approver into the script tool boundary
-status: in-progress
+status: closed
 priority: critical
 labels:
     - security
@@ -12,6 +12,7 @@ relations:
         - 69
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
