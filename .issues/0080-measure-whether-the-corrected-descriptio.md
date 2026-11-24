@@ -1,7 +1,7 @@
 ---
 id: 80
 title: Measure whether the corrected description and prompt raise script use without raising cost
-status: in-progress
+status: closed
 priority: high
 labels:
     - performance
@@ -12,6 +12,7 @@ relations:
         - 76
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
