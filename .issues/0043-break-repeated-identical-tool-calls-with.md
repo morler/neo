@@ -1,7 +1,7 @@
 ---
 id: 43
 title: Warn about repeated identical tool calls at three, five and eight
-status: open
+status: in-progress
 priority: medium
 labels:
     - feature

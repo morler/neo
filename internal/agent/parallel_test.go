@@ -75,7 +75,14 @@ func TestAgent_UnknownToolIsSerialBarrier(t *testing.T) {
 	if groups != 2 {
 		t.Fatalf("parallel groups = %d, want two groups split by unknown tool", groups)
 	}
-	results := prov.Calls[1].Messages[2].Content
+	// Only tool results are asserted here: this response repeats fast_parallel
+	// four times, so the repeat guard also appends a reminder text block.
+	var results []llm.ContentBlock
+	for _, block := range prov.Calls[1].Messages[2].Content {
+		if block.Type == "tool_result" {
+			results = append(results, block)
+		}
+	}
 	if len(results) != 5 || !results[2].IsError {
 		t.Fatalf("unknown barrier results = %#v", results)
 	}

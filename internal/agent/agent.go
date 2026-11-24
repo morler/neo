@@ -112,6 +112,19 @@ type Agent struct {
 	steerPending []string
 
 	groupSeq uint64
+
+	// repeats counts identical tool calls within the current user turn.
+	repeats *repeatGuard
+	// repeatReminders holds notes produced during this turn, appended after the
+	// tool results so they land at the end of the conversation. Appending is the
+	// only way to say something new without disturbing the cached prefix.
+	repeatReminders []string
+	// repeatStopped is set when a call was refused for repeating too often. The
+	// turn ends after its tool results are committed, so the refusal reaches the
+	// transcript as a failed tool_result and the user sees why.
+	repeatStopped bool
+	// repeatStopText is the refusal message for the call that tripped the guard.
+	repeatStopText string
 }
 
 // DefaultMaxTurns is a high safety fuse for runaway tool loops, not a normal
@@ -265,6 +278,12 @@ func (a *Agent) SendWithDisplay(ctx context.Context, promptText, displayText str
 	if len(content) == 0 {
 		return "", nil
 	}
+	// One user turn is one protection window: the same call ten minutes later in
+	// a new turn is not a loop.
+	a.repeats = newRepeatGuard()
+	a.repeatReminders = nil
+	a.repeatStopped = false
+	a.repeatStopText = ""
 	a.beginSteering()
 	defer a.endSteering()
 	_, model, _ := a.backend()
@@ -477,8 +496,36 @@ func (a *Agent) commitToolResults(ctx context.Context, turn int, results []llm.C
 		steering, _ = a.takeSteering(false)
 	}
 	results = a.appendSteering(results, steering)
+	results = a.appendRepeatReminders(results)
 	a.messages = append(a.messages, llm.Message{Role: llm.RoleUser, Content: results})
+	if a.repeatStopped {
+		err := fmt.Errorf("%w: %s", ErrRepeatedToolCall, a.repeatStopMessage())
+		logx.Debug("agent stopped a repeated tool call", "turn", turn+1)
+		a.emit(Event{Kind: EventError, Err: err})
+		return true, err
+	}
 	return false, nil
+}
+
+// appendRepeatReminders adds this turn's notes as trailing text blocks after the
+// tool results. They are new content at the end of the conversation, so the
+// cached prefix and every earlier message keep their exact bytes.
+func (a *Agent) appendRepeatReminders(results []llm.ContentBlock) []llm.ContentBlock {
+	reminders := a.repeatReminders
+	a.repeatReminders = nil
+	for _, text := range reminders {
+		results = append(results, llm.ContentBlock{Type: "text", Text: text})
+	}
+	return results
+}
+
+// repeatStopMessage names the call that tripped the guard, so the turn error
+// reads as "bash was called 12 times", not as a bare failure.
+func (a *Agent) repeatStopMessage() string {
+	if a.repeatStopText != "" {
+		return a.repeatStopText
+	}
+	return "a tool call repeated too many times"
 }
 
 // finishStop handles the stop reasons that arrive after the assistant message
@@ -573,6 +620,9 @@ type preparedToolCall struct {
 	groupID          string
 	groupSize        int
 	groupPos         int
+	// refused explains why this call must not run at all, and is set when the
+	// repeat guard reached its stop count. An empty value means "run it".
+	refused string
 }
 
 type toolOutcome struct {
@@ -844,15 +894,29 @@ func hasToolUse(content []llm.ContentBlock) bool {
 }
 
 func (a *Agent) runTool(ctx context.Context, name string, input map[string]any) (string, bool) {
-	call := a.prepareTool(llm.ContentBlock{Type: "tool_use", Name: name, Input: input})
+	// A direct call is not a model loop, so it bypasses the repeat guard. The
+	// guard is turn-scoped state and a RunTool call is outside any turn.
+	call := a.prepareToolWithoutRepeatGuard(llm.ContentBlock{Type: "tool_use", Name: name, Input: input})
 	outcome := a.runPreparedTool(ctx, call)
 	return outcome.text, outcome.isError
 }
 
-// prepareTool performs lookup and approval matching on the coordinator
-// goroutine. Approval itself remains deferred so it can act as a serial
-// execution barrier.
+// prepareTool performs lookup, approval matching, and repeat counting for a
+// model-requested call. Approval itself remains deferred so it can act as a
+// serial execution barrier.
 func (a *Agent) prepareTool(block llm.ContentBlock) preparedToolCall {
+	return a.prepareToolWithRepeatGuard(block, a.repeats)
+}
+
+// prepareToolWithoutRepeatGuard prepares a call the user made directly, which
+// the repeat guard must not count.
+func (a *Agent) prepareToolWithoutRepeatGuard(block llm.ContentBlock) preparedToolCall {
+	return a.prepareToolWithRepeatGuard(block, nil)
+}
+
+// prepareToolWithRepeatGuard is the shared body of prepareTool and
+// prepareToolWithoutRepeatGuard; a nil guard skips repeat counting.
+func (a *Agent) prepareToolWithRepeatGuard(block llm.ContentBlock, guard *repeatGuard) preparedToolCall {
 	call := preparedToolCall{block: block}
 	t, ok := a.cfg.Tools.Get(block.Name)
 	if !ok {
@@ -862,6 +926,19 @@ func (a *Agent) prepareTool(block llm.ContentBlock) preparedToolCall {
 	call.tool = t
 	if a.cfg.RequiresApproval != nil {
 		call.approvalRequired = a.cfg.RequiresApproval(block.Name, block.Input)
+	}
+	// Counting happens here because prepareTool runs serially, before any
+	// parallel execution, so the result is deterministic even when one response
+	// contains several calls to the same tool.
+	if guard == nil {
+		return call
+	}
+	if count, remind, stop := guard.observe(block.Name, block.Input); stop {
+		call.refused = repeatStopReason(block.Name, count)
+		a.repeatStopped = true
+		a.repeatStopText = call.refused
+	} else if remind {
+		a.repeatReminders = append(a.repeatReminders, repeatReminder(block.Name, count))
 	}
 	return call
 }
@@ -878,6 +955,10 @@ func (a *Agent) runPreparedTool(ctx context.Context, call preparedToolCall) tool
 		GroupPos:  call.groupPos,
 	})
 	logx.Debug("tool call", "name", name, "args", logx.SafeAny(input))
+	if call.refused != "" {
+		logx.Debug("tool call refused as a repeat", "name", name)
+		return toolOutcome{text: call.refused, isError: true}
+	}
 	if call.lookupErr != "" {
 		logx.Debug("tool lookup failed", "name", name)
 		return toolOutcome{text: call.lookupErr, isError: true}

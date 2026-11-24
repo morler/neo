@@ -138,3 +138,28 @@ partial output.
 Neo relies on its VM or sandbox for security boundaries. Interactive users can
 set `tool_approvals` to confirm exact tool names or Bash command prefixes. The
 list is empty by default and is not applied to headless or child agents.
+
+## Repeated Calls
+
+A model that keeps issuing the same call with the same arguments wastes a full
+provider request and a full tool execution each turn. The agent counts calls by
+tool name plus a hash of their arguments, within one user turn only, and acts on
+the count:
+
+| Identical call number | Behavior |
+| --- | --- |
+| 3, 5, 8 | The tool runs, and a short `<system-reminder>` is appended after its result. |
+| 12 | The tool does not run. The turn ends with an error naming the tool and the count. |
+
+The reminder is appended at the end of the conversation. It never touches the
+system prompt, the tool definitions, or earlier messages, so the cached prefix
+stays byte-identical (see [Prompt caching](prompt-caching.md)). The counts reset
+at the start of every user turn, because the same call in a later turn is not a
+loop. State-changing tools such as `workflow` and `goal` are counted like any
+other: they cost a request and a turn too.
+
+This is not a replacement for `MaxTurns` (500). `MaxTurns` is the outer safety
+valve for a loop that keeps changing shape; this guard is the inner one for a
+loop that repeats the same call and can be named. A turn stopped here reports
+`repeated tool call` and records the refusal in the transcript as a failed tool
+result, so it is distinguishable from a cancellation.
