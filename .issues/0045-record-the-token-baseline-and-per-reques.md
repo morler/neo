@@ -1,12 +1,13 @@
 ---
 id: 45
 title: Record the token baseline and per-request measurement protocol
-status: open
+status: closed
 priority: medium
 labels:
     - docs
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景

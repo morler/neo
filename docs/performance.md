@@ -40,6 +40,83 @@ benchmarks. `TestFixedPromptFloorBudget` in `cmd/neo/performance_test.go` also
 asserts that two renders of the same session state produce a byte-identical
 cacheable prefix, which is what keeps prompt caching worth anything.
 
+## Token Baseline
+
+Bytes are not a bill. The tables in this section compare what Neo *sends*, so a
+change can be judged before and after; only a provider's `llm.Usage` says what a
+request actually cost, because tokenizers differ and cache hits are priced
+separately.
+
+All byte-to-token figures here use the same estimate as
+`internal/compact.EstimateTokens`: characters divided by four. It is a planning
+number, not a contract.
+
+### Fixed overhead
+
+Measured on 2026-11-24 with the chat tool registry and the built-in skill
+catalog, which is what an interactive session sends before any conversation
+exists:
+
+| Component | Bytes | ~Tokens |
+| --- | ---: | ---: |
+| 9 tool definitions (`chatRegistry().Specs()`, JSON) | 5,022 | 1,255 |
+| System prompt with the built-in skill catalog | 3,062 | 765 |
+| **Fixed floor** | **8,084** | **~2,020** |
+
+These figures are the basis of `fixedFloorByteBudget` (8,500) and the 1,400 /
+2,600 prompt budgets in `cmd/neo/performance_test.go`; if one moves
+intentionally, move both or the docs and the gate disagree.
+
+### Measuring a real run
+
+A run's actual cost comes from the provider, not from an estimate:
+
+```bash
+go build ./...
+neo run --json 'Read the file `cmd/neo/main.go` and list its functions.'
+```
+
+The summary on stdout carries `requests` and `usage`. The numbers below are
+from one example run and are shown for their shape, not as a baseline:
+
+```json
+{
+  "requests": 2,
+  "usage": {
+    "input_tokens": 4200,
+    "output_tokens": 310,
+    "cache_creation_tokens": 8300,
+    "cache_read_tokens": 0
+  }
+}
+```
+
+Read it as four disjoint prompt parts plus output: `input_tokens`,
+`cache_creation_tokens`, and `cache_read_tokens` sum to the whole prompt (see
+`Usage.PromptTokens()`), and the cache hit rate is `cache_read_tokens` over that
+sum. `requests` counts every provider call the run made, including a compaction
+summary, because that call is billed like any other.
+
+To compare two revisions, run the same prompt against the same provider and
+model on both, twice each, and record the four usage fields plus `requests`.
+Report the second run of each: the first pays cache creation, the second
+reflects what a session costs once its prefix is cached.
+
+Keep the run figures in the change that produced them rather than in this file:
+they depend on the provider, the model, and the prompt. A measurement taken
+against a different one of those is not comparable, so record all three
+alongside the numbers.
+
+The fixed-overhead table above is different: it comes from the code alone, so it
+is updated here when the prompt or the tool set intentionally changes.
+
+### Per-request detail
+
+`neo run` reports totals only. Per-request detail is `ag.Usage()` diffed around
+a single turn, which is what a `/usage` reading gives interactively: `/usage`
+shows the same four figures for the session, so the difference between two
+readings is what one turn cost.
+
 ## Baseline
 
 The baseline below was captured on Go 1.25.12 on Darwin/arm64. Compare like with

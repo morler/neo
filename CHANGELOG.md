@@ -49,6 +49,9 @@ All notable changes to Neo will be documented in this file.
 
 ### Changed
 
+- `docs/performance.md` now records a token baseline — the 8,084-byte fixed
+  overhead and how to measure a real run from `neo run --json` — so token work
+  can be compared before and after instead of argued about.
 - Truncated tool output now says what to do next. `read_file` reports the first
   line that did not fit and a limit that will fit (`retry with offset=N,
   limit=M`), and `bash` suggests narrowing the command itself (`| tail -n 200`,
