@@ -1,12 +1,13 @@
 ---
 id: 47
 title: Correct the stale 2048-byte prompt budget in performance.md
-status: open
+status: closed
 priority: medium
 labels:
     - docs
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
