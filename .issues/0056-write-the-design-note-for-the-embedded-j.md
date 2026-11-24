@@ -1,7 +1,7 @@
 ---
 id: 56
 title: Write the design note for the embedded JS batch tool
-status: in-progress
+status: closed
 priority: high
 labels:
     - docs
@@ -10,6 +10,7 @@ relations:
         - 63
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
