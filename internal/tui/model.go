@@ -602,6 +602,8 @@ func (m *model) handleSlashCommand(line string) tea.Cmd {
 		return m.openModelBrowser()
 	case "/provider":
 		return m.openProviderBrowser()
+	case "/usage":
+		m.appendBlock(usageBlock{usage: m.ag.Usage()})
 	case "/clear":
 		cleared := m.resetConversation()
 		if cleared != nil {
@@ -656,9 +658,12 @@ func (m *model) quitNow() tea.Cmd {
 // replaces conversation state. Control commands that only change the session's
 // goal status stay available mid-turn, so /goal is decided by its subcommand
 // rather than by its name.
+//
+// /usage is read-only but still idle-only: the agent writes usage from the turn
+// goroutine, so reading it mid-turn would race with that write.
 func slashCommandRequiresIdle(cmd, rest string) bool {
 	switch cmd {
-	case "/clear", "/model", "/provider":
+	case "/clear", "/model", "/provider", "/usage":
 		return true
 	case "/goal":
 		sub, _ := splitGoalArgs(rest)

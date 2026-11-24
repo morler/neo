@@ -39,6 +39,8 @@ func (m *model) resetConversation() *goal.State {
 
 	cleared := m.clearGoal()
 
+	// ag.Clear() drops the transcript and the token accounting together, so
+	// /usage reports a fresh session after /clear instead of the old totals.
 	m.ag.Clear()
 	m.blocks = nil
 	m.rendered = nil

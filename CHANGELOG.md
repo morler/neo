@@ -36,6 +36,12 @@ All notable changes to Neo will be documented in this file.
 - `/model` now persists the chosen model to the config file it loaded, rewriting
   only `model:` so the next launch starts on the same model. A write failure
   restores the previous model and reports the error.
+- Added `/usage` to show what the session spent in provider tokens: the prompt
+  total with its input, cache-write, and cache-read parts, the output total,
+  and the share of the prompt served from the cache. The parts are the same
+  figures saved with the session, so the cache hit rate has an unambiguous
+  denominator. An empty session says so instead of printing zeros, and `/clear`
+  resets the totals with the transcript.
 
 ### Performance
 

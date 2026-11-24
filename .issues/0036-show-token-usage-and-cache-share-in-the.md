@@ -1,7 +1,7 @@
 ---
 id: 36
 title: Show session token usage with a /usage command
-status: open
+status: closed
 priority: high
 labels:
     - feature
@@ -10,6 +10,7 @@ relations:
         - 38
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景

@@ -36,3 +36,8 @@ and `CacheReadTokens`: they never overlap, and `Usage.PromptTokens()` is their
 sum. Providers whose APIs report the cached count as a subset of the total
 (OpenAI Responses, Google) subtract it in their adapter. Compaction depends on
 this, so a mistake here makes a cached session compact at the wrong size.
+
+`/usage` is the user-facing view of these figures, and its cache hit rate
+divides `CacheReadTokens` by the same `PromptTokens()` sum. A reporting change
+that used a different denominator would disagree with compaction about how full
+the prompt is.

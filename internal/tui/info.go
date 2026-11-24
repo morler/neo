@@ -24,6 +24,7 @@ var baseSlashCommands = []slashCommand{
 	{"/model", "select the active model"},
 	{"/provider", "switch the active provider"},
 	{"/quit", "save and exit (also /exit)"},
+	{"/usage", "show session token usage and cache hits"},
 }
 
 var keyBindings = []struct {
