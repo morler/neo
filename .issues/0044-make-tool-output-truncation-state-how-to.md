@@ -1,7 +1,7 @@
 ---
 id: 44
 title: Make read_file and bash truncation suggest the next call
-status: in-progress
+status: closed
 priority: medium
 labels:
     - feature
@@ -12,6 +12,7 @@ relations:
         - 38
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
