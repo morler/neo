@@ -1,7 +1,7 @@
 ---
 id: 68
 title: Emit sub-call events from script tools through a context sink
-status: in-progress
+status: closed
 priority: high
 labels:
     - feature
@@ -12,6 +12,7 @@ relations:
         - 67
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
