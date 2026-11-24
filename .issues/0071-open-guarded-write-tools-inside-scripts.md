@@ -1,7 +1,7 @@
 ---
 id: 71
 title: Open guarded write tools inside scripts and prove no approval bypass
-status: in-progress
+status: closed
 priority: critical
 labels:
     - security
@@ -12,6 +12,7 @@ relations:
         - 70
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
