@@ -100,6 +100,18 @@ recurred after real attempts; one transient failure is not a blocker. Pausing,
 resuming, clearing, and the attempt budget belong to the user, so the goal tool
 offers no such action.`
 
+// scriptCapability is appended when the script tool is registered.
+const scriptCapability = `
+
+# Scripts
+
+When a later call depends on an earlier result, write a script instead of
+asking for the result back: filter, count, or branch inside it so the output
+never re-enters the conversation. Tools: ` + "`read_file`" + `, ` + "`grep`" + `, ` + "`glob`" + `,
+` + "`write_file`" + `, ` + "`edit_file`" + `; no bash. Each call is approved like a top-level one,
+so a denial is final. Write synchronous code; the last expression is the
+result. Prefer it over two turns, not over one read.`
+
 func main() {
 	os.Exit(execute(os.Args[1:], stdio{
 		in:  os.Stdin,
@@ -355,11 +367,16 @@ func printVersion(w io.Writer) {
 }
 
 func newRegistry(cwd, root string, extra ...tools.Tool) *tools.Registry {
-	base := append([]tools.Tool{
-		tools.Bash{Timeout: tools.DefaultBashTimeout, CWD: cwd},
+	files := append([]tools.Tool{
 		tools.Grep{Root: root},
 		tools.Glob{Root: root},
 	}, tools.NewFileTools()...)
+	base := append([]tools.Tool{
+		tools.Bash{Timeout: tools.DefaultBashTimeout, CWD: cwd},
+	}, files...)
+	// The script tool gets the same values the registry holds, so a read inside
+	// a script records the file the agent later edits.
+	base = append(base, tools.NewScript(files))
 	return tools.NewRegistry(append(base, extra...)...)
 }
 
@@ -452,6 +469,9 @@ func capabilitySections(reg *tools.Registry) string {
 	}
 	if _, ok := reg.Get("goal"); ok {
 		b.WriteString(goalCapability)
+	}
+	if _, ok := reg.Get("script"); ok {
+		b.WriteString(scriptCapability)
 	}
 	return b.String()
 }

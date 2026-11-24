@@ -1,7 +1,7 @@
 ---
 id: 73
 title: Add the script capability prompt and raise the three prompt budgets from a measured delta
-status: open
+status: in-progress
 priority: high
 labels:
     - feature

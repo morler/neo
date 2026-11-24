@@ -19,8 +19,12 @@ import (
 // These cover the system prompt alone. fixedFloorByteBudget below covers the
 // other half of a request: the tool schemas, which nothing gated before.
 const (
+	// 1400 was the ceiling before the script capability; the core prompt is
+	// 1,282 with it, so the script section fits without moving this one.
 	corePromptByteBudget = 1400
-	chatPromptByteBudget = 2600
+	// 2,600 before the script capability, 2,985 with it. Rounded up to the next
+	// 500, the same rule the fixed floor uses.
+	chatPromptByteBudget = 3000
 )
 
 // fixedFloorByteBudget caps what every chat turn re-sends before the
@@ -35,7 +39,11 @@ const (
 // `go test ./cmd/neo/ -run TestFixedPromptFloorBudget -v` after adding a tool.
 // Raising it buys tokens on every request of every session, so it is a product
 // decision, not a fix for a red test.
-const fixedFloorByteBudget = 8_500
+// Raised from 8,500 when the script tool was registered: measured 2026-11-24 at
+// 9,227 bytes (5,726 tool definitions + 3,501 prompt). The script schema is 704
+// of the tools and its prompt section 439 of the prompt. Rounded up to the next
+// 500, matching how the previous value was chosen.
+const fixedFloorByteBudget = 9_500
 
 func TestChatSystemPromptSizeBudgets(t *testing.T) {
 	headless, _ := chatSystem(&config.Config{}, "", nil, profile.Profile{}, newRegistry("", ""), io.Discard)
@@ -158,7 +166,7 @@ func TestFixedPromptFloorKeepsTheTailUncached(t *testing.T) {
 // that quietly lost a tool would make the budget easier to pass without anyone
 // noticing the prompt no longer describes the real tool surface.
 func TestFixedFloorCoversTheWholeChatSurface(t *testing.T) {
-	want := []string{"agent", "bash", "edit_file", "glob", "goal", "grep", "read_file", "workflow", "write_file"}
+	want := []string{"agent", "bash", "edit_file", "glob", "goal", "grep", "read_file", "script", "workflow", "write_file"}
 	names := chatRegistry().Names()
 	if len(names) != len(want) {
 		t.Fatalf("chat registry has %d tools %v, want %d", len(names), names, len(want))

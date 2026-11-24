@@ -334,3 +334,30 @@ func describeScriptError(err error) error {
 	}
 	return fmt.Errorf("script failed: %w", err)
 }
+
+// NewScript builds the script tool over the file tools the coordinator already
+// holds, so a file a script reads is a file the next edit knows about. Passing
+// the same values rather than new ones is what keeps the stale-edit guard
+// meaningful across the script boundary.
+//
+// Only the tools named here are reachable from JavaScript. Adding one means
+// adding a struct field and a line in globals; there is no registry lookup that
+// could grow the surface without an edit.
+func NewScript(files []Tool) Script {
+	s := Script{}
+	for _, t := range files {
+		switch v := t.(type) {
+		case ReadFile:
+			s.Read = v
+		case Grep:
+			s.Grep = v
+		case Glob:
+			s.Glob = v
+		case WriteFile:
+			s.Write = v
+		case EditFile:
+			s.Edit = v
+		}
+	}
+	return s
+}

@@ -29,12 +29,13 @@ budgets:
   the embedded JavaScript engine landed and 22.96 MiB after, of which the
   engine is 5.83 MiB; the remaining room is ordinary growth;
 - the system prompt must remain at or below 1,400 bytes for the core prompt and
-  2,600 bytes for the chat prompt, which adds the workflow and delegation
-  sections that only exist where those tools do;
+  3,000 bytes for the chat prompt, which adds the workflow, delegation, goal,
+  and script sections that only exist where those tools do;
 - the fixed floor — the tool schemas plus the chat system prompt with the
-  built-in skill catalog — must remain at or below 8,500 bytes. It was 8,084
+  built-in skill catalog — must remain at or below 9,500 bytes. It was 8,084
   when the budget was set (5,022 for nine tool definitions, 3,062 for the
-  prompt).
+  prompt), and 9,227 after the script tool (5,726 and 3,501; the script schema
+  is 704 and its prompt section 439).
 
 Re-measure the binary before adding a dependency: the ceiling is generous on
 purpose, and a second engine-sized cost would use it up.
@@ -64,12 +65,15 @@ exists:
 
 | Component | Bytes | ~Tokens |
 | --- | ---: | ---: |
-| 9 tool definitions (`chatRegistry().Specs()`, JSON) | 5,022 | 1,255 |
-| System prompt with the built-in skill catalog | 3,062 | 765 |
-| **Fixed floor** | **8,084** | **~2,020** |
+| 10 tool definitions (`chatRegistry().Specs()`, JSON) | 5,726 | 1,432 |
+| System prompt with the built-in skill catalog | 3,501 | 875 |
+| **Fixed floor** | **9,227** | **~2,307** |
 
-These figures are the basis of `fixedFloorByteBudget` (8,500) and the 1,400 /
-2,600 prompt budgets in `cmd/neo/performance_test.go`; if one moves
+The script tool added 704 bytes of schema and 439 bytes of prompt to the
+figures above (8,084 before it).
+
+These figures are the basis of `fixedFloorByteBudget` (9,500) and the 1,400 /
+3,000 prompt budgets in `cmd/neo/performance_test.go`; if one moves
 intentionally, move both or the docs and the gate disagree.
 
 ### Measuring a real run
