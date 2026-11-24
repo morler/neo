@@ -1,7 +1,7 @@
 ---
 id: 79
 title: Rewrite the script capability prompt around task shapes with a copyable example
-status: in-progress
+status: closed
 priority: high
 labels:
     - feature
@@ -15,6 +15,7 @@ relations:
         - 76
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景

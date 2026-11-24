@@ -14,8 +14,10 @@ All notable changes to Neo will be documented in this file.
   deadline, the engine's memory limit, and the 64 KiB tool-output cap, and their
   sub-calls appear as rows under the script's own receipt. It is off by default:
   a measurement found no task where the model chose it over `bash`, and it costs
-  1,143 bytes of prompt per request. Turn it on with `--script`,
-  `features.script: true`, or `/codemode on` in chat.
+  1,455 bytes of prompt per request. Turn it on with `--script`,
+  `features.script: true`, or `/codemode on` in chat. `/codemode status` reports
+  how many times this session chose the tool, so the cost can be weighed against
+  its use.
 - `/sessions` lists saved sessions inside the TUI and switches to one without
   leaving the terminal. The running session is saved first and the chosen one
   must still load, so a failed save or a deleted session reports the error in

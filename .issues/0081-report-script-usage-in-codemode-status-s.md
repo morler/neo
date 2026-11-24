@@ -1,7 +1,7 @@
 ---
 id: 81
 title: Report script usage in /codemode status so the user can judge the opt-in cost
-status: open
+status: in-progress
 priority: low
 labels:
     - tui

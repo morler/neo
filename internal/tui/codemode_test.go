@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/owainlewis/neo/internal/agent"
 )
 
 // codemodeModel builds a model whose /codemode switch is backed by the given
@@ -114,5 +116,69 @@ func TestCodeModeRefusesMidTurn(t *testing.T) {
 	m.handleSlashCommand("/codemode on")
 	if *calls != 0 {
 		t.Fatal("a mid-turn switch was allowed")
+	}
+}
+
+// codeModeStatusText runs /codemode status and returns what the user reads.
+// The block wraps and pads to the terminal width, so whitespace is collapsed
+// before comparing: the assertion is about the sentence, not the layout.
+func codeModeStatusText(m *model) string {
+	m.handleSlashCommand("/codemode status")
+	return strings.Join(strings.Fields(plain(m.blocks[len(m.blocks)-1].render(80, nil))), " ")
+}
+
+// TestCodeModeStatusCountsScriptUse is the point of the line: a user who paid
+// the prompt cost every turn can see whether the tool was ever chosen.
+func TestCodeModeStatusCountsScriptUse(t *testing.T) {
+	m, _, _ := codemodeModel(t, true, nil)
+	for i := 0; i < 3; i++ {
+		m.handleEvent(scriptCall("call_" + string(rune('a'+i))))
+	}
+	if text := codeModeStatusText(m); !strings.Contains(text, "used 3 times this session") {
+		t.Fatalf("status = %q, want the use count", text)
+	}
+}
+
+// TestCodeModeStatusSaysNothingWhenUnused keeps the line quiet: "used 0 times"
+// only repeats what the absence of a count already says.
+func TestCodeModeStatusSaysNothingWhenUnused(t *testing.T) {
+	m, _, _ := codemodeModel(t, true, nil)
+	m.handleEvent(agent.Event{Kind: agent.EventToolCall, Name: "read_file", ToolUseID: "call_a"})
+	if text := codeModeStatusText(m); strings.Contains(text, "used") {
+		t.Fatalf("status = %q, want no usage line", text)
+	}
+}
+
+// TestCodeModeStatusHidesCountWhenOff covers the state where a count has no
+// meaning: with the tool unavailable, earlier calls are not a cost being paid.
+func TestCodeModeStatusHidesCountWhenOff(t *testing.T) {
+	m, _, _ := codemodeModel(t, true, nil)
+	m.handleEvent(scriptCall("call_a"))
+	m.handleSlashCommand("/codemode off")
+	if text := codeModeStatusText(m); strings.Contains(text, "used") {
+		t.Fatalf("status = %q, want no usage line while off", text)
+	}
+}
+
+// TestCodeModeCountIgnoresScriptSubCalls separates "the model chose the tool"
+// from "the tool did work": a script's own calls carry a GroupID and must not
+// inflate the number the user reads.
+func TestCodeModeCountIgnoresScriptSubCalls(t *testing.T) {
+	m, _, _ := codemodeModel(t, true, nil)
+	m.handleEvent(scriptCall("call_script"))
+	m.handleEvent(scriptSub(agent.EventToolCall, "call_script#1", "call_script", "read_file", nil, "", false))
+	m.handleEvent(scriptSub(agent.EventToolCall, "call_script#2", "call_script", "grep", nil, "", false))
+	if m.scriptCalls != 1 {
+		t.Fatalf("scriptCalls = %d, want 1 (sub-calls are not choices)", m.scriptCalls)
+	}
+}
+
+// TestCodeModeCountIgnoresOtherTools keeps a parallel batch of read-only calls
+// from being read as repeated script use.
+func TestCodeModeCountIgnoresOtherTools(t *testing.T) {
+	m, _, _ := codemodeModel(t, true, nil)
+	m.handleEvent(agent.Event{Kind: agent.EventToolCall, Name: "read_file", ToolUseID: "call_a", GroupID: "group-1", GroupSize: 3})
+	if m.scriptCalls != 0 {
+		t.Fatalf("scriptCalls = %d, want 0", m.scriptCalls)
 	}
 }

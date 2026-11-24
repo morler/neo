@@ -282,7 +282,10 @@ type model struct {
 	// pretending to work.
 	scriptSwitcher ScriptSwitcher
 	scriptEnabled  func() bool
-	sessions       sessionBrowser
+	// scriptCalls counts the top-level `script` calls this session asked for,
+	// so /codemode status can weigh the prompt cost against its use.
+	scriptCalls int
+	sessions    sessionBrowser
 
 	// lastInputHeight is the textarea height the current layout was computed
 	// for. When the textarea grows/shrinks (DynamicHeight), this lets us
@@ -1316,6 +1319,9 @@ func (m *model) handleToolCallEvent(e agent.Event) {
 		m.turn.workflow = true
 		return
 	}
+	if e.Name == "script" {
+		m.scriptCalls++
+	}
 	m.turn.tools++
 	m.noteWorkflowActivity(capitalize(toolVerb(e.Name, e.Args)))
 	tc := &toolCallBlock{
@@ -1638,11 +1644,30 @@ func (m *model) handleCodeModeCommand(rest string) tea.Cmd {
 	}
 }
 
-// codeModeStatusLine states both the state and what it costs, because "on" by
-// itself does not tell a user why the next request is larger.
+// codeModeStatusLine states the state, what it costs, and whether that cost has
+// bought anything yet. The last part is the one a user cannot otherwise see:
+// "on" alone does not say whether this session's requests carried a tool that
+// was never called.
 func (m *model) codeModeStatusLine() string {
 	if m.scriptEnabled != nil && m.scriptEnabled() {
-		return "codemode on: the script tool is available (+~1.1 KB prompt per request)"
+		line := "codemode on: the script tool is available (+~1.1 KB prompt per request)"
+		return line + m.scriptUsageLine()
 	}
 	return "codemode off: the script tool is not registered"
+}
+
+// scriptUsageLine reports how many top-level `script` calls this session made.
+// A script's own sub-calls arrive with a GroupID and are not counted: the
+// question here is whether the tool was chosen at all, not how busy it was.
+// Nothing is said while the count is zero, because "used 0 times" says what the
+// absence already says.
+func (m *model) scriptUsageLine() string {
+	switch m.scriptCalls {
+	case 0:
+		return ""
+	case 1:
+		return "; used once this session"
+	default:
+		return fmt.Sprintf("; used %d times this session", m.scriptCalls)
+	}
 }
