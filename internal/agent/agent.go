@@ -958,6 +958,20 @@ func (a *Agent) runPreparedTool(ctx context.Context, call preparedToolCall) tool
 	// A tool that runs other tools reports them here. The events carry the
 	// parent's group identity, so a UI can nest them without a second field:
 	// GroupID is the parent's tool-use ID and GroupPos orders the sub-calls.
+	// The same matcher and approver the top-level path uses. A tool that runs
+	// other tools must consult this one, because the outer call's name says
+	// nothing about what runs inside it.
+	if a.cfg.RequiresApproval != nil || a.cfg.Approve != nil {
+		ctx = tools.WithApprovalGate(ctx, &tools.ApprovalGate{
+			Requires: a.cfg.RequiresApproval,
+			Approve: func(ctx context.Context, req tools.ApprovalRequest) (bool, error) {
+				if a.cfg.Approve == nil {
+					return false, nil
+				}
+				return a.cfg.Approve(ctx, ApprovalRequest{ToolName: req.ToolName, Args: req.Args})
+			},
+		})
+	}
 	ctx = tools.WithSubCallSink(ctx, func(sub tools.SubCall) {
 		kind := EventToolCall
 		if sub.Done {

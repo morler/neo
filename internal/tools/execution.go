@@ -1,6 +1,10 @@
 package tools
 
-import "context"
+import (
+	"context"
+	"errors"
+	"fmt"
+)
 
 type executionContextKey struct{}
 type conversationGenerationKey struct{}
@@ -78,4 +82,66 @@ func ReportSubCall(ctx context.Context, call SubCall) {
 		return
 	}
 	sink(call)
+}
+
+// ApprovalRequest describes one tool call a tool wants to make on the model's
+// behalf. Parent names the tool asking, so a prompt can say "script wants to
+// run write_file" rather than implying the model called it directly.
+type ApprovalRequest struct {
+	ToolName string
+	Args     map[string]any
+	Parent   string
+}
+
+// ApprovalGate is the match-and-approve pair the agent already applies to a
+// top-level call. A tool that runs other tools applies the same gate to each of
+// them, which is the only way a rule like `tool_approvals: [write_file]` keeps
+// its meaning once a script can call write_file.
+//
+// Both functions are the agent's own, not copies: a second matcher would be a
+// second policy, and the two would drift.
+type ApprovalGate struct {
+	Requires func(tool string, args map[string]any) bool
+	Approve  func(ctx context.Context, req ApprovalRequest) (bool, error)
+}
+
+type approvalGateKey struct{}
+
+// WithApprovalGate attaches the gate a nested tool must consult. A nil gate is
+// valid and means nobody configured approvals, which is the normal case.
+func WithApprovalGate(ctx context.Context, gate *ApprovalGate) context.Context {
+	if gate == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, approvalGateKey{}, gate)
+}
+
+// ApprovalGateFrom returns the gate carried by ctx, or nil.
+func ApprovalGateFrom(ctx context.Context) *ApprovalGate {
+	gate, _ := ctx.Value(approvalGateKey{}).(*ApprovalGate)
+	return gate
+}
+
+// requireApproval applies the gate to one nested call. It returns nil when the
+// call may proceed, and a tool-shaped error when it may not.
+//
+// The wording matches the agent's top-level path on purpose: a model should not
+// be able to tell whether it was denied at the top or one level down, because
+// the remedy is the same.
+func requireApproval(ctx context.Context, toolName string, args map[string]any, parent string) error {
+	gate := ApprovalGateFrom(ctx)
+	if gate == nil || gate.Requires == nil || !gate.Requires(toolName, args) {
+		return nil
+	}
+	if gate.Approve == nil {
+		return errors.New("tool approval required but no approver is configured")
+	}
+	approved, err := gate.Approve(ctx, ApprovalRequest{ToolName: toolName, Args: args, Parent: parent})
+	if err != nil {
+		return fmt.Errorf("approval error: %w", err)
+	}
+	if !approved {
+		return errors.New("user denied this tool call")
+	}
+	return nil
 }

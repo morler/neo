@@ -62,10 +62,12 @@ const scriptWrapper = `(function (source) {
 // adding a tool has to be an edit to this file. A tool that appears by accident
 // is a tool whose approvals and output limits nobody reviewed.
 type Script struct {
-	// Read is the only tool a script can call today. Search, writes, and the
-	// approval gate that comes with them land in later steps; each one adds an
-	// explicit line to globals.
+	// Read, Grep, and Glob are the only tools a script can call today. Write
+	// access lands in a later step; each addition is an explicit line in
+	// globals, and every one of them goes through the approval gate.
 	Read ReadFile
+	Grep Grep
+	Glob Glob
 
 	// Timeout bounds one script. Zero means DefaultScriptTimeout. A script that
 	// has not finished by then is interrupted, which is the only way to stop a
@@ -210,6 +212,8 @@ func (s Script) globals(ctx context.Context) map[string]any {
 	calls := &subCallCounter{}
 	return map[string]any{
 		"read_file": s.hostTool(ctx, s.Read, calls),
+		"grep":      s.hostTool(ctx, s.Grep, calls),
+		"glob":      s.hostTool(ctx, s.Glob, calls),
 	}
 }
 
@@ -247,6 +251,16 @@ func (s Script) hostTool(ctx context.Context, t Tool, calls *subCallCounter) moe
 		id := calls.next(parent.ToolUseID)
 		name := t.Name()
 		report(id, name, input, "", false, false)
+
+		// Approval is enforced here, at the tool boundary, not at the script
+		// boundary. The outer `script` call is one rule away from every tool the
+		// whitelist exposes, so a matcher that only sees "script" cannot express
+		// "ask before write_file". The argument is the Go map built above, not
+		// the JS object, so a script cannot change what was approved afterwards.
+		if err := requireApproval(ctx, name, input, "script"); err != nil {
+			report(id, name, input, err.Error(), true, true)
+			return engine.Undefined(), err
+		}
 
 		out, err := t.Run(ctx, input)
 		if err != nil {

@@ -149,3 +149,72 @@ func TestScriptSubCallsDoNotChangeTheResult(t *testing.T) {
 		t.Fatalf("script result = %q, want %q", got, want)
 	}
 }
+
+// TestScriptSubCallsUseTheAgentApprover is the injection test at the agent
+// level: the tool only consults a gate that runPreparedTool put there, so this
+// proves the wiring rather than the tool's own logic.
+func TestScriptSubCallsUseTheAgentApprover(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(path, []byte("alpha\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := tools.Script{Read: tools.ReadFile{}}
+	prov := &llmtest.FakeProvider{Responses: []llm.Response{
+		{Content: []llm.ContentBlock{{
+			Type: "tool_use", ID: "call_script", Name: "script",
+			Input: map[string]any{"source": `tools.read_file({path: "` + path + `"})`},
+		}}, StopReason: "tool_use"},
+		llmtest.Text("done"),
+	}}
+
+	asked := 0
+	ag := New(Config{
+		Model: "test", Provider: prov,
+		Tools:            tools.NewRegistry(script),
+		RequiresApproval: func(tool string, _ map[string]any) bool { return tool == "read_file" },
+		Approve: func(context.Context, ApprovalRequest) (bool, error) {
+			asked++
+			return true, nil
+		},
+	})
+	if _, err := ag.Send(context.Background(), "go"); err != nil {
+		t.Fatal(err)
+	}
+	if asked != 1 {
+		t.Fatalf("approver asked %d times, want once for the nested read_file", asked)
+	}
+}
+
+// TestScriptSubCallDeniedAtAgentLevel checks the refusal reaches the script as
+// a thrown error rather than being silently approved.
+func TestScriptSubCallDeniedAtAgentLevel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(path, []byte("alpha\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := tools.Script{Read: tools.ReadFile{}}
+	prov := &llmtest.FakeProvider{Responses: []llm.Response{
+		{Content: []llm.ContentBlock{{
+			Type: "tool_use", ID: "call_script", Name: "script",
+			Input: map[string]any{"source": `tools.read_file({path: "` + path + `"})`},
+		}}, StopReason: "tool_use"},
+		llmtest.Text("done"),
+	}}
+
+	var denied bool
+	ag := New(Config{
+		Model: "test", Provider: prov,
+		Tools:            tools.NewRegistry(script),
+		RequiresApproval: func(tool string, _ map[string]any) bool { return tool == "read_file" },
+		Approve: func(context.Context, ApprovalRequest) (bool, error) {
+			denied = true
+			return false, nil
+		},
+	})
+	if _, err := ag.Send(context.Background(), "go"); err != nil {
+		t.Fatal(err)
+	}
+	if !denied {
+		t.Fatal("the approver was never consulted")
+	}
+}
