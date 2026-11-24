@@ -1,7 +1,7 @@
 ---
 id: 67
 title: Enforce memory, deadline, and output limits on the script tool
-status: in-progress
+status: closed
 priority: high
 labels:
     - performance
@@ -12,6 +12,7 @@ relations:
         - 65
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
