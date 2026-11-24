@@ -162,3 +162,32 @@ func TestScriptRowTruncatesOnNarrowTerminals(t *testing.T) {
 		t.Fatalf("row is %d cells, want at most 40", len(out))
 	}
 }
+
+// TestScriptApprovalShowsItsRequester covers the one thing a user needs to judge
+// a prompt correctly: whether the model asked, or a script did.
+func TestScriptApprovalShowsItsRequester(t *testing.T) {
+	card := approvalBlock{req: agent.ApprovalRequest{
+		ToolName: "write_file",
+		Parent:   "script",
+		Args:     map[string]any{"path": "notes.txt", "content": "x"},
+	}}
+	out := plain(card.render(80, nil))
+	if !strings.Contains(out, "approval required by script") {
+		t.Fatalf("card = %q, want the requester named", out)
+	}
+	// The card names the operation rather than the tool identifier, which is
+	// what the same card shows for a top-level call.
+	if !strings.Contains(out, "write notes.txt") {
+		t.Fatalf("card = %q, want the operation named", out)
+	}
+}
+
+// TestDirectApprovalHasNoRequester keeps the ordinary prompt unchanged: naming
+// a parent that does not exist would be worse than saying nothing.
+func TestDirectApprovalHasNoRequester(t *testing.T) {
+	card := approvalBlock{req: agent.ApprovalRequest{ToolName: "bash", Args: map[string]any{"command": "ls"}}}
+	out := plain(card.render(80, nil))
+	if strings.Contains(out, " by ") {
+		t.Fatalf("card = %q, want no requester for a top-level call", out)
+	}
+}

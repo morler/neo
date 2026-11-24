@@ -77,6 +77,10 @@ type ToolCallRef struct {
 type ApprovalRequest struct {
 	ToolName string
 	Args     map[string]any
+	// Parent names the tool that asked for this call, when it was not the model
+	// calling directly. A script asking for write_file is a different decision
+	// for the user than the model asking for it, and the prompt should say so.
+	Parent string
 }
 
 type Config struct {
@@ -968,7 +972,7 @@ func (a *Agent) runPreparedTool(ctx context.Context, call preparedToolCall) tool
 				if a.cfg.Approve == nil {
 					return false, nil
 				}
-				return a.cfg.Approve(ctx, ApprovalRequest{ToolName: req.ToolName, Args: req.Args})
+				return a.cfg.Approve(ctx, ApprovalRequest{ToolName: req.ToolName, Args: req.Args, Parent: req.Parent})
 			},
 		})
 	}

@@ -298,7 +298,14 @@ type approvalBlock struct {
 func (b approvalBlock) render(width int, _ *glamour.TermRenderer) string {
 	head, detail := toolCardContent(b.req.ToolName, b.req.Args)
 	var sb strings.Builder
-	sb.WriteString(styAccent.Render("approval required"))
+	if b.req.Parent != "" {
+		// Name the requester, or a user reading "write_file" would assume the
+		// model asked for it directly and approve on the wrong basis.
+		sb.WriteString(styAccent.Render("approval required"))
+		sb.WriteString(styMuted.Render(" by " + b.req.Parent))
+	} else {
+		sb.WriteString(styAccent.Render("approval required"))
+	}
 	sb.WriteString("\n")
 	sb.WriteString(styTool.Render(head))
 	if detail != "" {

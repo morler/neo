@@ -62,12 +62,18 @@ const scriptWrapper = `(function (source) {
 // adding a tool has to be an edit to this file. A tool that appears by accident
 // is a tool whose approvals and output limits nobody reviewed.
 type Script struct {
-	// Read, Grep, and Glob are the only tools a script can call today. Write
-	// access lands in a later step; each addition is an explicit line in
-	// globals, and every one of them goes through the approval gate.
-	Read ReadFile
-	Grep Grep
-	Glob Glob
+	// Read, Grep, Glob, Write, and Edit are the whole surface a script has.
+	// Each one is an explicit line in globals and every one passes through the
+	// approval gate, so a capability cannot appear here by accident.
+	//
+	// bash is absent on purpose: Neo does not parse shell commands, so it
+	// cannot tell a read from a write, and a tool it cannot classify makes the
+	// approvals above decorative.
+	Read  ReadFile
+	Grep  Grep
+	Glob  Glob
+	Write WriteFile
+	Edit  EditFile
 
 	// Timeout bounds one script. Zero means DefaultScriptTimeout. A script that
 	// has not finished by then is interrupted, which is the only way to stop a
@@ -211,9 +217,11 @@ func (s Script) globals(ctx context.Context) map[string]any {
 	// agent can tell two read_file calls apart even when the arguments match.
 	calls := &subCallCounter{}
 	return map[string]any{
-		"read_file": s.hostTool(ctx, s.Read, calls),
-		"grep":      s.hostTool(ctx, s.Grep, calls),
-		"glob":      s.hostTool(ctx, s.Glob, calls),
+		"read_file":  s.hostTool(ctx, s.Read, calls),
+		"grep":       s.hostTool(ctx, s.Grep, calls),
+		"glob":       s.hostTool(ctx, s.Glob, calls),
+		"write_file": s.hostTool(ctx, s.Write, calls),
+		"edit_file":  s.hostTool(ctx, s.Edit, calls),
 	}
 }
 

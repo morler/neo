@@ -57,9 +57,13 @@ func TestScriptLastExpressionIsTheResult(t *testing.T) {
 // can reach are exactly the ones written in script.go. It asserts absence
 // rather than a friendly error, because a name that exists but fails is a name
 // someone can still wire up later by accident.
+//
+// write_file and edit_file are absent from this list on purpose: they are
+// allowed now, and gated. The tools that must never appear are the ones Neo
+// cannot classify or that would recurse.
 func TestScriptWhitelistIsClosed(t *testing.T) {
 	s, _ := newScript(t)
-	for _, name := range []string{"bash", "write_file", "edit_file", "agent", "goal", "workflow", "script"} {
+	for _, name := range []string{"bash", "agent", "goal", "workflow", "script"} {
 		out, err := runScript(t, s, `typeof tools.`+name)
 		if err != nil {
 			t.Fatalf("%s: unexpected error %v", name, err)
