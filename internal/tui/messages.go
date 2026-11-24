@@ -105,6 +105,10 @@ func (m *model) handleKeyMsg(msg tea.KeyMsg) updateResult {
 		_, cmd := m.handleModelBrowserKey(msg)
 		return earlyWith(cmd)
 	}
+	if m.sessions.visible {
+		_, cmd := m.handleSessionBrowserKey(msg)
+		return earlyWith(cmd)
+	}
 	if m.approval != nil {
 		return immediately(m.handleApprovalKey(msg))
 	}
@@ -124,7 +128,7 @@ func (m *model) handlePaste(msg tea.PasteMsg) updateResult {
 		m.clearApprovalSelection()
 		return updateResult{}
 	}
-	if m.models.visible || m.providers.visible || m.quitPending {
+	if m.models.visible || m.providers.visible || m.sessions.visible || m.quitPending {
 		return updateResult{}
 	}
 	return updateResult{cmds: []tea.Cmd{m.updateInput(msg)}}

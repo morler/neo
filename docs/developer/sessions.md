@@ -16,6 +16,14 @@ Session files are written atomically with a sibling temp file and rename.
 - `neo sessions` lists saved sessions from the shell.
 - `neo sessions search <query>` searches saved transcript text locally and prints matching session metadata plus a short excerpt.
 - `neo resume <id>` resumes a session from the shell and restores its saved cwd before tools are created.
+- `/sessions` inside the TUI lists saved sessions in the shared picker and switches to one.
+
+`/sessions` saves the running session, checks that the chosen one still loads,
+and then exits the TUI; the caller re-enters it on the target, so a switch is
+exactly `neo resume <id>` under the hood. Nothing is rebuilt in place, which is
+why a failure anywhere in that sequence leaves the running conversation as it
+was. The TUI still does not import this package: the caller supplies the list
+and the loadability check, and the chosen ID travels back as a string.
 
 Resume restores the session's saved provider and model when that provider's credential is still available. Otherwise Neo warns and continues with the configured default backend. Provider adapters ignore opaque history blocks they cannot safely replay, so the transcript remains usable after a backend switch.
 

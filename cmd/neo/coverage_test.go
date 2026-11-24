@@ -638,3 +638,39 @@ func TestProviderCredentialPresentFollowsTheEnvironment(t *testing.T) {
 		t.Fatal("anthropic reported no credential with the variable set")
 	}
 }
+
+func TestSessionChoicesMirrorTheSessionsTable(t *testing.T) {
+	updated := time.Date(2026, 11, 24, 9, 30, 0, 0, time.Local)
+	got := sessionChoices([]session.Metadata{
+		{ID: "sess_a", Title: "first", Model: "gpt-5", CWD: "/repo", UpdatedAt: updated},
+		{ID: "sess_b"},
+	})
+
+	if len(got) != 2 {
+		t.Fatalf("choices = %#v, want two rows", got)
+	}
+	if got[0].ID != "sess_a" || got[0].Title != "first" {
+		t.Fatalf("first row = %#v, want the saved id and title", got[0])
+	}
+	for _, want := range []string{"gpt-5", "/repo", "2026-11-24 09:30"} {
+		if !strings.Contains(got[0].Description, want) {
+			t.Fatalf("description = %q, want %q", got[0].Description, want)
+		}
+	}
+	// A metadata row with no model or update time must still render: the
+	// description is informational, never a reason to hide the session.
+	if got[1].ID != "sess_b" || got[1].Description != "" {
+		t.Fatalf("bare row = %#v, want no leftover separator", got[1])
+	}
+}
+
+func TestDescribeSessionLoadErrorKeepsTheResumeWording(t *testing.T) {
+	missing := describeSessionLoadError("sess_a", session.ErrNotFound)
+	if missing == nil || missing.Error() != "session not found: sess_a" {
+		t.Fatalf("error = %v, want the resume wording", missing)
+	}
+	broken := describeSessionLoadError("sess_a", errors.New("parse session sess_a: bad json"))
+	if broken == nil || !strings.Contains(broken.Error(), "load session sess_a") {
+		t.Fatalf("error = %v, want the load context", broken)
+	}
+}

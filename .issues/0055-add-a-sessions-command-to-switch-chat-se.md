@@ -1,13 +1,14 @@
 ---
 id: 55
 title: Add a /sessions command to switch chat sessions inside the TUI
-status: open
+status: closed
 priority: medium
 labels:
     - feature
     - tui
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
@@ -73,3 +74,16 @@ TUI 持有的运行时句柄全部在 `Run()` 时通过 `Option` 一次性注入
 - 目标会话文件已被删除时报错，当前会话保持不变。
 - 至少一个 TUI 测试覆盖：列表渲染与过滤、选中当前会话、保存失败中止；若采用方案 B，再加一个覆盖「退出时携带目标 ID」的测试。
 - 文档已更新，`go test ./...`、`go vet ./...`、`qlty check --all` 通过。
+
+## 实现记录（方案 B）
+
+选定 **B. 交接退出**，理由与正文一致：不引入可变的运行时句柄，切换完全复用 `neo resume <id>` 的构建路径。
+
+落点：
+
+- `internal/tui/sessions.go`（新增）：`SessionChoice`、`sessionBrowser`、`/sessions` 命令分支、共享 `handlePickerKey` 的列表渲染与过滤。TUI 仍不 import `internal/session`——列表来自 `WithSessions(id, list, open)` 注入的回调，目标 ID 只作为字符串经 `Run` 返回值带回。
+- `internal/tui/model.go`：`Run` 现在返回 `(string, error)`，字符串是 `/sessions` 选中的目标会话 ID（正常退出为 `""`）；新增 `WithSessions`、`/sessions` 分发、idle-only 档位、`sessions` 浏览器视图与按键优先级。
+- `cmd/neo/main.go`：`runChatSession` 外层循环；`runOneChatSession` 负责单次 TUI。切换时先 `store.Load` 校验目标，成功后才退出并重入，因此「文件被删除」在退出前就报给浏览器，当前会话保持不变。
+- `picker.go`：新增 `sessionBrowserIDColumn`。
+
+验收对照：`/help` 列出 `/sessions`；turn 中执行被拒绝；列表列与 `neo sessions` 同源（`store.List` → id/标题 + 模型·cwd·更新时间）；选中当前会话是无操作并提示；保存失败中止并留在原地；目标被删除时报错且不切换；TUI 测试覆盖列表渲染与过滤、选中当前会话、保存失败中止、退出携带目标 ID；文档与 CHANGELOG 已更新；`go test ./...`、`go vet ./...`、`qlty check --all`（退出码 0）均通过。

@@ -21,6 +21,8 @@ const (
 	pickerBottomRows    = 3
 	pickerRuleInset     = 1
 	pickerStatusPadding = 2
+	// sessionBrowserIDColumn fits a generated sess_<16 hex> id.
+	sessionBrowserIDColumn = 24
 )
 
 // pickerChoice is one row shared by both browsers: an identifier in a fixed

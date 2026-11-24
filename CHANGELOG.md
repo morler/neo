@@ -6,6 +6,12 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
+- `/sessions` lists saved sessions inside the TUI and switches to one without
+  leaving the terminal. The running session is saved first and the chosen one
+  must still load, so a failed save or a deleted session reports the error in
+  the picker and keeps you where you were. The switch re-enters the TUI on the
+  target the same way `neo resume <id>` does, so the saved cwd, provider, and
+  model rules are unchanged.
 - `/goal` gives a session one standing objective and keeps working toward it
   while the session is idle: `/goal <objective>` starts the first turn,
   `/goal status` shows the objective, status, attempt budget, blocked audit, and

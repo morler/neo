@@ -724,16 +724,45 @@ func restoreSessionCWD(cwd string, errOut io.Writer) {
 	}
 }
 
+// runChatSession runs the interactive TUI, re-entering it when the user
+// switches sessions with /sessions. agentName is the explicit --agent flag (it
+// may be empty); a resumed session falls back to its recorded agent, so
+// switching sessions keeps the same rule `neo resume` uses.
 func runChatSession(ctx context.Context, store *session.Store, sess *session.Session, agentName string, streams stdio) int {
+	for {
+		sessionAgent := agentName
+		if sessionAgent == "" && sess != nil {
+			sessionAgent = sess.Metadata.Agent
+		}
+		next, ok := runOneChatSession(ctx, store, sess, sessionAgent, streams)
+		if !ok {
+			return 1
+		}
+		if next == nil {
+			return 0
+		}
+		// Switching sessions reuses the resume path: the target cwd applies
+		// before its tools are built, and an unavailable one only warns.
+		restoreSessionCWD(next.Metadata.CWD, streams.err)
+		sess = next
+	}
+}
+
+// runOneChatSession prepares and runs one TUI pass. It returns the session the
+// user asked to switch to, or nil when the program ended normally. The target
+// is loaded while the TUI is still open, so an unreadable session is reported
+// in the browser and the running conversation is left untouched.
+func runOneChatSession(ctx context.Context, store *session.Store, sess *session.Session, agentName string, streams stdio) (*session.Session, bool) {
 	setup, ok := prepareChat(ctx, store, sess, agentName, streams)
 	if !ok {
-		return 1
+		return nil, false
 	}
 	rt := setup.runtime
 	saveSession := func() error {
 		return saveChatSession(ctx, store, setup.sess, rt.ag, rt.goal, setup.cwd, setup.profile.Name)
 	}
-	if err := tui.Run(ctx, rt.ag, rt.model, Version, setup.cwd, setup.sk,
+	var next *session.Session
+	target, err := tui.Run(ctx, rt.ag, rt.model, Version, setup.cwd, setup.sk,
 		tui.WithAfterSend(saveSession),
 		tui.WithGoalManager(rt.goal),
 		tui.WithGoalPersist(saveSession),
@@ -742,14 +771,73 @@ func runChatSession(ctx context.Context, store *session.Store, sess *session.Ses
 		tui.WithProviderSwitcher(providerChoices(setup.cfg), func(name string) (tui.ProviderState, error) {
 			return rt.switchProvider(ctx, name)
 		}),
+		tui.WithSessions(setup.sess.Metadata.ID,
+			func(ctx context.Context) ([]tui.SessionChoice, error) {
+				items, err := store.List(ctx)
+				if err != nil {
+					return nil, err
+				}
+				return sessionChoices(items), nil
+			},
+			func(id string) error {
+				loaded, err := store.Load(ctx, id)
+				if err != nil {
+					return describeSessionLoadError(id, err)
+				}
+				next = loaded
+				return nil
+			},
+		),
 		tui.WithWorkflowEvents(setup.workflowEvents),
 		tui.WithVerbose(setup.cfg.VerboseEnabled()),
 		tui.WithIO(streams.in, streams.out),
-	); err != nil {
+	)
+	if err != nil {
 		fmt.Fprintln(streams.err, err)
-		return 1
+		return nil, false
 	}
-	return 0
+	if target == "" {
+		return nil, true
+	}
+	if next == nil {
+		fmt.Fprintf(streams.err, "session not found: %s\n", target)
+		return nil, true
+	}
+	return next, true
+}
+
+// sessionChoices maps saved session metadata into the /sessions browser rows.
+// The columns mirror `neo sessions`: id, then the title with its model, cwd,
+// and update time in the description.
+func sessionChoices(items []session.Metadata) []tui.SessionChoice {
+	choices := make([]tui.SessionChoice, 0, len(items))
+	for _, meta := range items {
+		var detail []string
+		if meta.Model != "" {
+			detail = append(detail, meta.Model)
+		}
+		if meta.CWD != "" {
+			detail = append(detail, shortPath(meta.CWD))
+		}
+		if !meta.UpdatedAt.IsZero() {
+			detail = append(detail, meta.UpdatedAt.Local().Format("2006-01-02 15:04"))
+		}
+		choices = append(choices, tui.SessionChoice{
+			ID:          meta.ID,
+			Title:       meta.Title,
+			Description: strings.Join(detail, " · "),
+		})
+	}
+	return choices
+}
+
+// describeSessionLoadError keeps the wording of `neo resume` for a missing
+// session while adding the context that the switch did not happen.
+func describeSessionLoadError(id string, err error) error {
+	if errors.Is(err, session.ErrNotFound) {
+		return fmt.Errorf("session not found: %s", id)
+	}
+	return fmt.Errorf("load session %s: %w", id, err)
 }
 
 // chatSetup is everything an interactive session resolved before the TUI

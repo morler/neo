@@ -36,6 +36,11 @@ neo sessions
 neo resume <session-id>
 ```
 
+Inside the TUI, `/sessions` opens the same list and switches to the chosen
+session without leaving the terminal: it saves the current session, then
+re-enters the TUI on the target exactly as `neo resume <id>` would. A failed
+save or a session that no longer loads keeps you where you were.
+
 ## Why CWD Matters
 
 Tools are created for the workspace when the TUI starts. Resume sessions from

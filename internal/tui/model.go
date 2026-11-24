@@ -39,6 +39,9 @@ type Options struct {
 	ModelSwitcher      func(string) error
 	ProviderChoices    []ProviderChoice
 	ProviderSwitcher   ProviderSwitcher
+	SessionID          string
+	SessionLister      func(context.Context) ([]SessionChoice, error)
+	SessionOpener      func(string) error
 	WorkflowEvents     <-chan workflow.Event
 	Verbose            bool
 	Input              io.Reader
@@ -87,6 +90,23 @@ func WithProviderSwitcher(choices []ProviderChoice, fn ProviderSwitcher) Option 
 	}
 }
 
+// WithSessions enables /sessions: id names the running session, list returns
+// the saved ones, and open checks that a chosen session can still be loaded.
+//
+// The TUI does not switch sessions itself. Choosing one ends this program and
+// Run returns the target ID, so the caller resumes it exactly like `neo
+// resume <id>`. That keeps every runtime handle (agent, goal manager, backend,
+// cwd, skills) built in one place instead of being swapped in a half-applied
+// state. open runs before the switch so a missing or unreadable session is
+// reported in the open browser rather than after the terminal is restored.
+func WithSessions(id string, list func(context.Context) ([]SessionChoice, error), open func(string) error) Option {
+	return func(opts *Options) {
+		opts.SessionID = id
+		opts.SessionLister = list
+		opts.SessionOpener = open
+	}
+}
+
 // WithModelChoicesLoader supplies the live model catalogue for providers that
 // do not ship a static list. The loader runs only when the model browser is
 // opened, so a slow catalogue fetch never delays the first frame.
@@ -118,13 +138,17 @@ func WithIO(input io.Reader, output io.Writer) Option {
 // Run starts the Bubble Tea chat TUI. It returns when the user quits. cwd is
 // the effective working directory for display and file references. sk is the
 // loaded skill set used for $name expansion (nil when the feature is off).
-func Run(ctx context.Context, ag *agent.Agent, model, version, cwd string, sk []skills.Skill, options ...Option) error {
-	logx.Debug("tui start", "model", model, "skills", len(sk))
+//
+// The returned ID is the session the user asked to switch to with /sessions,
+// or "" when the program ended normally. The caller decides what resuming it
+// means, because this package does not open sessions itself.
+func Run(ctx context.Context, ag *agent.Agent, modelTag, version, cwd string, sk []skills.Skill, options ...Option) (string, error) {
+	logx.Debug("tui start", "model", modelTag, "skills", len(sk))
 	opts := Options{}
 	for _, option := range options {
 		option(&opts)
 	}
-	m := newModel(ctx, ag, model, version, cwd, sk, opts)
+	m := newModel(ctx, ag, modelTag, version, cwd, sk, opts)
 	// AltScreen + MouseMode are properties of the View in v2 (see View()).
 	p := tea.NewProgram(m, programOptions(opts)...)
 	// Pipe agent events directly into the Bubble Tea program. This avoids a
@@ -147,13 +171,18 @@ func Run(ctx context.Context, ag *agent.Agent, model, version, cwd string, sk []
 			return false, ctx.Err()
 		}
 	})
-	_, err := p.Run()
+	final, err := p.Run()
 	if err != nil {
 		logx.Debug("tui exit", "error", err.Error())
-	} else {
-		logx.Debug("tui exit", "error", "")
+		return "", err
 	}
-	return err
+	logx.Debug("tui exit", "error", "")
+	// A session switch is reported through the final model, not the program
+	// result: quitting this way is an ordinary exit to Bubble Tea.
+	if fm, ok := final.(*model); ok {
+		return fm.resumeSessionID, nil
+	}
+	return "", nil
 }
 
 func programOptions(opts Options) []tea.ProgramOption {
@@ -227,6 +256,7 @@ type model struct {
 	files     filePicker
 	models    modelBrowser
 	providers providerBrowser
+	sessions  sessionBrowser
 
 	// lastInputHeight is the textarea height the current layout was computed
 	// for. When the textarea grows/shrinks (DynamicHeight), this lets us
@@ -295,7 +325,13 @@ type model struct {
 	modelSwitcher       func(string) error
 	providerChoices     []ProviderChoice
 	providerSwitcher    ProviderSwitcher
-	verbose             bool
+	sessionID           string
+	sessionLister       func(context.Context) ([]SessionChoice, error)
+	sessionOpener       func(string) error
+	// resumeSessionID is set when the user asked to switch sessions. Run
+	// returns it after the program exits so the caller can resume it.
+	resumeSessionID string
+	verbose         bool
 }
 
 func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDir string, sk []skills.Skill, opts Options) *model {
@@ -331,6 +367,9 @@ func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDi
 		modelSwitcher:      opts.ModelSwitcher,
 		providerChoices:    normalizeProviderChoices(opts.ProviderChoices),
 		providerSwitcher:   opts.ProviderSwitcher,
+		sessionID:          strings.TrimSpace(opts.SessionID),
+		sessionLister:      opts.SessionLister,
+		sessionOpener:      opts.SessionOpener,
 		verbose:            opts.Verbose,
 		steer:              ag.Steer,
 	}
@@ -467,6 +506,9 @@ func (m *model) View() tea.View {
 	if m.models.visible {
 		return makeView(m.modelBrowserView())
 	}
+	if m.sessions.visible {
+		return makeView(m.sessionBrowserView())
+	}
 	status := m.statusLine()
 	footer := m.footerLine()
 	picker := m.inlinePickerView()
@@ -602,6 +644,8 @@ func (m *model) handleSlashCommand(line string) tea.Cmd {
 		return m.openModelBrowser()
 	case "/provider":
 		return m.openProviderBrowser()
+	case "/sessions":
+		return m.openSessionBrowser()
 	case "/usage":
 		m.appendBlock(usageBlock{usage: m.ag.Usage()})
 	case "/clear":
@@ -663,7 +707,7 @@ func (m *model) quitNow() tea.Cmd {
 // goroutine, so reading it mid-turn would race with that write.
 func slashCommandRequiresIdle(cmd, rest string) bool {
 	switch cmd {
-	case "/clear", "/model", "/provider", "/usage":
+	case "/clear", "/model", "/provider", "/sessions", "/usage":
 		return true
 	case "/goal":
 		sub, _ := splitGoalArgs(rest)

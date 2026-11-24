@@ -239,7 +239,7 @@ func TestRemovedSlashCommandsAreNotBuiltIn(t *testing.T) {
 	m := makeTestModel()
 	help := plain(helpBlock{commands: m.slashCommands()}.render(80, nil))
 
-	for _, cmd := range []string{"/tools", "/tokens", "/sessions", "/permissions"} {
+	for _, cmd := range []string{"/tools", "/tokens", "/permissions"} {
 		if strings.Contains(help, cmd) {
 			t.Fatalf("help still advertises %s: %s", cmd, help)
 		}
