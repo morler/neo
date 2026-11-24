@@ -1,7 +1,7 @@
 ---
 id: 64
 title: Raise the binary budget to 28 MiB with a probe that makes the cost visible
-status: in-progress
+status: closed
 priority: high
 labels:
     - performance
@@ -12,6 +12,7 @@ relations:
         - 63
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
