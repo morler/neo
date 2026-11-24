@@ -101,16 +101,27 @@ resuming, clearing, and the attempt budget belong to the user, so the goal tool
 offers no such action.`
 
 // scriptCapability is appended when the script tool is registered.
+//
+// It states when a script is worth writing and shows one runnable example; the
+// tool's own schema lists the calls and their return shapes, so the prompt does
+// not repeat that list. Repeating it is how the two drifted apart before.
+// cmd/neo/script_example_test.go runs the example and fails if it stops working.
 const scriptCapability = `
 
 # Scripts
 
-When a later call depends on an earlier result, write a script instead of
-asking for the result back: filter, count, or branch inside it so the output
-never re-enters the conversation. Tools: ` + "`read_file`" + `, ` + "`grep`" + `, ` + "`glob`" + `,
-` + "`write_file`" + `, ` + "`edit_file`" + `; no bash. Each call is approved like a top-level one,
-so a denial is final. Write synchronous code; the last expression is the
-result. Prefer it over two turns, not over one read.`
+Write a script when a later step needs an earlier result, so the intermediate
+output stays out of the conversation: count or test matches rather than reading
+the list and judging it; run the same check across many files; read, branch,
+then write inside one call. The description lists what a script may call.
+
+` + "```js" + `
+const hits = tools.grep({pattern: "TODO"}).split("\n").filter(Boolean);
+hits.length + " matches: " + hits.join(", ")
+` + "```" + `
+
+` + "`grep`" + ` says "no matches" instead of returning an empty string. Prefer a script
+over two turns, not over one read.`
 
 func main() {
 	os.Exit(execute(os.Args[1:], stdio{

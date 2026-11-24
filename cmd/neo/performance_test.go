@@ -44,10 +44,12 @@ const (
 const fixedFloorByteBudget = 8_500
 
 // scriptFloorByteBudget covers the same surface with `features.script` on:
-// measured 2026-11-24 at 9,374 bytes (5,873 tool definitions + 3,501 prompt).
-// The script schema is 851 and its prompt section 439. Rounded up to the next
-// 500, matching how every other ceiling here was chosen.
-const scriptFloorByteBudget = 9_500
+// measured 2026-11-24 at 9,499 bytes (5,873 tool definitions + 3,626 prompt).
+// The script schema is 851 and its prompt section 604. The ceiling was 9,500
+// before the prompt was rewritten around task shapes with a runnable example;
+// that left one byte of room, which would have made the next edit a failing
+// test rather than a decision. Rounded up to the next 500, as before.
+const scriptFloorByteBudget = 10_000
 
 func TestChatSystemPromptSizeBudgets(t *testing.T) {
 	headless, _ := chatSystem(&config.Config{}, "", nil, profile.Profile{}, newRegistry("", ""), io.Discard)
