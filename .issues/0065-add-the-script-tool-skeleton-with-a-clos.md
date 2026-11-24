@@ -1,7 +1,7 @@
 ---
 id: 65
 title: Add the script tool skeleton with a closed tool whitelist and RunScript bridge
-status: in-progress
+status: closed
 priority: high
 labels:
     - feature
@@ -12,6 +12,7 @@ relations:
         - 64
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
