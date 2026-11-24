@@ -1,7 +1,7 @@
 ---
 id: 69
 title: Render script sub-calls under their parent row without layout shift
-status: in-progress
+status: closed
 priority: high
 labels:
     - tui
@@ -12,6 +12,7 @@ relations:
         - 68
 created: "2026-11-24"
 updated: "2026-11-24"
+closed: "2026-11-24"
 ---
 
 ## 背景
