@@ -22,14 +22,23 @@ performance` when investigating a suspected regression. Startup, filesystem,
 terminal, and provider network timings are omitted because they vary too much
 between hosts to be useful gates.
 
-Two deterministic size measurements have deliberately generous regression
+Three deterministic size measurements have deliberately generous regression
 budgets:
 
 - the stripped binary must remain at or below 20 MiB;
-- the base prompt must remain at or below 2,048 bytes.
+- the system prompt must remain at or below 1,400 bytes for the core prompt and
+  2,600 bytes for the chat prompt, which adds the workflow and delegation
+  sections that only exist where those tools do;
+- the fixed floor — the tool schemas plus the chat system prompt with the
+  built-in skill catalog — must remain at or below 8,500 bytes. It was 8,084
+  when the budget was set (5,022 for nine tool definitions, 3,062 for the
+  prompt).
 
-The binary budget is checked by `just performance`. The prompt budget is a
-normal Go test, so CI checks it without running timing benchmarks.
+The binary budget is checked by `just performance`. The prompt and fixed-floor
+budgets are normal Go tests, so CI checks them without running timing
+benchmarks. `TestFixedPromptFloorBudget` in `cmd/neo/performance_test.go` also
+asserts that two renders of the same session state produce a byte-identical
+cacheable prefix, which is what keeps prompt caching worth anything.
 
 ## Baseline
 

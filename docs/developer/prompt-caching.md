@@ -41,3 +41,27 @@ this, so a mistake here makes a cached session compact at the wrong size.
 divides `CacheReadTokens` by the same `PromptTokens()` sum. A reporting change
 that used a different denominator would disagree with compaction about how full
 the prompt is.
+
+## Prefix Stability Contract
+
+A cache hit needs the request to start with exactly the bytes it started with
+last time. Everything below the breakpoint can change; everything above it must
+not.
+
+Frozen for the life of a session:
+
+- the tool list, its order, and each tool's schema text;
+- the base system block (`SystemBlocks[0]`, marked `Cache`);
+- every message already sent, verbatim.
+
+Allowed to change the prefix, because they start a new cache lineage:
+
+- `/clear`, which drops the transcript;
+- `/provider` and `/model`, which change the backend the prefix is cached for;
+- compaction, which rewrites the oldest messages into one summary.
+
+`cmd/neo/performance_test.go` enforces the contract: `TestFixedPromptFloorBudget`
+renders the same session state twice and fails if the base block or the tool
+schemas differ, and it budgets their combined size. Anything that would make
+the cached prefix depend on time, call count, or filesystem order breaks that
+test rather than quietly costing every turn.
