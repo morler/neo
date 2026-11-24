@@ -150,12 +150,27 @@ func (s Summarizer) summarize(ctx context.Context, head []llm.Message) (string, 
 	return text, resp.Usage, nil
 }
 
-// EstimateTokens approximates the token count of a transcript at ~4 characters
-// per token. It is only used before the first provider response, when there is
-// no reported size to use instead; it undercounts because it cannot see the
-// system prompt or the tool definitions that are sent alongside.
+// ImageTokenReserve is the estimated token cost of one inline image. Vision
+// models bill an image by its resolution, not by the size of its base64 payload:
+// a 300 KB JPEG encodes to ~400 KB of text, which at four characters per token
+// would estimate 100k tokens against an actual 1-1.5k. Counting the payload
+// therefore turned one screenshot into an instant compaction trigger and, once
+// the summary request carried the same image, a compaction loop.
+//
+// 1,500 is a conservative ceiling for a single image across the providers Neo
+// supports. This is an estimate, not a contract: the real figure arrives in
+// llm.Usage, and Compact prefers that as soon as one response has been made.
+const ImageTokenReserve = 1_500
+
+// EstimateTokens approximates the token count of a transcript. Text is counted
+// at ~4 characters per token; an image counts as ImageTokenReserve regardless of
+// how much base64 it carries. It is only used before the first provider
+// response, when there is no reported size to use instead; it undercounts
+// because it cannot see the system prompt or the tool definitions that are sent
+// alongside.
 func EstimateTokens(messages []llm.Message) int {
 	chars := 0
+	images := 0
 	for _, m := range messages {
 		for _, b := range m.Content {
 			chars += len(b.Text) + len(b.Content) + len(b.Raw)
@@ -165,9 +180,9 @@ func EstimateTokens(messages []llm.Message) int {
 				}
 			}
 			if b.Source != nil {
-				chars += len(b.Source.Data)
+				images++
 			}
 		}
 	}
-	return chars / 4
+	return chars/4 + images*ImageTokenReserve
 }

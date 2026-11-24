@@ -1,7 +1,7 @@
 ---
 id: 41
 title: Count an inline image as a fixed reserve when estimating context size
-status: open
+status: in-progress
 priority: high
 labels:
     - bug

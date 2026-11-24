@@ -65,3 +65,13 @@ renders the same session state twice and fails if the base block or the tool
 schemas differ, and it budgets their combined size. Anything that would make
 the cached prefix depend on time, call count, or filesystem order breaks that
 test rather than quietly costing every turn.
+
+## Size Estimates
+
+Before the first response there is no reported prompt size, so compaction
+estimates it from the transcript: text at four characters per token, and one
+inline image as a flat `compact.ImageTokenReserve` (1,500) tokens. Counting an
+image's base64 payload instead would estimate a single 300 KB screenshot as
+~100k tokens, which exceeds the default trigger and starts a compaction loop.
+Once a provider has reported `Usage`, `Compact` uses the real figure and the
+estimate is not consulted again.

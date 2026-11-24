@@ -47,6 +47,13 @@ All notable changes to Neo will be documented in this file.
   denominator. An empty session says so instead of printing zeros, and `/clear`
   resets the totals with the transcript.
 
+### Fixed
+
+- Context-size estimation now counts an inline image as a fixed 1,500-token
+  reserve instead of its base64 payload. A single screenshot used to estimate
+  as ~100k tokens of text, past the default compaction trigger, which started a
+  summarisation loop the moment a user attached one.
+
 ### Performance
 
 - Removed two startup stalls: the OpenRouter model catalogue now loads when
