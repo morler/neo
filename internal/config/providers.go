@@ -44,6 +44,13 @@ type CustomModel struct {
 	ID          string `yaml:"id"`
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
+	// ContextWindowTokens overrides compaction.context_window_tokens for this
+	// model. A window belongs to a model, not to a process: a 40K local model
+	// and a 200K hosted one in the same config cannot share one trigger.
+	// Omitted or zero falls back to the global key, then to the built-in
+	// default. It lives here rather than on the provider because one provider
+	// can serve models with different windows.
+	ContextWindowTokens int `yaml:"context_window_tokens"`
 }
 
 // ProviderConfig returns the custom provider declared as name. Built-in

@@ -1476,12 +1476,15 @@ func saveChatSession(ctx context.Context, store *session.Store, sess *session.Se
 	return store.Save(ctx, sess)
 }
 
+// chatCompactor builds the summarizer for one model. It is called on every
+// /model and /provider switch, which is why the window is resolved here rather
+// than captured once: the model that arrives may need a different one.
 func chatCompactor(prov llm.Provider, model string, cfg *config.Config) compact.Compactor {
-	contextWindowTokens := 0
-	if cfg != nil {
-		contextWindowTokens = cfg.Compaction.ContextWindowTokens
+	name := ""
+	if prov != nil {
+		name = prov.Name()
 	}
-	return compact.NewSummarizerForContextWindow(prov, model, contextWindowTokens)
+	return compact.NewSummarizerForContextWindow(prov, model, cfg.ContextWindowFor(name, model))
 }
 
 func sessionMetadata(sess *session.Session) session.Metadata {

@@ -58,11 +58,41 @@ func TestSubagentBackendCredentialFailureDoesNotBreakCoordinator(t *testing.T) {
 	}
 }
 
-func TestChatAgentToolPassesCompactionContextWindowToRunner(t *testing.T) {
-	cfg := &config.Config{Compaction: config.Compaction{ContextWindowTokens: 1_000_000}}
+// TestChatAgentToolResolvesTheWindowPerWorkerModel covers #108: a worker can run
+// on a different model than the coordinator, so the runner must resolve the
+// window instead of copying the coordinator's setting. The global key still
+// answers when the model has no override of its own.
+func TestChatAgentToolResolvesTheWindowPerWorkerModel(t *testing.T) {
+	cfg := &config.Config{
+		Compaction: config.Compaction{ContextWindowTokens: 200_000},
+		Providers: map[string]config.CustomProvider{
+			"local40k": {
+				Endpoint:     "http://127.0.0.1:8080/v1",
+				DefaultModel: "Bonsai2.5-27B",
+				Models: []config.CustomModel{
+					{ID: "Bonsai2.5-27B", ContextWindowTokens: 40_192},
+					{ID: "big-model"},
+				},
+			},
+		},
+	}
 	_, _, runner := chatAgentTool(&llmtest.FakeProvider{}, "worker-model", t.TempDir(), t.TempDir(), cfg)
-	if runner.ContextWindowTokens != 1_000_000 {
-		t.Fatalf("runner context window = %d, want 1000000", runner.ContextWindowTokens)
+	if runner.WindowFor == nil {
+		t.Fatal("runner has no window resolver, so a worker would inherit the coordinator's window")
+	}
+	cases := []struct {
+		provider, model string
+		want            int
+	}{
+		{"local40k", "Bonsai2.5-27B", 40_192}, // model override
+		{"local40k", "big-model", 200_000},    // declared model without an override
+		{"anthropic", "claude-opus-5", 200_000},
+		{"unknown", "whatever", 200_000},
+	}
+	for _, tc := range cases {
+		if got := runner.WindowFor(tc.provider, tc.model); got != tc.want {
+			t.Fatalf("WindowFor(%s, %s) = %d, want %d", tc.provider, tc.model, got, tc.want)
+		}
 	}
 }
 

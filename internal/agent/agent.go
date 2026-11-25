@@ -181,6 +181,14 @@ func (a *Agent) Model() string {
 
 // Backend returns a consistent provider/model pair for display and session
 // persistence.
+// Compactor returns the summarizer currently in use. It exists so a caller can
+// check that a /model switch really rebuilt the window rather than reusing the
+// previous model's setting.
+func (a *Agent) Compactor() compact.Compactor {
+	_, _, compactor := a.backend()
+	return compactor
+}
+
 func (a *Agent) Backend() (string, string) {
 	a.backendMu.RLock()
 	defer a.backendMu.RUnlock()

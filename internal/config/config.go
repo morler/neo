@@ -106,10 +106,41 @@ func (c *Config) GoalMaxAttempts() int {
 
 // Compaction configures when long transcripts are summarized.
 type Compaction struct {
-	// ContextWindowTokens is an optional manual override for the active model's
-	// context window. When omitted, chat startup uses the compact package's
-	// conservative default.
+	// ContextWindowTokens is the global fallback for the active model's context
+	// window. A model can override it through
+	// providers.<name>.models[].context_window_tokens, which is what a config
+	// serving models with different windows needs; see ContextWindowFor. When
+	// neither is set, callers fall back to the compact package's default.
 	ContextWindowTokens int `yaml:"context_window_tokens"`
+}
+
+// ContextWindowFor resolves the context window for one model, or 0 when nothing
+// is configured and the caller should use the compact package's default.
+//
+// The model's own setting wins over the global one, because a window belongs to
+// a model: a 40K local model and a 200K hosted model in the same config cannot
+// share a trigger. Resolution is by (provider, model) and has to stay in one
+// place -- the coordinator, the subagent runner and each worker all need it, and
+// three copies would drift the way the script console did in #92.
+//
+// Only custom providers can name a model's window; a built-in provider's models
+// are not declared in the config, so they fall back to the global key.
+func (c *Config) ContextWindowFor(provider, model string) int {
+	if c == nil {
+		return 0
+	}
+	if p, ok := c.ProviderConfig(provider); ok {
+		model = strings.TrimSpace(model)
+		for _, m := range p.Models {
+			if m.ID == model && m.ContextWindowTokens > 0 {
+				return m.ContextWindowTokens
+			}
+		}
+	}
+	if c.Compaction.ContextWindowTokens > 0 {
+		return c.Compaction.ContextWindowTokens
+	}
+	return 0
 }
 
 // Features toggles optional, layered capabilities. The core agent loop is never

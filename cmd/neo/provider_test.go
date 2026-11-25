@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/owainlewis/neo/internal/agent"
+	"github.com/owainlewis/neo/internal/compact"
 	"github.com/owainlewis/neo/internal/config"
 	"github.com/owainlewis/neo/internal/llm/llmtest"
 	"github.com/owainlewis/neo/internal/session"
@@ -31,6 +32,63 @@ func customProviderConfig() *config.Config {
 	}
 }
 
+// TestSetChatModelSwapsTheCompactionWindow covers the half of #108 that a config
+// test cannot: the summarizer is rebuilt on every /model, so the new model has
+// to arrive with its own window rather than inheriting the previous one.
+func TestSetChatModelSwapsTheCompactionWindow(t *testing.T) {
+	cfg := &config.Config{
+		Compaction: config.Compaction{ContextWindowTokens: 200_000},
+		Providers: map[string]config.CustomProvider{
+			"local40k": {
+				Endpoint: "http://127.0.0.1:8080/v1",
+				Models: []config.CustomModel{
+					{ID: "Bonsai2.5-27B", ContextWindowTokens: 40_192},
+				},
+			},
+		},
+	}
+	// The provider has to carry the config's name: the window is resolved by
+	// (provider, model), so a stand-in named "fake" would silently fall back to
+	// the global key and the test would assert nothing.
+	prov := &namedProvider{FakeProvider: &llmtest.FakeProvider{}, name: "local40k"}
+	ag := agent.New(agent.Config{Model: "Bonsai2.5-27B", Provider: prov})
+
+	// Start on the local model, then switch to a hosted one with no override.
+	if err := setChatModel(prov, cfg, ag, nil, false, "Bonsai2.5-27B"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := summarizerTrigger(t, ag), compact.TriggerTokensForContextWindow(40_192); got != want {
+		t.Fatalf("local model trigger = %d, want %d", got, want)
+	}
+	if err := setChatModel(prov, cfg, ag, nil, false, "claude-opus-5"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := summarizerTrigger(t, ag), compact.TriggerTokensForContextWindow(200_000); got != want {
+		t.Fatalf("hosted model trigger = %d, want %d", got, want)
+	}
+}
+
+// namedProvider lets a test give the fake provider the name a config uses, since
+// window resolution looks the model up under that name.
+type namedProvider struct {
+	*llmtest.FakeProvider
+	name string
+}
+
+func (p *namedProvider) Name() string { return p.name }
+
+// summarizerTrigger reads the trigger the agent compactor will use. A missing
+// summarizer fails the test rather than returning zero, so an agent built with
+// NoCompaction cannot pass by accident.
+func summarizerTrigger(t *testing.T, ag *agent.Agent) int {
+	t.Helper()
+	compactor := ag.Compactor()
+	s, ok := compactor.(*compact.Summarizer)
+	if !ok {
+		t.Fatalf("compactor is %T, want *compact.Summarizer", compactor)
+	}
+	return s.TriggerTokens
+}
 func TestNewProviderBuildsCustomProvider(t *testing.T) {
 	t.Setenv("LOCAL_LLM_API_KEY", "secret")
 	prov, err := newProvider(customProviderConfig(), "local")
@@ -42,6 +100,31 @@ func TestNewProviderBuildsCustomProvider(t *testing.T) {
 	}
 }
 
+// TestProviderNameMatchesItsConfigKey pins the assumption window resolution
+// rests on: ContextWindowFor is keyed by provider name, so a provider whose
+// Name() disagreed with its config key would silently lose its model override.
+// Built-in and custom backends are checked because they set the name in two
+// different places.
+func TestProviderNameMatchesItsConfigKey(t *testing.T) {
+	// Building a built-in backend needs a credential to exist; the value is
+	// never used because no request is made.
+	for _, env := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GOOGLE_API_KEY"} {
+		t.Setenv(env, "test-key")
+	}
+	cfg := customProviderConfig()
+	for _, env := range cfg.CustomAPIKeyEnvNames() {
+		t.Setenv(env, "test-key")
+	}
+	for _, name := range cfg.ProviderNames() {
+		prov, err := newProvider(cfg, name)
+		if err != nil {
+			t.Fatalf("newProvider(%q): %v", name, err)
+		}
+		if got := prov.Name(); got != name {
+			t.Fatalf("provider %q reports Name() = %q; model-level windows would be looked up under the wrong key", name, got)
+		}
+	}
+}
 func TestNewProviderReportsMissingCustomAPIKey(t *testing.T) {
 	t.Setenv("LOCAL_LLM_API_KEY", "")
 	_, err := newProvider(customProviderConfig(), "local")

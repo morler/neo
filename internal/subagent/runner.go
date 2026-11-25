@@ -25,9 +25,16 @@ type AgentRunner struct {
 	DefaultModel string
 	// ContextWindowTokens applies the configured compaction window to each
 	// fresh worker. Zero preserves compact.NewSummarizer's default behavior.
+	// It is consulted only when WindowFor does not resolve a value, which is
+	// how a worker on a different model gets that model's window rather than
+	// the coordinator's.
 	ContextWindowTokens int
-	Root                string
-	BashTimeout         time.Duration
+	// WindowFor resolves the window for the provider and model a worker will
+	// actually run on. The coordinator's compactor uses the same config method,
+	// so a child and its parent cannot disagree about when to compact.
+	WindowFor   func(provider, model string) int
+	Root        string
+	BashTimeout time.Duration
 	// Script registers the JavaScript script tool for work-mode children when
 	// the session has it enabled. It is a field rather than a lookup because the
 	// contract is over a capability the runner shares with the coordinator.
@@ -101,7 +108,13 @@ func (r *AgentRunner) RunAgentWithOptions(ctx context.Context, dir, input string
 }
 
 func (r *AgentRunner) compactor(provider llm.Provider, model string) compact.Compactor {
-	return compact.NewSummarizerForContextWindow(provider, model, r.ContextWindowTokens)
+	window := r.ContextWindowTokens
+	if r.WindowFor != nil && provider != nil {
+		if resolved := r.WindowFor(provider.Name(), model); resolved > 0 {
+			window = resolved
+		}
+	}
+	return compact.NewSummarizerForContextWindow(provider, model, window)
 }
 
 func (r *AgentRunner) registryWithOptions(dir string, opts RunOptions) *tools.Registry {

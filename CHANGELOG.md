@@ -4,6 +4,17 @@ All notable changes to Neo will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- A custom provider's model can carry its own `context_window_tokens`, which
+  overrides `compaction.context_window_tokens` for that model. A window belongs
+  to a model, and one config serving a 40K local model and a 200K hosted one
+  could not share a single trigger: at the default the local model was refused
+  long before compaction ran, and lowered to fit it every hosted model would
+  have been compacted five times sooner than needed. The window now follows a
+  `/model` switch, and a subagent running on a different model resolves that
+  model's window rather than inheriting the coordinator's.
+
 ### Changed
 
 - An unrecognised `features.codemode` value is now an error instead of the

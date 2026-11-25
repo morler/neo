@@ -42,16 +42,17 @@ func (p unavailableProvider) Complete(context.Context, llm.Request) (*llm.Respon
 
 // chatAgentTool builds the agent tool for an interactive chat session.
 func chatAgentTool(prov llm.Provider, model, cwd, root string, cfg *config.Config) (subagent.AgentTool, <-chan subagent.Event, *subagent.AgentRunner) {
-	contextWindowTokens := 0
-	if cfg != nil {
-		contextWindowTokens = cfg.Compaction.ContextWindowTokens
-	}
 	runner := &subagent.AgentRunner{
-		Provider:            prov,
-		DefaultModel:        model,
-		ContextWindowTokens: contextWindowTokens,
-		Root:                root,
-		BashTimeout:         5 * time.Minute,
+		Provider:     prov,
+		DefaultModel: model,
+		// A child may run on a different model than the coordinator, so the
+		// window is resolved when the worker is built rather than copied from
+		// the parent's setting.
+		WindowFor: func(provider, workerModel string) int {
+			return cfg.ContextWindowFor(provider, workerModel)
+		},
+		Root:        root,
+		BashTimeout: 5 * time.Minute,
 		// Same decision as the coordinator's registry (registryFor), so a
 		// session that enabled the tool does not end up with children that
 		// cannot use it.

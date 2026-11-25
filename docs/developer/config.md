@@ -59,8 +59,21 @@ The trigger is 70% of that window: 140,000 tokens at the default, and 700,000
 for a 1M-token model, so a large window is not compacted as if it were a small
 one. After a compaction, the transcript must also grow by another 20% before it
 is compacted again, which stops a summary from re-firing on the next turn just
-because the kept tail is still near the trigger. Neither number is a config
-key: `context_window_tokens` is the only compaction setting.
+because the kept tail is still near the trigger. The 70% ratio and the 20%
+growth floor are not config keys. Two settings choose the window itself, and the
+more specific one wins:
+
+| Where | Scope |
+| --- | --- |
+| `providers.<name>.models[].context_window_tokens` | one model of a custom provider |
+| `compaction.context_window_tokens` | every model in the file |
+
+The model-level key exists because a window belongs to a model. A config that
+serves a 40K local model and a 200K hosted one cannot share a single trigger: at
+the 200,000 default the local model's prompt is refused long before 140,000, and
+at 40,192 every hosted model would be compacted at 28,134. Resolution is by
+(provider, model), so it follows a `/model` switch, and a child that runs on a
+different model gets that model's window rather than the coordinator's.
 
 The embedded source, including annotated provider examples, is
 [`internal/config/defaults/neo.yaml`](https://github.com/owainlewis/neo/blob/main/internal/config/defaults/neo.yaml).
@@ -146,7 +159,7 @@ providers:
 | `endpoint` | yes | Base URL of the backend, such as `https://host/v1`. Neo appends `/chat/completions`; an endpoint that already ends with that path is used unchanged. |
 | `api_key_env` | no | Environment variable holding the key. Omit to send no `Authorization` header at all, which is the normal case for a local runtime. |
 | `default_model` | no | Used when `model` is unset and the session records none. |
-| `models` | no | Static list for the `/model` picker. It is the immediate fallback: opening `/model` also fetches `GET <endpoint>/models` for the live catalogue, and those ids replace the static entries (matching ids keep the configured name and description). A failed fetch keeps the static list and shows the error in the picker. |
+| `models` | no | Static list for the `/model` picker. It is the immediate fallback: opening `/model` also fetches `GET <endpoint>/models` for the live catalogue, and those ids replace the static entries (matching ids keep the configured name and description). A failed fetch keeps the static list and shows the error in the picker. Each entry may also carry `context_window_tokens`, which overrides the global compaction window for that model; an id from the live catalogue that is not declared here falls back to the global key. |
 | `api` | no | Wire protocol. Only `openai_compatible` exists, and it is the default. |
 
 Resolution order is fixed: the four built-in names always win, then `providers`

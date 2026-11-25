@@ -1,7 +1,7 @@
 ---
 id: 108
 title: Make the context window follow the model instead of one global value
-status: open
+status: closed
 priority: high
 labels:
     - config
@@ -11,6 +11,7 @@ relations:
         - 104
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景
@@ -93,3 +94,60 @@ CustomProvider（internal/config/providers.go:22-40）与 CustomModel（:43-47�
 ## 备注
 
 本 issue 只解决「配置粒度」。自动发现（读 llama.cpp 的 meta.n_ctx、vLLM 的 max_model_len、Ollama 的 /api/show）是另一个问题，见 #109。两者不冲突：显式配置优先，发现值作为兜底。
+
+## 修复记录（2026-11-25）
+
+### 设计决定
+
+配置粒度定为**按模型**，落在 `providers.<name>.models[].context_window_tokens`。
+
+解析优先级（`Config.ContextWindowFor(provider, model)`）：
+
+1. 该 provider 下该模型的 `context_window_tokens`
+2. 顶层 `compaction.context_window_tokens`
+3. 返回 0，由 compact 包使用内置默认 200000
+
+为什么用"按 provider 查模型"而不是给 provider 加单一数字：一个 provider 可以服务多个窗口不同的模型（本地 llama-server 切换模型就是这种情况），provider 级会重犯全局单值的老毛病。
+
+动态目录里的模型（`GET /v1/models` 拉到、但未在 `models[]` 静态声明的 id）回退到全局键，不做模糊 ID 匹配——这是有意为之：静态声明即"我知道这个模型"，未声明则不该被猜中。这条也写进了 config.md。
+
+### 改动
+
+| 文件 | 改动 |
+| --- | --- |
+| internal/config/providers.go | `CustomModel` 增加 `ContextWindowTokens` |
+| internal/config/config.go | 新增 `ContextWindowFor(provider, model)` |
+| cmd/neo/main.go | `chatCompactor` 改用解析函数（每次 /model、/provider 都重新解析） |
+| cmd/neo/subagent.go | runner 接上 `WindowFor`，不再复制协调者的全局值 |
+| internal/subagent/runner.go | 新增 `WindowFor` 字段；`compactor` 按实际 provider+model 解析，回退旧字段 |
+| internal/agent/agent.go | 新增 `Compactor()` 访问器，供测试断言切换后的窗口 |
+
+issue 里点名的风险（三处读取点各写各的）已消除：协调者、runner、worker 现在都走 `cfg.ContextWindowFor`，runner 的 `compactor` 用 worker 实际会跑的 provider+model 查表，因此子代理与父会话不可能对窗口判断不一致。
+
+### 测试
+
+- `TestContextWindowFor`：模型覆盖、已声明但无覆盖、目录中未声明的模型、内置 provider、未知 provider、id 首尾空白，六种情形。
+- `TestContextWindowForFallsThroughToZero`：nil cfg、空 cfg、只有模型无任何窗口值，均返回 0（交给默认），不乱造数字。
+- `TestSetChatModelSwapsTheCompactionWindow`：本地 40K 模型 → 阈值 28,134；切到无覆盖的云端模型 → 阈值 140,000。这是 issue 要求的"切换后随之改变"。
+- `TestChatAgentToolResolvesTheWindowPerWorkerModel`：runner 按 worker 模型解析，覆盖子代理场景。
+- `TestProviderNameMatchesItsConfigKey`：**新增的不变式守卫**。解析以 provider 名为键，若某 provider 的 `Name()` 与配置键不一致，模型级覆盖会静默失效。测试遍历所有 provider 验证这一点。
+
+最后一条是写测试时发现的真实风险：`FakeProvider.Name()` 返回 "fake"，我第一次的测试因此假通过——它其实在断言全局键。修正测试时补了这个守卫，确保生产路径（`custom.New` 用配置名、内置 provider 的 `Name()` 与键相同）不会漂移。
+
+### 真机端到端（本机 llama-server 8080，Bonsai2.5-27B，n_ctx 40192）
+
+配置：模型级 `context_window_tokens: 40192`，全局 `200000`。
+
+```
+global key: 200000
+ContextWindowFor(local40k, Bonsai2.5-27B) = 40192
+ContextWindowFor(local40k, other-model)  = 200000
+ContextWindowFor(anthropic, claude)      = 200000
+live compactor trigger = 28134 (expect 28134)
+```
+
+即：本地模型按 40,192 生效，其余一律回退全局。同一次运行的真实任务（3 个文件、500 行）exit=0、3 次请求、答案正确。
+
+### 未验证
+
+本轮没有跑出真实的压缩触发（需要把会话推到 28,134 tokens 以上），因此"压缩动作本身在 40K 窗口下是否按新阈值执行"仍只有单元级证据。压缩逻辑本身未改动（`TriggerTokensForContextWindow` 与 0.7 比例不变），风险低，但如实记录。

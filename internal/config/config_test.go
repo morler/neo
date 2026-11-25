@@ -657,6 +657,63 @@ features:
 	}
 }
 
+// TestContextWindowFor covers #108. Resolution is per (provider, model) because
+// one config can serve models with different windows, which is what made the
+// single global key wrong: a 40K local model and a 200K hosted one cannot share
+// a compaction trigger.
+func TestContextWindowFor(t *testing.T) {
+	cfg := &Config{
+		Compaction: Compaction{ContextWindowTokens: 200_000},
+		Providers: map[string]CustomProvider{
+			"local40k": {
+				Endpoint:     "http://127.0.0.1:8080/v1",
+				DefaultModel: "Bonsai2.5-27B",
+				Models: []CustomModel{
+					{ID: "Bonsai2.5-27B", ContextWindowTokens: 40_192},
+					{ID: "big-model"},
+				},
+			},
+		},
+	}
+	cases := []struct {
+		name            string
+		provider, model string
+		want            int
+	}{
+		{"model override wins", "local40k", "Bonsai2.5-27B", 40_192},
+		{"declared model without override", "local40k", "big-model", 200_000},
+		{"model not in the catalogue", "local40k", "pulled-from-catalogue", 200_000},
+		{"built-in provider", "anthropic", "claude-opus-5", 200_000},
+		{"unknown provider", "nope", "whatever", 200_000},
+		{"model id is trimmed", "local40k", "  Bonsai2.5-27B  ", 40_192},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cfg.ContextWindowFor(tc.provider, tc.model); got != tc.want {
+				t.Fatalf("ContextWindowFor(%q, %q) = %d, want %d", tc.provider, tc.model, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestContextWindowForFallsThroughToZero checks the "nothing configured" answer.
+// Zero is the signal to use the compact package default; returning a made-up
+// number here would silently override it.
+func TestContextWindowForFallsThroughToZero(t *testing.T) {
+	var nilCfg *Config
+	if got := nilCfg.ContextWindowFor("anthropic", "m"); got != 0 {
+		t.Fatalf("nil config = %d, want 0", got)
+	}
+	if got := (&Config{}).ContextWindowFor("local", "m"); got != 0 {
+		t.Fatalf("empty config = %d, want 0", got)
+	}
+	onlyModel := &Config{Providers: map[string]CustomProvider{
+		"local": {Endpoint: "http://h/v1", Models: []CustomModel{{ID: "m"}}},
+	}}
+	if got := onlyModel.ContextWindowFor("local", "m"); got != 0 {
+		t.Fatalf("no override, no global = %d, want 0", got)
+	}
+}
 func TestEmbeddedDefaultsParseWithAGoalBudget(t *testing.T) {
 	cfg, err := parseConfig(embeddedConfigYAML, "embedded:neo.yaml")
 	if err != nil {
