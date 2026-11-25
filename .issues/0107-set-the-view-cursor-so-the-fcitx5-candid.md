@@ -91,3 +91,17 @@ internal/tui/model.go:589 的 makeView 只设置了这些字段：
 CHANGELOG 在新增的 Fixed 段记录。未改布局与换行逻辑，仅坐标换算。
 
 未覆盖项（明确说明）：无图形终端，无法实测 fcitx5 候选框是否真的跟随光标；本修复基于框架契约与坐标断言，需在实际终端复验一次。
+
+## 真机确认（2026-11-25）
+
+用户在自己的图形环境下用 fcitx5 实测：候选框已跟随输入点，不再固定在右下角。此前记录里"无图形终端、无法实测候选框是否真的跟随"这一保留意见**就此撤销**。
+
+验证链条现已完整：
+
+| 层级 | 证据 |
+| --- | --- |
+| 单元 | TestViewCursorFollowsTheComposer / TestViewCursorIsAbsentWhenTheComposerIsNotFocused / TestComposerCursorSitsInsideTheInputBar |
+| 协议 | 真实 pty 中 A/B 对比修复前后二进制：修复前 [?25l 且无定位；修复后 [?25h + [20;4H，落在输入框 "› " 之后 |
+| 终端 | fcitx5 候选框跟随光标（用户实测） |
+
+结论：根因判断正确（makeView 未声明 tea.View.Cursor，叠加 textarea 虚拟光标默认开启使 Cursor() 恒为 nil），两处改动缺一不可。
