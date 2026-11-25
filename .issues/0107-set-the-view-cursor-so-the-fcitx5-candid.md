@@ -1,13 +1,14 @@
 ---
 id: 107
 title: Set the view cursor so the fcitx5 candidate window follows the input point
-status: open
+status: closed
 priority: medium
 labels:
     - bug
     - tui
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 
@@ -64,3 +65,29 @@ internal/tui/model.go:589 的 makeView 只设置了这些字段：
 
 - 复核时请顺带确认 v.KeyboardEnhancements.ReportAlternateKeys 与 IME 无冲突：Kitty 键盘协议开启时部分终端会改变输入法的组合语义，若开启光标后又出现新的 IME 异常，应记录在本 issue 而不是另开。
 - 该缺陷与 #98-#102 那批工具面问题无关，属 TUI 层，故不设 depends-on。
+
+## 修复记录（2026-11-25）
+
+核实根因齐全：makeView 从未设置 tea.View.Cursor，且 newComposer 的 textarea 默认 useVirtualCursor = true，导致 textarea.Cursor() 恒为 nil。两处都必须改，只加 View.Cursor 仍拿不到位置。
+
+改动：
+
+- internal/tui/model.go 的 newComposer：调用 SetVirtualCursor(false)，让 textarea 绘制真实终端光标并对外报告位置。
+- View()：把 composer 之上的内容（viewport、空行、status、空行）算成 above 高度，交给新增的 composerAnchor。
+- composerAnchor：把 textarea 的相对坐标换算成帧坐标，加上 styInputBar 的 padding 偏移；在 approval 待决、浏览器/选择器可见、width==0、quitting 或 textarea 未聚焦时返回 nil。
+
+实测坐标（80x24 测试模型，内容 "x"）：viewport 20 行 + status 在第 21 行 + 空行 + 输入栏文本行在第 24 行，光标 Y=24、X=4，正落在 " › x" 行，符合预期。
+
+新增测试（internal/tui/cursor_anchor_test.go）：
+
+- TestViewCursorFollowsTheComposer：断言有 cursor、落在含 "hello" 的行、列在 prompt 之后，且继续输入后列号前进。
+- TestViewCursorIsAbsentWhenTheComposerIsNotFocused：blur 与 width==0 时 cursor 为 nil。
+- TestComposerCursorSitsInsideTheInputBar：对渲染结果断言光标在该行内、在左内边距之后、不超过行宽。
+
+夹具修正：helpers_test.go 的 makeTestModel 原先用裸 textarea.New()（虚拟光标开），与生产的 newComposer 不一致，会掩盖此缺陷；改为复用 newComposer。
+
+已回退验证：注释掉 view.Cursor 赋值后，前两个测试失败（the view declares no cursor / no cursor），恢复后通过。
+
+CHANGELOG 在新增的 Fixed 段记录。未改布局与换行逻辑，仅坐标换算。
+
+未覆盖项（明确说明）：无图形终端，无法实测 fcitx5 候选框是否真的跟随光标；本修复基于框架契约与坐标断言，需在实际终端复验一次。

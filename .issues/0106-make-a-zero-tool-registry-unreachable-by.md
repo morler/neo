@@ -1,7 +1,7 @@
 ---
 id: 106
 title: Make a zero-tool registry unreachable by construction, not by caller convention
-status: open
+status: closed
 priority: medium
 labels:
     - config
@@ -10,6 +10,7 @@ relations:
         - 102
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 
@@ -62,3 +63,18 @@ updated: "2026-11-25"
 - #102 的 TestHeadlessRunRefusesSessionWithNoTools 与 TestRegistryForNoScriptSurface 继续通过。
 - 若采用方案 B/C，说明为何不改 registryFor 的签名。
 - go test ./...、go vet ./...、qlty check 通过。
+
+## 修复记录（2026-11-25）
+
+先核实了实际可达性：chatExtraTools 恒定返回 workflow 与 goal 两个工具（cmd/neo/main.go），因此交互面在 code mode + script:false 下不会得到空工具面。空面目前不可达，所以没有采用会引入永不触发错误的方案 A/B，改为"把不变式写在能失败的地方"：
+
+- 重写 registryFor 里 base = nil 的注释，写明两条调用方的不同依赖：交互面由 chatExtraTools 保证非空，headless 无 extra 因而由 headlessAgent 拒绝。
+- 新增 TestInteractiveSurfaceIsNeverEmpty，覆盖 codemode/classic × script=true/false 四种组合，用与 /codemode 相同的重建路径断言工具数非零。
+
+为什么不做方案 A/B：registryFor 改签名会波及全部调用点与测试，而当前没有任何可达路径能构造空面；用测试固定不变式成本更低，且在它被打破时会真的失败。若将来交互面允许 extra 为空，该测试会先失败，届时应升级为构造器级校验。
+
+验收核对：
+
+- 新测试四种组合全部通过。
+- #102 的 TestHeadlessRunRefusesSessionWithNoTools 与 TestRegistryForNoScriptSurface 继续通过。
+- 交互面行为未变（不拒绝启动，工具面仍为 agent/goal/script/workflow）。

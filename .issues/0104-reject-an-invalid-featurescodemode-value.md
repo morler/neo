@@ -1,7 +1,7 @@
 ---
 id: 104
 title: Reject an invalid features.codemode value instead of silently falling back
-status: open
+status: closed
 priority: high
 labels:
     - config
@@ -11,6 +11,7 @@ relations:
         - 103
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 
@@ -51,3 +52,24 @@ updated: "2026-11-25"
 - neo run 与交互面在该配置下给出同一条错误，不进入无工具状态。
 - docs/developer/config.md 与 CHANGELOG.md 已更新。
 - go test ./...、go vet ./...、qlty check 通过。
+
+## 修复记录（2026-11-25）
+
+在 internal/config/config.go 增加 validateCodeMode，于 parseConfig 中与 validateOpenAIAuth 并列调用：
+
+- 空值视为未设置，保持合法（默认面）。
+- codemode 与 classic 忽略大小写与首尾空白后合法。
+- 其余一律报错，消息列出合法值。
+
+措辞与 takeCodeModeFlag 保持一致，复用 config.CodeModeCodemode / CodeModeClassic 常量。
+
+一处有意的取舍：错误消息原本想写"或传 --codemode="，但实测无效——loadConfig 先调 config.Load()，配置坏了就走不到覆盖分支，所以改写成"修改该文件"。宁可消息诚实，也不给一条走不通的路。
+
+新增测试：
+
+- TestLoad_RejectsAnUnknownCodeMode：solo / classicc / codemodee / 带尾空白的 solo 全部被拒，且消息含合法值。
+- TestLoad_AcceptsEveryValidCodeMode：空值、codemode、classic、" Classic "、CODEmode 五种状态，并断言 ClassicCodeMode() 的结果。
+
+已回退校验确认这两个测试在修复前失败（错误为 ... was accepted）。
+
+文档：docs/developer/config.md 的 codemode 行补了一句"其它值启动时被拒绝，拼写错误不会静默改变工具面"；CHANGELOG 在 Changed 段记录该行为变化。

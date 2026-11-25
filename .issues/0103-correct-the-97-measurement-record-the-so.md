@@ -1,7 +1,7 @@
 ---
 id: 103
 title: 'Correct the #97 measurement record: the solo arm silently fell back to codemode'
-status: open
+status: closed
 priority: high
 labels:
     - performance
@@ -14,6 +14,7 @@ relations:
         - 105
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 
@@ -57,3 +58,32 @@ ClassicCodeMode() 只判断是否等于 classic，其余一律按默认处理，
 - docs/performance.md 中不再把 solo 当作可配置值表述（grep -n solo docs/performance.md 的剩余命中必须是明确标注"已移除"的历史叙述）。
 - 表与正文的样本数与合并计数自洽：总计 8 次运行、3 次合并。
 - 不新增任何产品代码改动。
+
+## 修复记录（2026-11-25）
+
+按 issue 要求只改测量记录，未动产品代码与原始计数。
+
+先从原始日志重算了 8 次运行的真实统计量（此前表格分两块写，每块数字各自成立）：
+
+| 项 | 值 |
+| --- | --- |
+| n | 8 |
+| requests 中位（范围） | 5 (4–7) |
+| input tokens 中位（范围） | 11,366 (8,750–16,419) |
+| 套件通过 | 8 / 8 |
+| 脚本调用总数 | 30 |
+| 合并调用 | 3 / 30 |
+| 有合并的运行 | 3 / 8 |
+
+改动（docs/performance.md 的 "A task set where one bash command cannot finish"）：
+
+- 两行对照表改为单行 8 次采样，删掉 "codemode (n=3)" 与 "solo (n=5)" 的分臂。
+- 删除 "only features.codemode changed ... solo (n=5, the single-tool surface)"。
+- 新增一段说明：记录时误用 solo，ad63f36 已移除该值，且非法 features.codemode 不被拒绝，于是两块跑的是同一个默认面，故合并为一个 8 次样本，并指向 #103/#104。
+- "1 of 3 in code mode and 2 of 5 in solo" 改为 "3 of 8 runs"。
+- 顺带修正一处与数据不符的表述：原文写"每个脚本调用含 3-4 次脚本调用"，实测每次脚本调用含 1–13 个子调用（中位 4）。
+- "medians are 5 requests either way" 改为按合并/未合并两类分别表述，避免再次暗示两个工具面。
+
+结论（不支持改提示词）保留，但改为基于单一工具面的 8 次采样。
+
+验收核对：docs/performance.md 里 solo 的剩余命中只有本次新增的"该值已被移除"说明。

@@ -327,18 +327,24 @@ Prompt, verbatim:
 > `go test ./...` passes, and keep each function's documented behaviour.
 
 Same provider, model and binary as the section above, prompt and fixture fixed,
-only `features.codemode` changed: `codemode` (n=3, the default surface) and
-`solo` (n=5, the single-tool surface). Merge is the same log-based signal.
+n=8 on the default code-mode surface. Merge is the same log-based signal.
 
-| arm | requests (median, range) | input tokens (median) | suite passes | merged calls | runs with a merged call |
-| --- | --- | ---: | --- | ---: | ---: |
-| codemode (n=3) | 5 (5–7) | 11,433 | 3 / 3 | 1 / 12 | 1 / 3 |
-| solo (n=5) | 5 (4–6) | 11,299 | 5 / 5 | 2 / 18 | 2 / 5 |
+| requests (median, range) | input tokens (median, range) | suite passes | merged calls | runs with a merged call |
+| --- | --- | --- | ---: | ---: |
+| 5 (4–7) | 11,366 (8,750–16,419) | 8 / 8 | 3 / 30 | 3 / 8 |
 
-This is the first non-zero merge rate recorded on any fixture: 1 of 3 in code
-mode and 2 of 5 in solo, against 0 on every earlier arm. No run finished in a
-single command; every run read before writing, and each read and write batch
-carried four to ten sub-calls, so the work could not collapse into one `sed`.
+The eight runs were recorded as two blocks, n=3 and n=5, because the second
+block was written intending to compare a second surface. It did not: the arm
+was labelled `solo`, which `ad63f36` had already removed, and an unrecognised
+`features.codemode` value is not rejected, so both blocks ran the same default
+surface. The two sets are therefore one sample of eight, which is what the
+table reports. #103 records the error and #104 the missing validation behind
+it.
+
+This is the first non-zero merge rate recorded on any fixture: 3 of 8 runs
+against 0 on every earlier arm. No run finished in a single command; every run
+read before writing. The 30 script calls carried 1 to 13 sub-calls each (median
+4), so the work could not collapse into one `sed`.
 
 The shapes separate cleanly into two classes:
 
@@ -347,11 +353,11 @@ merged     read_file x2  + run + write_file x2      (read, edit, verify, re-edit
 unmerged   read_file x4..10 | edit_file x10 | run   (batch-read, batch-write, verify)
 ```
 
-Both classes are efficient here — the medians are 5 requests either way — so
-merging is not cheaper on this task, only different. What the task changed is
-that it became possible at all: ten edits in one call is a shape the previous
-fixtures never produced, and it appeared because ten separate bodies had to be
-read before ten separate rewrites.
+Both classes are efficient here — merged and unmerged runs alike have a median
+of 5 requests — so merging is not cheaper on this task, only different. What the
+task changed is that it became possible at all: ten edits in one call is a shape
+the previous fixtures never produced, and it appeared because ten separate
+bodies had to be read before ten separate rewrites.
 
 The conclusion for the prompt: no change is supported. Merging now happens
 without new text once the task needs the read's value to decide the write, and
