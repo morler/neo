@@ -202,7 +202,8 @@ func (s Script) Run(ctx context.Context, input map[string]any) (string, error) {
 	}
 
 	rt := moejs.NewRuntime(moejs.Options{MemoryLimit: s.memoryLimit()})
-	if err := rt.SetGlobal("tools", s.globals(ctx)); err != nil {
+	console := &consoleLog{}
+	if err := s.bindGlobals(rt, ctx, console); err != nil {
 		return "", fmt.Errorf("script setup: %w", err)
 	}
 	if err := rt.SetGlobal(scriptSourceKey, source); err != nil {
@@ -220,9 +221,13 @@ func (s Script) Run(ctx context.Context, input map[string]any) (string, error) {
 
 	result, err := rt.RunScript(wrapper)
 	if err != nil {
-		return "", describeScriptError(err, source)
+		return "", console.describeFailure(err, source)
 	}
-	return s.limitOutput(scriptResult(rt, result))
+	out, convErr := scriptResult(rt, result)
+	if convErr != nil {
+		return "", convErr
+	}
+	return s.limitOutput(console.join(out))
 }
 
 // limitOutput caps what one script contributes to the transcript. The agent
@@ -231,10 +236,7 @@ func (s Script) Run(ctx context.Context, input map[string]any) (string, error) {
 //
 // The marker matches the agent's wording so a reader cannot tell which layer
 // truncated, and the suggestion is the same one that layer gives.
-func (s Script) limitOutput(result string, err error) (string, error) {
-	if err != nil {
-		return "", err
-	}
+func (s Script) limitOutput(result string) (string, error) {
 	if len(result) <= MaxOutputBytes {
 		return result, nil
 	}
@@ -282,22 +284,31 @@ func (s Script) globals(ctx context.Context) map[string]any {
 	return globals
 }
 
-// soloExtras are the globals a one-tool session has and the default one does
-// not: run(), and a console, because the engine has none and every script a
-// model writes calls console.log. They go on the global object rather than
-// inside tools, because that is where the model writes them.
-func (s Script) soloExtras(ctx context.Context, console *consoleLog) map[string]any {
-	globals := s.globals(ctx)
-	extras := map[string]any{"run": globals["run"]}
-	if console != nil {
-		object := console.object()
-		extras["console"] = object
+// consoleGlobals is the console every script gets, in both modes. The engine has
+// none, and every model writing JavaScript reaches for console.log first; its
+// absence reads as a broken tool rather than a missing one, and whatever was
+// printed is lost. They go on the global object because that is where the model
+// writes them, and eval in the default path can only see globals.
+func (s Script) consoleGlobals(console *consoleLog) map[string]any {
+	if console == nil {
+		return nil
+	}
+	object := console.object()
+	return map[string]any{
+		"console": object,
 		// print is the first verb many models reach for and costs one line; a
 		// ReferenceError here is a turn spent on the interpreter rather than the
 		// task.
-		extras["print"] = object["log"]
+		"print": object["log"],
 	}
-	return extras
+}
+
+// soloExtras are the globals only a one-tool session has. The console is not
+// here: it belongs to every script, so splitting it out is what keeps the two
+// modes from drifting.
+func (s Script) soloExtras(ctx context.Context) map[string]any {
+	globals := s.globals(ctx)
+	return map[string]any{"run": globals["run"]}
 }
 
 // subCallCounter numbers the calls one script makes. It is not shared and not
@@ -511,7 +522,7 @@ func (s Script) runInSession(ctx context.Context, wrapper *moejs.Script, source 
 		return "", convErr
 	}
 	sess.used = true
-	return s.limitOutput(out, nil)
+	return s.limitOutput(out)
 }
 
 // soloSpec is the whole tool surface in single-tool mode, so its description
@@ -539,18 +550,23 @@ Assign to globalThis (globalThis.cwd = ...) for state a later call needs; each c
 	}
 }
 
-// bindGlobals installs this call's namespace. In solo mode it also installs the
-// bare run() a one-tool session reads.
-func (s Script) bindGlobals(rt *moejs.Runtime, ctx context.Context, soloConsole *consoleLog) error {
+// bindGlobals installs this call's namespace. The console is bound in both
+// modes; run() only in solo, because the default surface has bash for programs.
+func (s Script) bindGlobals(rt *moejs.Runtime, ctx context.Context, console *consoleLog) error {
 	if err := rt.SetGlobal("tools", s.globals(ctx)); err != nil {
 		return err
 	}
-	if s.Solo {
-		extras := s.soloExtras(ctx, soloConsole)
-		for name, value := range extras {
-			if err := rt.SetGlobal(name, value); err != nil {
-				return err
-			}
+	for name, value := range s.consoleGlobals(console) {
+		if err := rt.SetGlobal(name, value); err != nil {
+			return err
+		}
+	}
+	if !s.Solo {
+		return nil
+	}
+	for name, value := range s.soloExtras(ctx) {
+		if err := rt.SetGlobal(name, value); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -620,31 +636,16 @@ func (s Script) runSolo(ctx context.Context, source string) (string, error) {
 
 	result, err := rt.RunScript(script)
 	if err != nil {
-		// What the script printed before failing is often the useful part.
-		if printed := console.drain(); printed != "" {
-			return "", fmt.Errorf("%s\n(printed before the error)\n%s", describeScriptError(err, source), printed)
-		}
-		return "", describeScriptError(err, source)
+		return "", console.describeFailure(err, source)
 	}
 	sess.used = true
 	out, convErr := scriptResult(rt, result)
 	if convErr != nil {
 		return "", convErr
 	}
-	if printed := console.drain(); printed != "" {
-		if out == "" {
-			out = printed
-		} else {
-			out = printed + "\n" + out
-		}
-	}
-	return s.limitOutput(out, nil)
+	return s.limitOutput(console.join(out))
 }
 
-// consoleTool is the console a solo script writes to. The engine has none, and a
-// script written the way every other JavaScript script is written calls
-// console.log, so its absence reads as a broken tool rather than a missing one.
-//
 // Output is collected per call and prepended to the result, because the tool's
 // value is the only channel a script has back to the model.
 type consoleLog struct {
@@ -694,4 +695,29 @@ func (c *consoleLog) object() map[string]any {
 		console[name] = moejs.NativeFunc(write)
 	}
 	return console
+}
+
+// join puts what the script printed in front of its value. The console is the
+// only channel besides the value itself, so dropping it loses work the model did
+// on purpose.
+func (c *consoleLog) join(value string) string {
+	printed := c.drain()
+	switch {
+	case printed == "":
+		return value
+	case value == "":
+		return printed
+	default:
+		return printed + "\n" + value
+	}
+}
+
+// describeFailure names the error and keeps what was printed before it, which is
+// usually why the model printed anything.
+func (c *consoleLog) describeFailure(err error, source string) error {
+	described := describeScriptError(err, source)
+	if printed := c.drain(); printed != "" {
+		return fmt.Errorf("%w\n(printed before the error)\n%s", described, printed)
+	}
+	return described
 }
