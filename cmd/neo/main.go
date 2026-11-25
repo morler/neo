@@ -320,7 +320,7 @@ func takeScriptFlag(args []string) ([]string, *bool, error) {
 	return out, on, nil
 }
 
-// codeModeOverride carries --codemode=solo into loadConfig, the same way
+// codeModeOverride carries --codemode=<mode> into loadConfig, the same way
 // scriptOverride carries --script. It is written once at startup.
 var codeModeOverride string
 
@@ -515,11 +515,16 @@ func registryFor(cfg *config.Config, cwd, root string, extra ...tools.Tool) *too
 		base := []tools.Tool{code}
 		if !scripted {
 			// features.script: false in code mode leaves only the coordinating
-			// tools: a session that delegates but acts on nothing itself. That is
-			// only a session if there are coordinating tools to leave; headless
-			// passes none, so it would run with no tools at all. headlessAgent
-			// refuses that combination instead of letting the run degrade into
-			// prose advice.
+			// tools: a session that delegates but acts on nothing itself. The
+			// result is a usable session only when extra is non-empty, and two
+			// callers depend on that differently:
+			//
+			//   - chatExtraTools always returns workflow and goal, so the
+			//     interactive surface is never empty. TestInteractiveSurfaceIs
+			//     NeverEmpty pins that across both surfaces and both script
+			//     settings.
+			//   - headless passes no extra tools, so headlessAgent refuses the
+			//     combination rather than let the run degrade into prose advice.
 			base = nil
 		}
 		return tools.NewRegistry(append(base, extra...)...)

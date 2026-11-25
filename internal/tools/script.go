@@ -601,7 +601,7 @@ Assign to globalThis (globalThis.cwd = ...) for state a later call needs; each c
 }
 
 // bindGlobals installs this call's namespace. The console is bound in both
-// modes; run() only in solo, because the default surface has bash for programs.
+// modes; run() only in code mode, because the classic surface has bash.
 func (s Script) bindGlobals(rt *moejs.Runtime, ctx context.Context, console *consoleLog) error {
 	if err := rt.SetGlobal("tools", s.globals(ctx)); err != nil {
 		return err
@@ -709,7 +709,7 @@ func (c *consoleLog) drain() string {
 	return out
 }
 
-// takeConsole builds the console a solo script writes to. The engine has none,
+// takeConsole builds the console a script writes to. The engine has none,
 // and a script written the way every other JavaScript script is written calls
 // console.log, so its absence reads as a broken tool rather than a missing one.
 func (s Script) takeConsole() *consoleLog { return &consoleLog{} }
