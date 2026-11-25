@@ -1,7 +1,7 @@
 ---
 id: 89
 title: Resolve the contradiction between the base prompt's batch-one-response rule and script being a serial barrier
-status: in-progress
+status: closed
 priority: low
 labels:
     - llm
@@ -12,6 +12,7 @@ relations:
         - 87
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景
