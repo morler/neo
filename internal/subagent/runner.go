@@ -107,7 +107,7 @@ func (r *AgentRunner) registryWithOptions(dir string, opts RunOptions) *tools.Re
 	// read inside a child's script is the same read its later edit consults.
 	files := append([]tools.Tool{tools.Grep{Root: r.Root}, tools.Glob{Root: r.Root}},
 		tools.NewFileTools()...)
-	base := append([]tools.Tool{tools.Bash{Timeout: bashTimeout, CWD: dir}}, files...)
+	base := append([]tools.Tool{tools.Bash{Timeout: bashTimeout, CWD: dir, ScriptAvailable: r.Script}}, files...)
 	if r.Script {
 		base = append(base, tools.NewScript(files))
 	}

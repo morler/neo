@@ -11,6 +11,7 @@ import (
 	"github.com/owainlewis/neo/internal/profile"
 	"github.com/owainlewis/neo/internal/skills"
 	"github.com/owainlewis/neo/internal/subagent"
+	"github.com/owainlewis/neo/internal/tools"
 	"github.com/owainlewis/neo/internal/workflow"
 )
 
@@ -46,12 +47,13 @@ const fixedFloorByteBudget = 8_500
 // scriptFloorByteBudget covers the same surface with `features.script` on:
 // measured 2026-11-24 at 9,499 bytes (5,873 tool definitions + 3,626 prompt),
 // then 9,555 on 2026-11-25 when the judgement moved from file count to
-// dependency (5,873 + 3,682). The script schema is 851 and its prompt section
-// is 620, which is the section's own length rather than the difference from the
-// 3,000 chat budget. The ceiling was 9,500
-// before the prompt was rewritten around task shapes with a runnable example;
-// that left one byte of room, which would have made the next edit a failing
-// test rather than a decision. Rounded up to the next 500, as before.
+// dependency (5,873 + 3,682), then 9,653 when bash's description gained one
+// sentence naming the script decision point (5,971 + 3,682, #87). The script
+// schema is 851 and its prompt section is 620, which is the section's own
+// length rather than the difference from the 3,000 chat budget. The ceiling was
+// 9,500 before the prompt was rewritten around task shapes with a runnable
+// example; that left one byte of room, which would have made the next edit a
+// failing test rather than a decision. Rounded up to the next 500, as before.
 const scriptFloorByteBudget = 10_000
 
 func TestChatSystemPromptSizeBudgets(t *testing.T) {
@@ -242,5 +244,35 @@ func TestScriptToolIsOffByDefault(t *testing.T) {
 	}
 	if _, ok := registryFor(&config.Config{}, "", "").Get("script"); ok {
 		t.Fatal("default registry contains the script tool")
+	}
+}
+
+// TestBashHintFollowsTheScriptTool is the composition contract for the hint in
+// bash's description: registryFor is the one place that decides, so the text
+// the model reads about bash and the availability of script cannot disagree.
+func TestBashHintFollowsTheScriptTool(t *testing.T) {
+	defaultBash, ok := registryFor(&config.Config{}, "", "").Get("bash")
+	if !ok {
+		t.Fatal("default registry has no bash")
+	}
+	on := true
+	cfg := &config.Config{}
+	cfg.Features.Script = &on
+	scriptedBash, ok := registryFor(cfg, "", "").Get("bash")
+	if !ok {
+		t.Fatal("scripted registry has no bash")
+	}
+
+	// Compared against the tool itself rather than a literal: this test is
+	// about which description the registry selects, and the literal is pinned
+	// in internal/tools.
+	if off, want := defaultBash.Spec().Description, (tools.Bash{}).Spec().Description; off != want {
+		t.Fatalf("default description = %q, want the plain one %q", off, want)
+	}
+	if got, want := scriptedBash.Spec().Description, (tools.Bash{ScriptAvailable: true}).Spec().Description; got != want {
+		t.Fatalf("scripted description = %q, want the hinted one %q", got, want)
+	}
+	if defaultBash.Spec().Description == scriptedBash.Spec().Description {
+		t.Fatal("the hint did not reach the scripted registry")
 	}
 }

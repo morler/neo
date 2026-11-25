@@ -14,7 +14,8 @@ All notable changes to Neo will be documented in this file.
   deadline, the engine's memory limit, and the 64 KiB tool-output cap, and their
   sub-calls appear as rows under the script's own receipt. It is off by default:
   a measurement found no task where the model chose it over `bash`, and it costs
-  1,471 bytes per request (851 schema, 620 prompt). Turn it on with `--script`,
+  1,569 bytes per request (949 schema, 620 prompt), including one sentence in
+  `bash`'s description that points at the tool. Turn it on with `--script`,
   `features.script: true`, or `/codemode on` in chat. `/codemode status` reports
   how many times this session chose the tool, so the cost can be weighed against
   its use.

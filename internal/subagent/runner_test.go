@@ -251,3 +251,28 @@ func TestScriptSharesReadStateWithTheChildsFileTools(t *testing.T) {
 		t.Fatalf("edit error = %v, want the stale-read refusal", err)
 	}
 }
+
+// TestBashHintFollowsTheChildsScriptTool keeps the child's bash description in
+// step with the child's own tool list. A child that can script but reads the
+// plain bash description is the same blind decision point #87 fixed for the
+// coordinator, one level down.
+func TestBashHintFollowsTheChildsScriptTool(t *testing.T) {
+	dir := t.TempDir()
+	plain := NewSupervisor(&AgentRunner{Root: dir}, DefaultBudget()).childRegistry(dir)
+	scripted := NewSupervisor(&AgentRunner{Root: dir, Script: true}, DefaultBudget()).childRegistry(dir)
+
+	off, ok := plain.Get("bash")
+	if !ok {
+		t.Fatal("child registry has no bash")
+	}
+	on, ok := scripted.Get("bash")
+	if !ok {
+		t.Fatal("scripted child registry has no bash")
+	}
+	if off.Spec().Description == on.Spec().Description {
+		t.Fatal("the hint did not reach a child that can script")
+	}
+	if !slices.Contains(scripted.Names(), "script") {
+		t.Fatalf("hinted child has no script tool: %v", scripted.Names())
+	}
+}

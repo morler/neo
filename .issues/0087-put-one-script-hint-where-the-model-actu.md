@@ -1,7 +1,7 @@
 ---
 id: 87
 title: Put one script hint where the model actually chooses a tool, not only in the system prompt
-status: open
+status: in-progress
 priority: low
 labels:
     - llm
@@ -45,3 +45,37 @@ updated: "2026-11-25"
 - `TestFixedPromptFloorBudget` 字节数不变；`TestScriptFloorBudget` 通过。
 - `go test ./internal/tools ./cmd/neo` 通过。
 - 合入后用 #83 的任务集复测一次，数据写进本 issue；不改 `scriptCapability` 本身（那是 #84 的范围），以便归因。
+
+## 实施记录（2026-11-25）
+
+已实现，`script` 之外无任何工具描述变动。
+
+**改动**：
+- `internal/tools/bash.go`：抽出 `bashDescription` 常量（原有文本，逐字节不变）与 `bashScriptHint`（98 B）；`Bash` 新增 `ScriptAvailable bool`，仅在为真时追加提示。
+- `cmd/neo/main.go` 的 `registryFor`：把 `cfg.ScriptEnabled()` 提取为 `scripted`，同时喂给 `tools.Bash{ScriptAvailable: scripted}` 与 `script` 的注册。仍是唯一决定处。
+- `internal/subagent/runner.go` 的 `registryWithOptions`：同样用 `r.Script` 决定，否则"子代理能写脚本却读到朴素 bash 描述"会复现同一个盲点。
+
+**提示文案**（98 B，只说"何时"，不复述白名单）：
+
+> When the next step depends on this output, do it inside one script call instead of a second turn.
+
+**实测字节**（`go test ./cmd/neo -run 'TestFixedPromptFloorBudget|TestScriptFloorBudget' -v`）：
+
+| 项 | 改前 | 改后 |
+| --- | ---: | ---: |
+| 默认固定地板 | 8,084 | **8,084（不变）** |
+| script 地板 | 9,555 | 9,653 |
+| 其中 tools | 5,873 | 5,971 |
+| 其中 prompt | 3,682 | 3,682（不变） |
+
+增量 98 B 全部落在 `script` 开启的那一臂，默认会话零成本，符合本任务"默认 floor 不得增长"的硬约束。
+
+**测试**：
+- `TestBashDescriptionIsUnchangedWithoutScript`：关闭时描述与字面量逐字节相同（字面量写死，逼迫常量改动必须是一次显式决定）。
+- `TestBashDescriptionNamesTheDecisionPoint`：开启时以 `bashDescription` 为前缀，含 "next step depends" 与 "script"，且不含 `tools.`/白名单工具名。
+- `TestBashHintFollowsTheScriptTool`（cmd/neo）：`registryFor` 在两臂分别选出朴素/带提示的描述。
+- `TestBashHintFollowsTheChildsScriptTool`（subagent）：子代理两臂同样分离。
+
+**文档同步**：`docs/performance.md`、`docs/design/token-budget.md`、`docs/developer/config.md`、`docs/developer/tools.md`、`CHANGELOG.md`、CLI `--script` 帮助、`/codemode status` 文案，统一为 1,569 B（949 schema + 620 prompt），并注明其中 98 B 只在 script 注册时出现。顺带把 issue 正文里过时的 564 B / 9,499 换成 620 B / 9,653。
+
+**未做**：任务集复测。它需要真实 provider 与多次运行（#86 已证明 n=3 无法分辨 token 差异），代价高于改动本身，留作下一步；#91 的启动条件依赖这次复测的结果，不宜由本任务顺带假装完成。

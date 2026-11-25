@@ -35,7 +35,7 @@ budgets:
   built-in skill catalog — must remain at or below 8,500 bytes. It is 8,084
   (5,022 for nine tool definitions, 3,062 for the prompt);
 - the same floor with the opt-in script tool enabled must remain at or below
-  10,000 bytes. It is 9,555 (5,873 and 3,682).
+  10,000 bytes. It is 9,653 (5,971 and 3,682).
 
 Re-measure the binary before adding a dependency: the ceiling is generous on
 purpose, and a second engine-sized cost would use it up.
@@ -70,13 +70,18 @@ exists:
 | **Fixed floor** | **8,084** | **~2,020** |
 
 These are the default surface, which has no script tool. Turning the tool on
-adds 851 bytes of schema and 620 bytes of prompt, for a floor of 9,555; that is
+adds 949 bytes of schema and 620 bytes of prompt, for a floor of 9,653; that is
 `scriptFloorByteBudget` (10,000), checked separately by `TestScriptFloorBudget`.
 The prompt section grew when it was rewritten around task shapes with a worked
 example, which is what an opt-in tool has to do to be chosen at all. It grew
 again by 56 bytes on 2026-11-25 when the judgement moved from file count to
 dependency (`TestScriptCapabilityNamesDependencyNotVolume`); that is the same
 section restated, not a new feature.
+
+The scripted arm's schema moved 851 → 949 on 2026-11-25 when bash's description
+gained one sentence pointing at the script tool (#87). It appears only in that
+arm, because it names a decision point a session without the tool cannot act on
+and would only pay for.
 
 The schema grew by 147 bytes on 2026-11-24 when the description was corrected:
 it had claimed a script could not write, long after write_file and edit_file

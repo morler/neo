@@ -31,18 +31,37 @@ const DefaultBashTimeout = 2 * time.Minute
 // over-eager number still runs the command instead of wasting a turn.
 const MaxBashTimeout = 10 * time.Minute
 
+// bashDescription is the whole description a session without the script tool
+// sees, kept as a constant so a test can pin it byte for byte. The hint below
+// is paid for on every request, so only a session that can act on it pays.
+const bashDescription = "Run a shell command via /bin/bash -c. Returns bounded combined stdout+stderr, retaining the start and end when truncated. Use for git, tests, builds, file inspection beyond Read."
+
+// bashScriptHint names the one decision a script exists to make: the next step
+// depends on this command's output. It states when, not how, because the
+// script's own description lists what it can call and repeating that list is
+// how the two drift apart.
+const bashScriptHint = " When the next step depends on this output, do it inside one script call instead of a second turn."
+
 type Bash struct {
 	Timeout time.Duration
 	CWD     string
+	// ScriptAvailable adds the hint that one script call can act on this
+	// command's output. It is set by the composition root that registers the
+	// script tool, so a session without that tool pays nothing for the hint.
+	ScriptAvailable bool
 }
 
 func (Bash) Name() string { return "bash" }
 
 func (b Bash) Spec() llm.ToolSpec {
 	maxSeconds := int(b.maxTimeout().Seconds())
+	description := bashDescription
+	if b.ScriptAvailable {
+		description += bashScriptHint
+	}
 	return llm.ToolSpec{
 		Name:        "bash",
-		Description: "Run a shell command via /bin/bash -c. Returns bounded combined stdout+stderr, retaining the start and end when truncated. Use for git, tests, builds, file inspection beyond Read.",
+		Description: description,
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

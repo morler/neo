@@ -400,7 +400,7 @@ AGENT PROMPTS:
 OPT-IN TOOLS:
   --script           Register the JavaScript script tool for this run.
   --no-script        Leave it unregistered, overriding features.script.
-                     The tool costs ~1.4 KB of prompt and schema per request,
+                     The tool costs ~1.5 KB of prompt and schema per request,
                      so it is off unless asked for. In chat,
                      /codemode on|off|status changes it and writes the choice
                      to features.script.
@@ -437,16 +437,18 @@ func newRegistry(cwd, root string, extra ...tools.Tool) *tools.Registry {
 // chose it on its own.
 //
 // When it is on, the script tool receives the same file tools the registry
-// holds, so a read inside a script records the file a later edit checks.
+// holds, so a read inside a script records the file a later edit checks, and
+// bash points at it from the place the model reads before choosing a tool.
 func registryFor(cfg *config.Config, cwd, root string, extra ...tools.Tool) *tools.Registry {
+	scripted := cfg != nil && cfg.ScriptEnabled()
 	files := append([]tools.Tool{
 		tools.Grep{Root: root},
 		tools.Glob{Root: root},
 	}, tools.NewFileTools()...)
 	base := append([]tools.Tool{
-		tools.Bash{Timeout: tools.DefaultBashTimeout, CWD: cwd},
+		tools.Bash{Timeout: tools.DefaultBashTimeout, CWD: cwd, ScriptAvailable: scripted},
 	}, files...)
-	if cfg != nil && cfg.ScriptEnabled() {
+	if scripted {
 		base = append(base, tools.NewScript(files))
 	}
 	return tools.NewRegistry(append(base, extra...)...)

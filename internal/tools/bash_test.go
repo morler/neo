@@ -377,3 +377,36 @@ func TestBash_SpecAdvertisesAHostDefaultAboveTheCeiling(t *testing.T) {
 		t.Fatalf("description should name the raised maximum, got %q", desc)
 	}
 }
+
+// TestBashDescriptionIsUnchangedWithoutScript pins the default surface, which
+// pays for this description on every request without being able to act on the
+// hint. The literal is spelled out rather than compared to the constant so an
+// edit to the constant has to be a deliberate edit here too.
+func TestBashDescriptionIsUnchangedWithoutScript(t *testing.T) {
+	want := "Run a shell command via /bin/bash -c. Returns bounded combined stdout+stderr, retaining the start and end when truncated. Use for git, tests, builds, file inspection beyond Read."
+	if got := (Bash{}).Spec().Description; got != want {
+		t.Fatalf("description without script = %q, want %q", got, want)
+	}
+}
+
+// TestBashDescriptionNamesTheDecisionPoint covers the hint's existence and its
+// content: it names the dependency shape and points at the script tool, and it
+// carries nothing else. Anything longer is paid for on every request, and
+// restating what a script may call is how this text and the tool drift apart.
+func TestBashDescriptionNamesTheDecisionPoint(t *testing.T) {
+	description := Bash{ScriptAvailable: true}.Spec().Description
+	if !strings.HasPrefix(description, bashDescription) {
+		t.Fatalf("description=%q does not extend %q", description, bashDescription)
+	}
+	hint := strings.TrimPrefix(description, bashDescription)
+	for _, want := range []string{"next step depends", "script"} {
+		if !strings.Contains(hint, want) {
+			t.Fatalf("hint %q lacks %q", hint, want)
+		}
+	}
+	for _, unwanted := range []string{"tools.", "read_file", "write_file", "grep"} {
+		if strings.Contains(hint, unwanted) {
+			t.Fatalf("hint %q repeats the whitelist with %q", hint, unwanted)
+		}
+	}
+}
