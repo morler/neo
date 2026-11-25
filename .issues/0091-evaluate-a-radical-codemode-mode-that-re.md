@@ -43,7 +43,7 @@ updated: "2026-11-25"
 
 - 默认 chat 工具 schema 合计 5,022 B；其中 `bash`+`read_file`+`write_file`+`edit_file`+`grep`+`glob` = 2,893 B，`script` = 851 B。
 - 默认固定地板 8,084 B（tools 5,022 + prompt 3,062）；`script` 开启后 9,555 B（tools 5,873 + prompt 3,682）。
-- `scriptCapability` 实测 620 B。**注意**：`cmd/neo/main.go:110` 附近注释与 `docs/developer/config.md` 里写的 682 B 与实测不一致，执行本任务时顺带核对，不要在两处继续漂移。
+- `scriptCapability` 实测 620 B，`script` schema 851 B，合计 1,471 B。**已修正（提交 `00e573a`）**：此前 `cmd/neo/performance_test.go`、`docs/performance.md`、`docs/design/token-budget.md`、`docs/developer/config.md`、`docs/developer/tools.md`、CLI 帮助与 `CHANGELOG.md` 一致写着 682 B / 1,533 B，均按实测改为 620 B / 1,471 B；同一句里"重写涨 78 B"也纠正为 56 B（564 → 620）。地板总数原本就是对的，682 疑似用 3,682 − 3,000 算出而非实测。本任务开始前**无需**再处理此项。
 - 由此推算：把六个文件/命令工具换成单个 `script`，工具面约 2,980 B、prompt 3,682 B，合计约 6,662 B，即**约 −1.4 KB（≈ −355 tokens）每请求**。这是推算值，不是实测值，且前提是 `script` 的 schema 在加上 `run()`/持久语义后不增长——实际会增长，所以真实收益小于此数。
 
 该量级（约 4% 的固定地板）本身不足以证明一次工具面重构，这是本任务必须用真实任务而非字节数来判定的原因。
@@ -85,7 +85,7 @@ updated: "2026-11-25"
 - 新增模式有独立预算常量与测试，写清实测值，不挤占默认模式的余量。
 - 判据表含：任务、模式、`requests`、input、`eval` 调用次数、是否合并、是否验证通过、结论；数据来自 NEO_LOG 与 `neo run --json`，不靠主观判断。
 - 结论只有“保留”“补能力”“回退”三种之一，写进 `docs/performance.md` 与 `docs/design/js-batch-tool.md` §4（“Not stateful across calls”一条会因此失效，必须同步修订），不出现模糊措辞。
-- `docs/developer/config.md`、`docs/developer/tools.md`、`CHANGELOG.md` 与新行为一致；顺带修正 682 B / 620 B 的漂移。
+- `docs/developer/config.md`、`docs/developer/tools.md`、`CHANGELOG.md` 与新行为一致。
 - `go test ./...` 通过；`qlty check` 退出码为 0 后再提交。
 
 ## 不在范围内
