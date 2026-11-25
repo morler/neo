@@ -1,7 +1,7 @@
 ---
 id: 94
 title: Let script tools accept a bare string argument instead of failing on the object shape
-status: open
+status: in-progress
 priority: low
 labels:
     - llm
@@ -46,3 +46,13 @@ tools.glob("*")  -> Error: glob takes an object of named arguments, not string; 
 - 采用方案 B 时：单测断言 solo 提示词含该句；记录 `TestSoloFloorBudget` 的新字节数并在文档同步。
 - 默认模式行为不变（默认模式的 `script` 也走 `hostTool`，需确认不意外改变其语义）。
 - `go test ./...` 通过；`qlty check` 退出码为 0。
+
+## 实施记录（2026-11-25）
+
+采用方案 A（改代码，不加提示词字节）。
+
+`hostTool` 现在多收一个 `required` 参数，由 `globals` 在注册时显式给出（`read_file`/`write_file`/`edit_file` → `path`，`grep`/`glob` → `pattern`）。参数是字符串时绑定到该字段；是对象时行为不变；其他类型报错并给出正确写法。
+
+这条映射与白名单同层：新增工具必须显式写一个字段名，否则它拒绝字符串参数。
+
+测试覆盖：三种工具的单字符串调用与对象形式结果一致；`write_file("x")` 仍报缺 `content`（两个必填字段，无法猜）；默认模式与 solo 行为相同。

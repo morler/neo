@@ -223,12 +223,23 @@ func searchExitError(ctx context.Context, err error, stderr string) error {
 	}
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
-		if exit.ExitCode() == 1 {
+		// 1 is "nothing matched". 2 is an error, except for one case that is not
+		// the model's fault: with no path argument ripgrep searches the working
+		// directory, and when that holds no files at all it exits 2 with an
+		// explanation instead of 1. Passing "." asks the same question and gets
+		// the "nothing matched" answer, so the two spellings disagreed.
+		if exit.ExitCode() == 1 || exit.ExitCode() == 2 && isNoFilesSearched(stderr) {
 			return nil
 		}
 		return fmt.Errorf("%s: %s", SearchBinary, strings.TrimSpace(stderr))
 	}
 	return err
+}
+
+// isNoFilesSearched reports ripgrep's "there was nothing to search" message,
+// which is a result rather than a failure: an empty directory has no matches.
+func isNoFilesSearched(stderr string) bool {
+	return strings.Contains(stderr, "No files were searched")
 }
 
 // rebaseSearchPath makes one search result path absolute. grep and glob emit

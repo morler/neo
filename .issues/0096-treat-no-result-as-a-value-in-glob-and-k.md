@@ -1,7 +1,7 @@
 ---
 id: 96
 title: Treat no-result as a value in glob and keep tool-native errors out of script output
-status: open
+status: in-progress
 priority: low
 labels:
     - bug
@@ -44,3 +44,13 @@ Running with --debug will show why files are being skipped.
 - 单测：`read_file` 路径不存在时的错误文案包含文件名，且不含内部实现细节。
 - 默认模式的既有测试全部通过：这一改动会影响顶层 `grep`/`glob` 的调用，需确认 `docs/developer/tools.md` 的描述仍然准确。
 - `go test ./...` 通过；`qlty check` 退出码为 0。
+
+## 实施记录（2026-11-25）
+
+问题定位与 issue 描述略有不同，记录实际原因。
+
+`glob` 本来就正确（无结果显示 `"no matches"`）。真正出错的是 `grep`：它**不带 path 参数**时 ripgrep 搜索工作目录，而工作目录**一个文件都没有**时 ripgrep 退出码是 2（不是代表"无匹配"的 1），stderr 是 `No files were searched...`。`searchExitError` 把退出码 2 一律当成错误，于是把 ripgrep 的原文回吐给模型。
+
+对比验证：同一个空目录，`rg --files x` 退出 2，`rg --files x .` 退出 1——多一个 `.` 就是"无匹配"而不是"错误"。也就是说两种等价写法给出了不同结论。
+
+修法：`searchExitError` 在退出码 2 **且** stderr 含 `No files were searched` 时返回 nil。放宽范围刻意收窄，`TestGrepStillReportsRealErrors` 用非法正则确认真正的失败仍然报错。

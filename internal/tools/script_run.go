@@ -145,8 +145,12 @@ func (s Script) runTool(ctx context.Context, calls *subCallCounter) moejs.Native
 			report(runErr.Error(), true)
 			return engine.Undefined(), runErr
 		}
+		// A non-zero exit is the result of the command, not a failure of the call:
+		// run() exists so a script can branch on a failing check. Reporting it as
+		// an error made every failing `go test` inflate the session's tool-error
+		// count, which is what the #91 measurement read as a mode defect.
 		text := result.summary()
-		report(text, result.Code != 0)
+		report(text, false)
 
 		value, convErr := r.FromGo(map[string]any{
 			"stdout": result.Stdout,

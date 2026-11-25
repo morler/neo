@@ -160,20 +160,29 @@ func TestSoloRunAcceptsEveryNumericTimeout(t *testing.T) {
 	}
 }
 
-// TestSoloToolArgumentShapeIsTaught is the other measured failure. Calling
-// tools.glob("*") instead of tools.glob({pattern: "*"}) reported "missing
-// required input: pattern", which sends the model to the arguments when the call
-// itself was the wrong shape.
+// TestSoloToolArgumentShapeIsTaught is the other measured failure, after #94
+// changed the answer. tools.glob("*") used to report "missing required input:
+// pattern", which sent the model to the arguments when the call shape was wrong;
+// now the string binds to that tool's one required field, and a tool that cannot
+// be guessed says so in terms the model can act on.
 func TestSoloToolArgumentShapeIsTaught(t *testing.T) {
 	s := soloScript(t, t.TempDir())
-	_, err := s.Run(context.Background(), map[string]any{"source": `tools.glob("*")`})
-	if err == nil {
-		t.Fatal("a bare string argument was accepted")
+	out, err := s.Run(context.Background(), map[string]any{"source": `tools.glob("*")`})
+	if err != nil {
+		t.Fatalf("a bare string argument was rejected: %v", err)
 	}
-	for _, want := range []string{"glob", "object", "glob({...})"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error %q does not explain the shape with %q", err, want)
-		}
+	if out != "no matches" {
+		t.Fatalf("glob(*) = %q, want the empty-directory answer", out)
+	}
+
+	// write_file needs a path and a body, so the string cannot stand for it; the
+	// error has to name the missing field rather than the call shape.
+	_, err = s.Run(context.Background(), map[string]any{"source": `tools.write_file("out.txt")`})
+	if err == nil {
+		t.Fatal("an ambiguous bare string was accepted")
+	}
+	if !strings.Contains(err.Error(), "content") {
+		t.Fatalf("error %q does not name what is missing", err)
 	}
 }
 
@@ -208,5 +217,133 @@ func TestSoloConsoleOutputSurvivesAFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "about to fail") || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("error %q lost the printed line or the cause", err)
+	}
+}
+
+// TestSoloFailingProgramIsNotAToolError separates the command's result from the
+// call's outcome. run() exists so a script can branch on a failing check, and the
+// schema says a non-zero code is data; reporting it as an error made every
+// failing `go test` inflate the session's tool-error count, which is what the
+// #91 measurement read as a defect of the mode rather than of the counter.
+func TestSoloFailingProgramIsNotAToolError(t *testing.T) {
+	s := soloScript(t, t.TempDir())
+	var results []tools.SubCall
+	ctx := tools.WithSubCallSink(context.Background(), func(sub tools.SubCall) {
+		if sub.Done {
+			results = append(results, sub)
+		}
+	})
+
+	out, err := s.Run(ctx, map[string]any{
+		"source": `const r = run(["sh", "-c", "exit 3"]); "code=" + r.code`,
+	})
+	if err != nil {
+		t.Fatalf("a failing program ended the call: %v", err)
+	}
+	if out != "code=3" {
+		t.Fatalf("result = %q, want the exit code as data", out)
+	}
+	if len(results) != 1 {
+		t.Fatalf("sub-calls = %d, want 1", len(results))
+	}
+	if results[0].IsError {
+		t.Fatal("a non-zero exit was reported as a tool error")
+	}
+}
+
+// TestSoloUnstartableProgramIsAnError keeps the other side: when the program
+// cannot run at all, that is a failure of the call, not a result to branch on.
+func TestSoloUnstartableProgramIsAnError(t *testing.T) {
+	s := soloScript(t, t.TempDir())
+	var results []tools.SubCall
+	ctx := tools.WithSubCallSink(context.Background(), func(sub tools.SubCall) {
+		if sub.Done {
+			results = append(results, sub)
+		}
+	})
+
+	if _, err := s.Run(ctx, map[string]any{"source": `run(["/nonexistent/program"])`}); err == nil {
+		t.Fatal("a program that cannot start did not fail the call")
+	}
+	if len(results) == 0 || !results[0].IsError {
+		t.Fatal("a program that cannot start was not reported as an error")
+	}
+}
+
+// TestBareStringArgumentBindsToTheRequiredField covers the most frequent mistake
+// in the measured runs: a script mixes object tools, an array for run() and
+// positionals for console, and writes tools.glob("*") by analogy. Binding the
+// string to the tool's one required string field is what the model meant, and
+// it costs no prompt bytes.
+func TestBareStringArgumentBindsToTheRequiredField(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(path, []byte("alpha\nTODO: beta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := soloScript(t, dir)
+
+	cases := []struct {
+		source string
+		want   string
+	}{
+		{`tools.glob("*").split("\n").filter(Boolean).length`, "1"},
+		{`tools.grep("TODO").includes("TODO: beta")`, "true"},
+		{`tools.read_file("` + path + `").includes("TODO: beta")`, "true"},
+	}
+	for _, c := range cases {
+		out, err := s.Run(context.Background(), map[string]any{"source": c.source})
+		if err != nil {
+			t.Fatalf("%s failed: %v", c.source, err)
+		}
+		if out != c.want {
+			t.Fatalf("%s = %q, want %q", c.source, out, c.want)
+		}
+	}
+}
+
+// TestBareStringKeepsTheObjectFormWorking makes sure the convenience did not
+// replace the documented shape, and that the default mode behaves the same.
+func TestBareStringKeepsTheObjectFormWorking(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, solo := range []bool{true, false} {
+		var s tools.Script
+		if solo {
+			s = soloScript(t, dir)
+		} else {
+			files := append([]tools.Tool{
+				tools.Grep{Root: dir},
+				tools.Glob{Root: dir},
+			}, tools.NewFileTools()...)
+			s = tools.NewScript(files)
+		}
+		fromObject, err := s.Run(context.Background(), map[string]any{"source": `tools.glob({pattern: "*"})`})
+		if err != nil {
+			t.Fatalf("solo=%v object form failed: %v", solo, err)
+		}
+		fromString, err := s.Run(context.Background(), map[string]any{"source": `tools.glob("*")`})
+		if err != nil {
+			t.Fatalf("solo=%v string form failed: %v", solo, err)
+		}
+		if fromObject != fromString {
+			t.Fatalf("solo=%v: object %q and string %q disagree", solo, fromObject, fromString)
+		}
+	}
+}
+
+// TestBareStringIsRejectedWhenItIsAmbiguous pins the limit: a tool needing more
+// than the one string cannot be guessed, and guessing would run a write with a
+// made-up body.
+func TestBareStringIsRejectedWhenItIsAmbiguous(t *testing.T) {
+	s := soloScript(t, t.TempDir())
+	_, err := s.Run(context.Background(), map[string]any{"source": `tools.write_file("out.txt")`})
+	if err == nil {
+		t.Fatal("write_file accepted a bare string")
+	}
+	if !strings.Contains(err.Error(), "content") {
+		t.Fatalf("error %q does not name what is missing", err)
 	}
 }

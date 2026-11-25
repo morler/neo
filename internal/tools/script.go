@@ -272,11 +272,11 @@ func (s Script) globals(ctx context.Context) map[string]any {
 	// agent can tell two read_file calls apart even when the arguments match.
 	calls := &subCallCounter{}
 	globals := map[string]any{
-		"read_file":  s.hostTool(ctx, s.Read, calls),
-		"grep":       s.hostTool(ctx, s.Grep, calls),
-		"glob":       s.hostTool(ctx, s.Glob, calls),
-		"write_file": s.hostTool(ctx, s.Write, calls),
-		"edit_file":  s.hostTool(ctx, s.Edit, calls),
+		"read_file":  s.hostTool(ctx, s.Read, calls, "path"),
+		"grep":       s.hostTool(ctx, s.Grep, calls, "pattern"),
+		"glob":       s.hostTool(ctx, s.Glob, calls, "pattern"),
+		"write_file": s.hostTool(ctx, s.Write, calls, "path"),
+		"edit_file":  s.hostTool(ctx, s.Edit, calls, "path"),
 	}
 	if s.Solo {
 		globals["run"] = s.runTool(ctx, calls)
@@ -325,7 +325,7 @@ func (c *subCallCounter) next(parent string) string {
 // The arguments are converted to Go before the tool runs, so nothing the script
 // does to its own object afterwards can change what executes. An error thrown
 // here surfaces as a JS exception, which is how a script sees a failed tool.
-func (s Script) hostTool(ctx context.Context, t Tool, calls *subCallCounter) moejs.NativeFunc {
+func (s Script) hostTool(ctx context.Context, t Tool, calls *subCallCounter, required string) moejs.NativeFunc {
 	// The parent's tool-use ID is what the agent already knows: reusing
 	// CallMetadata means this file needs no second context key and no import of
 	// the agent package.
@@ -339,14 +339,19 @@ func (s Script) hostTool(ctx context.Context, t Tool, calls *subCallCounter) moe
 		input := map[string]any{}
 		if len(args) > 0 {
 			converted := r.ToGo(args[0])
-			mapped, ok := converted.(map[string]any)
-			if !ok {
-				// A bare string would otherwise become an empty map and surface
-				// as "missing required input: pattern", which points at the wrong
-				// thing: the call was the right idea with the wrong shape.
-				return engine.Undefined(), fmt.Errorf("%s takes an object of named arguments, not %T; write %s({...})", t.Name(), converted, t.Name())
+			switch value := converted.(type) {
+			case map[string]any:
+				input = value
+			case string:
+				// A script mixes three call shapes: these tools take an object,
+				// run() takes an array, console.log takes positionals. A bare
+				// string is the obvious mistake, and measured runs made it in five
+				// of five sessions. Binding it to the one required string field is
+				// unambiguous: it is what the model meant.
+				input[required] = value
+			default:
+				return engine.Undefined(), fmt.Errorf("%s takes an object of named arguments, not %T; write %s({%s: ...})", t.Name(), converted, t.Name(), required)
 			}
-			input = mapped
 		}
 		id := calls.next(parent.ToolUseID)
 		name := t.Name()
