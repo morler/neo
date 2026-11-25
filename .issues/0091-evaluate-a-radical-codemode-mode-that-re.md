@@ -1,7 +1,7 @@
 ---
 id: 91
 title: Evaluate a radical codemode mode that replaces the tool surface with one eval tool
-status: in-progress
+status: closed
 priority: medium
 labels:
     - performance
@@ -16,6 +16,7 @@ relations:
         - 86
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景
