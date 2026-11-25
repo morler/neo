@@ -1,7 +1,7 @@
 ---
 id: 92
 title: Give the default-mode script tool the console that solo mode already has
-status: in-progress
+status: closed
 priority: medium
 labels:
     - bug
@@ -11,6 +11,7 @@ relations:
         - 91
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景
