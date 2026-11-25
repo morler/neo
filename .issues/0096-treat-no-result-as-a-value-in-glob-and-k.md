@@ -1,7 +1,7 @@
 ---
 id: 96
 title: Treat no-result as a value in glob and keep tool-native errors out of script output
-status: in-progress
+status: closed
 priority: low
 labels:
     - bug
@@ -10,6 +10,7 @@ relations:
         - 91
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景

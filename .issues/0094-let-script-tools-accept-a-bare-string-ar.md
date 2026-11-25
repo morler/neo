@@ -1,7 +1,7 @@
 ---
 id: 94
 title: Let script tools accept a bare string argument instead of failing on the object shape
-status: in-progress
+status: closed
 priority: low
 labels:
     - llm
@@ -11,6 +11,7 @@ relations:
         - 91
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景
