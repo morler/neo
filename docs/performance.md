@@ -208,6 +208,30 @@ The conclusion this supports is narrow and worth stating plainly: after two
 rounds of prompt changes the merge rate is still zero, so prompt length is not
 what keeps a script from replacing a round trip.
 
+### Single-tool mode measured against the default surface
+
+Measured 2026-11-25 (#91) on a small Go module whose own test asserts the wrong
+value, so the task is "find it, fix it, prove the suite passes". Same binary and
+model, only `features.codemode` changed, five runs per arm.
+
+| arm | requests (median, range) | input tokens (median, range) | suite passes | read+write in one call |
+| --- | ---: | ---: | --- | --- |
+| default (n=5) | 7 (6–10) | 21,114 (16,723–34,842) | 5 / 5 | n/a |
+| solo (n=5) | 7 (5–9) | 16,917 (14,059–27,107) | 5 / 5 | 2 / 5 |
+
+The merge rate moved off zero for the first time: three earlier measurements of
+the default surface produced none. It is not the dominant behaviour, though —
+three of five runs still split reading, writing and verifying across separate
+calls — and the solo arm made two to four tool errors per run against zero to
+one, nearly all of them calling-convention complaints (`glob("*")` instead of
+`glob({pattern:"*"})`) that `bash` absorbs in the default surface.
+
+The 20% input saving comes from the floor, not from merging: 2,970 bytes against
+8,084. In a longer conversation that share shrinks.
+
+Conclusion in #91 is "add capability", not "keep": forcing code was
+demonstrated, saving a round trip was not.
+
 ### Measuring a real run
 
 A run's actual cost comes from the provider, not from an estimate:

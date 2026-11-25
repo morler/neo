@@ -1,7 +1,7 @@
 ---
 id: 91
 title: Evaluate a radical codemode mode that replaces the tool surface with one eval tool
-status: open
+status: in-progress
 priority: medium
 labels:
     - performance
@@ -159,3 +159,58 @@ const raw = tools.read_file({path}).split("\n");
 - **不要**再通过继续加大提示词篇幅来提高合并率——两轮措辞改动（#84、#89）后合并数仍是 0。
 - 单工具模式的假设前提（"模型不用脚本是因为 bash 更便宜"）**部分成立**：去掉 bash 确实能强制写代码，但本次数据显示即使强制，模型也未必把读-判断-写合并进一次调用。这正是 #91 需要实测的核心问题，而它现在有了一个明确的对照基线：**合并率 0/6**。
 - 若做 #91，主判据应能区分"被迫写代码"与"真的合并"，否则一次成功的单工具实验可能只证明了前者。
+
+## 实验实现与结果（2026-11-25）
+
+### 实现了什么
+
+| 部分 | 位置 |
+| --- | --- |
+| `run()` 宿主函数，返回 `{stdout, stderr, code}`，非零退出码是数据不是异常 | `internal/tools/script_run.go` |
+| 会话级持久运行时（`ScriptSession`，互斥保护，`/clear`/重启失效） | `internal/tools/script.go` |
+| `features.codemode: solo` 与 `--codemode=solo`，启动时选定 | `internal/config/config.go`、`cmd/neo/main.go` |
+| solo 组合：注册表只有 `script`，带 `run()` | `cmd/neo/main.go` `registryFor` |
+| solo 提示词：删掉批处理规则（单工具下无意义），新增 `soloCapability` | `cmd/neo/main.go` |
+| `grep`/`glob` 的 `Absolute` 开关，让脚本内无 `cd` 也能把路径喂给 `read_file` | `internal/tools/search.go` |
+
+默认模式**零回归**：固定地板仍是 8,084，script 地板仍是 9,796。solo 地板 **2,970 B**（856 schema + 2,114 prompt），独立预算 3,500。
+
+### 实现中修掉的四个可用性缺陷（都有实测证据）
+
+1. **持久运行时下 `const` 重复声明直接语法报错。** 第一次测量 16 requests / 30 calls / **12 errors**，模型自述"工具泄漏声明"。改为源码在 eval 内执行（每次调用独立作用域），跨调用状态走 `globalThis`，并在提示词与 schema 里如实写明。修后同任务降到 5–7 requests / 11–15 calls。
+2. **`run([...], 10)` 被拒。** 只接受 `float64`，整数超时在 3 次调用里各失败一次。改为接受整数/小数/数字字符串，沿用 `Bash.timeoutFor` 的既有约定。
+3. **`tools.glob("*")` 报 "missing required input: pattern"。** 字符串参数被静默转成空 map，错误指向了错误的地方。改为明确报 `glob takes an object of named arguments, not string; write glob({...})`。测量显示模型看到该错误后**下一次就改对**。
+4. **`console`/`print` 不存在。** 引擎没有 console，模型写 `console.log` 直接 ReferenceError，输出丢失。补上并并入工具结果；失败时保留已打印内容。
+
+### 测量
+
+**环境**：`/tmp/remeasure/solo`，一个 Go 模块（`Add(a,b)` 正确，测试断言 `Add(2,2)==5` 错），`commandcode` / `deepseek/deepseek-v4.1-flash`，同一二进制，只改 `neo.yaml` 的 `features.codemode`。每臂 5 次，每次前恢复损坏的测试文件。
+
+**任务**（两臂逐字相同）：`The test suite fails. Find the bug, fix it, and prove the suite passes.`
+
+| 臂 | requests 中位（跨度） | input 中位（跨度） | 工具调用 | 工具错误 | 测试最终通过 | 同一次调用内读+写 |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| 默认（n=5） | 7（6–10） | 21,114（16,723–34,842） | 8–13 | 0–1 | **5 / 5** | 不适用（多工具） |
+| solo（n=5） | 7（5–9） | 16,917（14,059–27,107） | 11–15 | 2–4 | **5 / 5** | **2 / 5** |
+
+solo 的 input 中位数低约 20%，请求数相同，但工具调用更多、错误更多。
+
+### 主判据判定：**补能力**（不是"保留"，也不是"回退"）
+
+按预注册判据：同一次 `eval` 内出现读+判断+写，且任务随后验证通过。solo 臂 5 次里有 2 次满足（r4 用 `git log` 判断后在同一次调用里 `edit_file`；r5 用 `git checkout` 复位后在同一次调用里重写文件），且 5/5 任务都通过测试。
+
+**但没有满足"保留"所需的说服力**，理由三条，每条都有数据：
+
+1. **合并率 2/5 与默认模式的 0 相比不再为零，却也不是主要行为。** 三次测量（#83、#86、复测）在默认模式上合并率恒为 0；单工具模式确实把它推离了 0，这是本任务唯一确凿的正面结论。但 5 次里 3 次仍然把读、写、验证拆在三次调用。
+2. **错误率显著更高（2–4 对 0–1），且失败集中在调用约定上**：`glob("*")` 传字符串 5 次里出现 5 次，`print` 未定义 1 次，`package.json` 不存在 1 次。前两项是引擎与提示词的差距，不是模型的错。默认模式下 `bash` 兜住了这些差距。
+3. **成本优势来自工具面更小，不是来自合并。** input 低 20% 主要是地板从 8,084 降到 2,970，与合并无关；换成更长的会话，省下的固定成本占比还会更低。
+
+因此结论是**补能力**：单工具模式证明"能强制写代码"，但还没证明"写代码更省"。按 #91 预设的第三分支，应记录失败原因是"错误可教性/调用约定"，而不是继续加提示词篇幅。
+
+### 对后续的建议
+
+按接受标准，以下三条各自独立、都基于本轮实测：
+
+- **引擎能力补齐**：`console`/`print` 已补；`glob` 等工具接受 `{pattern}` 对象这一约定，是 `tools.*` 与 `run()` 两种调用风格并存造成的，应在 schema 之外用一句提示说明，或让 `glob("x")` 直接等价于 `glob({pattern:"x"})`。
+- **不要在默认模式里保留单工具**：默认模式 5/5 成功、错误更少，没有理由替换。
+- **若还要再试一次这个方向**，需要换一个"无法用一条 bash 命令完成"的任务，本 fixture 里 `sed`/`git checkout` 仍能一步到位，这是模型拆开调用的重要原因之一。

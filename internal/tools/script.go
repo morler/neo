@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -84,6 +85,36 @@ type Script struct {
 	// allocates past it stops with a typed error rather than being killed by the
 	// host after the machine is already under pressure.
 	MemoryLimit int64
+
+	// CWD is where run() starts programs. Empty means the process's own
+	// working directory, which is what a session usually wants.
+	CWD string
+
+	// Solo selects the single-tool mode: globals() also exposes run(), and the
+	// composition root registers this tool as the session's only capability. It
+	// is set once at startup, because changing a session's tool list mid-turn
+	// breaks the cached prefix.
+	Solo bool
+
+	// Session keeps one runtime alive across calls, so a declaration a script
+	// made is still there for the next one. Nil means every call starts fresh,
+	// which is the default. Only a session that wants state sets it, because a
+	// kept runtime also keeps its heap: the memory limit then bounds the sum of
+	// everything the session's scripts retained, not one script.
+	Session *ScriptSession
+}
+
+// ScriptSession holds the interpreter state one session's scripts share. It is
+// not persisted: internal/session stores only messages, so resuming a session
+// or restarting the process starts from an empty interpreter and the prompt
+// says so.
+//
+// moejs requires one goroutine per runtime, so every use goes through the mutex
+// and a script is never concurrent with another.
+type ScriptSession struct {
+	mu   sync.Mutex
+	rt   *moejs.Runtime
+	used bool
 }
 
 func (Script) Name() string { return "script" }
@@ -99,7 +130,10 @@ func (Script) ParallelSafe(map[string]any) bool { return false }
 // it took someone to notice a script had been able to write since the approval
 // gate landed; the model read the conservative text and routed around the tool.
 // TestScriptSpecMatchesGlobals now fails if the two drift apart again.
-func (Script) Spec() llm.ToolSpec {
+func (s Script) Spec() llm.ToolSpec {
+	if s.Solo {
+		return s.soloSpec()
+	}
 	return llm.ToolSpec{
 		Name: "script",
 		Description: `Run JavaScript that calls tools and returns its last expression's value.
@@ -147,11 +181,24 @@ func (s Script) Run(ctx context.Context, input map[string]any) (string, error) {
 		return "", err
 	}
 
+	// Solo mode runs the model's source as a real script rather than inside
+	// eval. Only that makes its declarations global bindings that the next call
+	// still sees; inside eval they belong to the eval scope and vanish, which
+	// would make the promised persistence a lie. RunScript already returns the
+	// script's completion value, so the last expression is still the result.
+	if s.Solo {
+		return s.runSolo(ctx, source)
+	}
+
 	wrapper, err := moejs.CompileScript("script", scriptWrapper)
 	if err != nil {
 		// The wrapper is a constant in this file, so this means the engine
 		// changed under us, not that the model wrote bad code.
 		return "", fmt.Errorf("script wrapper does not compile: %w", err)
+	}
+
+	if s.Session != nil {
+		return s.runInSession(ctx, wrapper, source)
 	}
 
 	rt := moejs.NewRuntime(moejs.Options{MemoryLimit: s.memoryLimit()})
@@ -222,13 +269,35 @@ func (s Script) globals(ctx context.Context) map[string]any {
 	// The counter numbers sub-calls within this one script execution, so the
 	// agent can tell two read_file calls apart even when the arguments match.
 	calls := &subCallCounter{}
-	return map[string]any{
+	globals := map[string]any{
 		"read_file":  s.hostTool(ctx, s.Read, calls),
 		"grep":       s.hostTool(ctx, s.Grep, calls),
 		"glob":       s.hostTool(ctx, s.Glob, calls),
 		"write_file": s.hostTool(ctx, s.Write, calls),
 		"edit_file":  s.hostTool(ctx, s.Edit, calls),
 	}
+	if s.Solo {
+		globals["run"] = s.runTool(ctx, calls)
+	}
+	return globals
+}
+
+// soloExtras are the globals a one-tool session has and the default one does
+// not: run(), and a console, because the engine has none and every script a
+// model writes calls console.log. They go on the global object rather than
+// inside tools, because that is where the model writes them.
+func (s Script) soloExtras(ctx context.Context, console *consoleLog) map[string]any {
+	globals := s.globals(ctx)
+	extras := map[string]any{"run": globals["run"]}
+	if console != nil {
+		object := console.object()
+		extras["console"] = object
+		// print is the first verb many models reach for and costs one line; a
+		// ReferenceError here is a turn spent on the interpreter rather than the
+		// task.
+		extras["print"] = object["log"]
+	}
+	return extras
 }
 
 // subCallCounter numbers the calls one script makes. It is not shared and not
@@ -258,9 +327,15 @@ func (s Script) hostTool(ctx context.Context, t Tool, calls *subCallCounter) moe
 	return func(r *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
 		input := map[string]any{}
 		if len(args) > 0 {
-			if converted, ok := r.ToGo(args[0]).(map[string]any); ok {
-				input = converted
+			converted := r.ToGo(args[0])
+			mapped, ok := converted.(map[string]any)
+			if !ok {
+				// A bare string would otherwise become an empty map and surface
+				// as "missing required input: pattern", which points at the wrong
+				// thing: the call was the right idea with the wrong shape.
+				return engine.Undefined(), fmt.Errorf("%s takes an object of named arguments, not %T; write %s({...})", t.Name(), converted, t.Name())
 			}
+			input = mapped
 		}
 		id := calls.next(parent.ToolUseID)
 		name := t.Name()
@@ -396,4 +471,227 @@ func NewScript(files []Tool) Script {
 		}
 	}
 	return s
+}
+
+// runInSession runs one script in the session's kept runtime. The globals are
+// rebound on every call because they close over this call's context, and a
+// script must read files through the approvals of the turn it is in.
+//
+// The runtime is created on first use, so a session that never scripts pays
+// nothing for the interpreter.
+func (s Script) runInSession(ctx context.Context, wrapper *moejs.Script, source string) (string, error) {
+	sess := s.Session
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+
+	if sess.rt == nil {
+		sess.rt = moejs.NewRuntime(moejs.Options{MemoryLimit: s.memoryLimit()})
+	}
+	rt := sess.rt
+	if err := s.bindGlobals(rt, ctx, nil); err != nil {
+		return "", fmt.Errorf("script setup: %w", err)
+	}
+	if err := rt.SetGlobal(scriptSourceKey, source); err != nil {
+		return "", fmt.Errorf("script setup: %w", err)
+	}
+	// An interrupt from the previous call would stop this one before it runs.
+	rt.ClearInterrupt()
+
+	runCtx, cancel := context.WithTimeout(ctx, s.timeout())
+	defer cancel()
+	stop := context.AfterFunc(runCtx, func() { rt.Interrupt(context.Cause(runCtx)) })
+	defer stop()
+
+	result, err := rt.RunScript(wrapper)
+	if err != nil {
+		return "", describeScriptError(err, source)
+	}
+	out, convErr := scriptResult(rt, result)
+	if convErr != nil {
+		return "", convErr
+	}
+	sess.used = true
+	return s.limitOutput(out, nil)
+}
+
+// soloSpec is the whole tool surface in single-tool mode, so its description
+// carries both what a script may call and what run() is for. It lists the
+// whitelist for the same reason the default description does: this text is the
+// model's only account of what exists.
+func (s Script) soloSpec() llm.ToolSpec {
+	return llm.ToolSpec{
+		Name: "script",
+		Description: `Do the work by writing JavaScript; the last expression is the result.
+Inside the script: tools.read_file, tools.grep, tools.glob, tools.write_file, tools.edit_file, all returning strings (grep returns "path:line:text" lines, glob one path per line).
+Start programs with run(["prog", "arg"], timeoutSeconds), which returns {stdout, stderr, code}; a non-zero code is data, not a failure. Use it for git, tests and builds.
+No import. Writes pass the same approval a top-level call does. Synchronous only; top-level await is an error.
+Assign to globalThis (globalThis.cwd = ...) for state a later call needs; each call has its own scope otherwise.`,
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"source": map[string]any{
+					"type":        "string",
+					"description": "JavaScript to run. The last expression is the result.",
+				},
+			},
+			"required": []string{"source"},
+		},
+	}
+}
+
+// bindGlobals installs this call's namespace. In solo mode it also installs the
+// bare run() a one-tool session reads.
+func (s Script) bindGlobals(rt *moejs.Runtime, ctx context.Context, soloConsole *consoleLog) error {
+	if err := rt.SetGlobal("tools", s.globals(ctx)); err != nil {
+		return err
+	}
+	if s.Solo {
+		extras := s.soloExtras(ctx, soloConsole)
+		for name, value := range extras {
+			if err := rt.SetGlobal(name, value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// soloScript is the compiled source of one solo call, cached per source text so
+// a session that repeats a snippet does not recompile it.
+var soloCompiled sync.Map
+
+// compileSolo compiles one solo source. Compilation is where a syntax error is
+// found, so it happens before any state is touched.
+func compileSolo(source string) (*moejs.Script, error) {
+	if cached, ok := soloCompiled.Load(source); ok {
+		return cached.(*moejs.Script), nil
+	}
+	script, err := moejs.CompileScript("script", source)
+	if err != nil {
+		return nil, err
+	}
+	soloCompiled.Store(source, script)
+	return script, nil
+}
+
+// runSoloSnippet is what a solo call runs. The model's source keeps its last
+// expression as the call's value: eval returns it, which is the rule the default
+// mode already documents.
+//
+// A block would scope redeclarations but loses the completion value, and a kept
+// runtime makes a repeated `const cwd = ...` a SyntaxError before anything runs.
+// The block plus an explicit return would need the model to write `return`, which
+// no other mode asks for. So the snippet runs inside eval, declarations stay in
+// this call, and state a model wants to keep is assigned to globalThis, which the
+// prompt says.
+const runSoloSnippet = `(function () {
+	if (typeof globalThis === "undefined") throw new Error("no globalThis");
+	return eval(%q);
+})()`
+
+// runSolo runs one script in the session's kept runtime as a real script.
+func (s Script) runSolo(ctx context.Context, source string) (string, error) {
+	script, err := compileSolo(fmt.Sprintf(runSoloSnippet, source))
+	if err != nil {
+		return "", describeScriptError(err, source)
+	}
+
+	sess := s.Session
+	if sess == nil {
+		sess = &ScriptSession{}
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+
+	if sess.rt == nil {
+		sess.rt = moejs.NewRuntime(moejs.Options{MemoryLimit: s.memoryLimit()})
+	}
+	rt := sess.rt
+	console := s.takeConsole()
+	if err := s.bindGlobals(rt, ctx, console); err != nil {
+		return "", fmt.Errorf("script setup: %w", err)
+	}
+	rt.ClearInterrupt()
+
+	runCtx, cancel := context.WithTimeout(ctx, s.timeout())
+	defer cancel()
+	stop := context.AfterFunc(runCtx, func() { rt.Interrupt(context.Cause(runCtx)) })
+	defer stop()
+
+	result, err := rt.RunScript(script)
+	if err != nil {
+		// What the script printed before failing is often the useful part.
+		if printed := console.drain(); printed != "" {
+			return "", fmt.Errorf("%s\n(printed before the error)\n%s", describeScriptError(err, source), printed)
+		}
+		return "", describeScriptError(err, source)
+	}
+	sess.used = true
+	out, convErr := scriptResult(rt, result)
+	if convErr != nil {
+		return "", convErr
+	}
+	if printed := console.drain(); printed != "" {
+		if out == "" {
+			out = printed
+		} else {
+			out = printed + "\n" + out
+		}
+	}
+	return s.limitOutput(out, nil)
+}
+
+// consoleTool is the console a solo script writes to. The engine has none, and a
+// script written the way every other JavaScript script is written calls
+// console.log, so its absence reads as a broken tool rather than a missing one.
+//
+// Output is collected per call and prepended to the result, because the tool's
+// value is the only channel a script has back to the model.
+type consoleLog struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (c *consoleLog) add(args []any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	parts := make([]string, 0, len(args))
+	for _, arg := range args {
+		parts = append(parts, fmt.Sprint(arg))
+	}
+	c.lines = append(c.lines, strings.Join(parts, " "))
+}
+
+func (c *consoleLog) drain() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.lines) == 0 {
+		return ""
+	}
+	out := strings.Join(c.lines, "\n")
+	c.lines = nil
+	return out
+}
+
+// takeConsole builds the console a solo script writes to. The engine has none,
+// and a script written the way every other JavaScript script is written calls
+// console.log, so its absence reads as a broken tool rather than a missing one.
+func (s Script) takeConsole() *consoleLog { return &consoleLog{} }
+
+// object is the value a script sees. Every level writes to the same buffer, so a
+// call that logs twice keeps both lines in order.
+func (c *consoleLog) object() map[string]any {
+	write := func(r *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		values := make([]any, 0, len(args))
+		for _, arg := range args {
+			values = append(values, r.ToGo(arg))
+		}
+		c.add(values)
+		return engine.Undefined(), nil
+	}
+	console := map[string]any{}
+	for _, name := range []string{"log", "info", "warn", "error", "debug"} {
+		console[name] = moejs.NativeFunc(write)
+	}
+	return console
 }

@@ -15,6 +15,18 @@ Neo exposes a small built-in tool surface to the model.
 | `workflow` | Interactive chat | Create or update the visible workflow checklist. Neo attaches tool and subagent activity to the active item automatically. |
 | `write_file` | Chat and headless | Write content to a file, creating parent directories. Overwrites the file if it exists. |
 
+Single-tool mode (`features.codemode: solo`, `--codemode=solo`) replaces this
+whole table with the `script` tool: no `bash`, `read_file`, `edit_file`, `grep`,
+`glob`, `write_file`, `agent`, `goal` or `workflow`. Inside a script, `run(argv,
+timeoutSeconds)` starts a program and returns `{stdout, stderr, code}`, with a
+non-zero code as data rather than an error; `console.log` and `print` collect
+output that joins the tool result; `globalThis.x = …` survives to later calls
+while local declarations do not. Approval still applies to the file tools the
+script calls. Process execution is the one thing that loses its confirmation
+hook: `tool_approvals` can match `bash` but cannot see inside `run()`, which is
+the same position `permissions.md` takes — the environment contains, the
+prompt only reminds.
+
 Independent inspect calls issued in one model response can run concurrently.
 Inspect children receive only `read_file`, `grep`, and `glob`. Work-mode children
 also receive `script` when the session has it enabled (`features.script`,

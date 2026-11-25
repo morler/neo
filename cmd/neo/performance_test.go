@@ -341,3 +341,65 @@ func TestDefaultPromptKeepsThePlainBatchingRule(t *testing.T) {
 		t.Fatalf("chatSystemPrompt = %q, want %q", chatSystemPrompt, want)
 	}
 }
+
+// soloFloorByteBudget covers the single-tool mode: one tool schema plus the
+// prompt a session with only that tool builds. Measured 2026-11-25 at 2,890
+// bytes (812 schema + 2,078 prompt), well under the default floor because one
+// tool replaces nine. A ceiling rather than a target: the mode costs what its
+// single description costs, and growth there is visible.
+const soloFloorByteBudget = 3_500
+
+// TestSoloFloorBudget measures the mode #91 evaluates. It is separate from the
+// other two because this mode's tool list and prompt sections are both
+// different, so folding it into either floor would hide which mode moved.
+func TestSoloFloorBudget(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Features.CodeMode = config.CodeModeSolo
+	reg := registryFor(cfg, "", "")
+	schemas, err := json.Marshal(reg.Specs())
+	if err != nil {
+		t.Fatalf("marshal tool specs: %v", err)
+	}
+	prompt, _ := chatSystem(cfg, "", nil, profile.Profile{}, reg, io.Discard)
+	total := len(schemas) + len(prompt)
+	t.Logf("solo floor: tools %d + prompt %d = %d bytes (budget %d)",
+		len(schemas), len(prompt), total, soloFloorByteBudget)
+	if total > soloFloorByteBudget {
+		t.Fatalf("solo floor = %d bytes, budget = %d", total, soloFloorByteBudget)
+	}
+}
+
+// TestSoloRegistersOnlyTheScriptTool is the whole point of the mode: bash and
+// the file tools are absent on purpose, because leaving them in keeps the
+// cheaper path the experiment exists to remove.
+func TestSoloRegistersOnlyTheScriptTool(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Features.CodeMode = config.CodeModeSolo
+	names := registryFor(cfg, "", "").Names()
+	if len(names) != 1 || names[0] != "script" {
+		t.Fatalf("solo tools = %v, want [script]", names)
+	}
+	// The default surface must not move because this mode exists.
+	if _, ok := registryFor(&config.Config{}, "", "").Get("script"); ok {
+		t.Fatal("the default registry gained the script tool")
+	}
+}
+
+// TestSoloPromptDropsTheBatchingRule keeps the two prompts from contradicting
+// themselves. With one tool there is no second top-level call to batch, so the
+// solo prompt must not ask for it, and it must not offer a tool as the
+// alternative to writing a script.
+func TestSoloPromptDropsTheBatchingRule(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Features.CodeMode = config.CodeModeSolo
+	prompt, _ := chatSystem(cfg, "", nil, profile.Profile{}, registryFor(cfg, "", ""), io.Discard)
+
+	if strings.Contains(prompt, "Issue independent reads") {
+		t.Fatal("the solo prompt still asks for independent top-level calls")
+	}
+	for _, want := range []string{"one tool", "run(", "globalThis"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("solo prompt lacks %q", want)
+		}
+	}
+}

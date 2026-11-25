@@ -16,6 +16,13 @@ Shell commands can be expressed through wrappers, scripts, aliases, variables,
 substitutions, or indirect tools. A command classifier can look reassuring
 without reliably containing an agent.
 
+Single-tool mode (`features.codemode: solo`) is a capability choice, not a
+permission model, and it gives up one hook: `tool_approvals` can name `bash` and
+match a command prefix, but a script's `run()` starts a program Neo never parses,
+so no rule can match it. The mode exists so a session can be composed of one
+writable tool; it does not make that tool safer, and it assumes the environment
+contains what runs. Measured cost and errors are recorded in #91.
+
 Neo therefore does not maintain trusted, ask, or read-only permission modes. It
 does not classify destructive commands or infer paths from shell text. The
 runtime environment owns containment.

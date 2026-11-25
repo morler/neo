@@ -126,6 +126,21 @@ type Features struct {
 	// found no case where the model chose it over bash on its own. Turning it on
 	// is a decision the session pays for deliberately, not a default.
 	Script *bool `yaml:"script"`
+	// CodeMode selects how the session's tool surface is composed. "solo" keeps
+	// only the script tool, so every action is written as code, and adds run()
+	// so programs are still reachable. Empty or "default" keeps the ordinary
+	// surface. It is read once at startup: a session's tool list and base prompt
+	// must not change mid-conversation, or the cached prefix breaks.
+	CodeMode string `yaml:"codemode"`
+}
+
+// CodeModeSolo is the only mode value that changes the tool surface.
+const CodeModeSolo = "solo"
+
+// SoloCodeMode reports whether the session replaces its tool surface with the
+// script tool alone.
+func (c *Config) SoloCodeMode() bool {
+	return strings.EqualFold(strings.TrimSpace(c.Features.CodeMode), CodeModeSolo)
 }
 
 // AgentsFileEnabled reports whether AGENTS.md loading is on (default: true).

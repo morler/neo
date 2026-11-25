@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/owainlewis/neo/internal/llm"
@@ -52,6 +53,11 @@ func baseArgs() []string {
 
 type Grep struct {
 	Root string
+	// Absolute makes the result paths absolute. It is set in the single-tool
+	// mode, where grep's output feeds read_file and edit_file inside the same
+	// script: a relative path would resolve against the process's directory
+	// instead of Root, and the script has no cd to fix it.
+	Absolute bool
 }
 
 func (Grep) Name() string { return "grep" }
@@ -88,11 +94,13 @@ func (g Grep) Run(ctx context.Context, input map[string]any) (string, error) {
 	if path := optString(input, "path"); path != "" {
 		args = append(args, path)
 	}
-	return runSearch(ctx, g.Root, args, optInt(input, "max_matches"), "matching lines")
+	return runSearch(ctx, g.Root, args, optInt(input, "max_matches"), "matching lines", g.Absolute)
 }
 
 type Glob struct {
 	Root string
+	// Absolute makes the result paths absolute, for the same reason Grep has it.
+	Absolute bool
 }
 
 func (Glob) Name() string { return "glob" }
@@ -124,7 +132,7 @@ func (g Glob) Run(ctx context.Context, input map[string]any) (string, error) {
 	if path := optString(input, "path"); path != "" {
 		args = append(args, path)
 	}
-	return runSearch(ctx, g.Root, args, optInt(input, "max_matches"), "paths")
+	return runSearch(ctx, g.Root, args, optInt(input, "max_matches"), "paths", g.Absolute)
 }
 
 // runSearch executes ripgrep and returns at most maxMatches lines. Output is
@@ -134,7 +142,7 @@ func (g Glob) Run(ctx context.Context, input map[string]any) (string, error) {
 // how much memory Neo uses.
 //
 // rg exits 1 when nothing matched, which is a result rather than a failure.
-func runSearch(ctx context.Context, root string, args []string, maxMatches int, unit string) (string, error) {
+func runSearch(ctx context.Context, root string, args []string, maxMatches int, unit string, absolute bool) (string, error) {
 	if maxMatches <= 0 {
 		maxMatches = defaultSearchMax
 	}
@@ -157,6 +165,11 @@ func runSearch(ctx context.Context, root string, args []string, maxMatches int, 
 	}
 
 	lines, total := readLines(stdout, maxMatches)
+	if absolute && root != "" {
+		for i, line := range lines {
+			lines[i] = rebaseSearchPath(line, root)
+		}
+	}
 	if total > maxMatches {
 		// Stop ripgrep rather than draining output we have already decided to
 		// discard. The wait below then reports a signal, which is expected.
@@ -216,4 +229,22 @@ func searchExitError(ctx context.Context, err error, stderr string) error {
 		return fmt.Errorf("%s: %s", SearchBinary, strings.TrimSpace(stderr))
 	}
 	return err
+}
+
+// rebaseSearchPath makes one search result path absolute. grep and glob emit
+// "path:line:text" and "path" lines, so only the leading field is rewritten and
+// text after the second colon stays untouched.
+func rebaseSearchPath(line, root string) string {
+	if line == "" || filepath.IsAbs(line) {
+		return line
+	}
+	rest := line
+	head := line
+	if cut, tail, ok := strings.Cut(line, ":"); ok {
+		head, rest = cut, ":"+tail
+	}
+	if filepath.IsAbs(head) {
+		return line
+	}
+	return filepath.Join(root, head) + rest
 }

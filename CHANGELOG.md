@@ -6,6 +6,22 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
+- Added an opt-in single-tool code mode: `features.codemode: solo` or
+  `--codemode=solo` replaces the whole tool surface with the `script` tool, so
+  every action — including reading a file — is JavaScript the model writes.
+  Programs stay reachable through `run(argv, timeoutSeconds)`, which returns
+  `{stdout, stderr, code}` with a non-zero exit as data; `console.log` and
+  `print` collect output into the tool result; and one interpreter is kept per
+  session so `globalThis` state survives between calls. Local declarations stay
+  per call, because a kept runtime rejects a repeated `const`. The mode is read
+  once at startup since changing a session's tool list breaks the cached prompt
+  prefix, and the fixed floor drops from 8,084 to 2,970 bytes. Measured over
+  five runs of one debugging task against the default surface: the suite passed
+  in both, input fell about 20%, read-and-write merged into a single call in 2
+  of 5 runs where the default surface produced none, and tool errors rose from
+  0–1 to 2–4 per run. #91 records the full result and why the conclusion is
+  "add capability" rather than "keep".
+
 - Added the JavaScript `script` tool: it runs model-written code that can call
   `read_file`, `grep`, `glob`, `write_file`, and `edit_file`, returning its last
   expression's value. Each scripted call passes the same approval matcher a

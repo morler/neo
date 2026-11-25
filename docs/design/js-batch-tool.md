@@ -102,9 +102,16 @@ The edges matter more than the feature.
   script tool is an ordinary tool: it receives context, runs, and returns a
   string. Approval, observation, and limits are composed around it the same way
   they are composed around `bash`.
-- **Not stateful across calls.** A script starts fresh. There is no REPL, no
-  retained globals, and no way for one script to hand a value to the next except
-  through its output.
+- **Not stateful across calls, except in single-tool mode.** A default session's
+  script starts fresh: no REPL, no retained globals, no way for one script to
+  hand a value to the next except through its output. The opt-in single-tool
+  mode (`features.codemode: solo`, `--codemode=solo`) keeps one interpreter per
+  session so `globalThis.x = …` survives, because that mode has no other way to
+  build up work. Its local declarations are still per call: a kept runtime
+  rejects a repeated `const`, and every second script writes one. The state is
+  never persisted, so `/clear`, resuming or a restart starts empty, and the
+  prompt says so. See [Performance](../performance.md) for what the mode
+  measured.
 - **Not async.** Support for `async`/`await` would mean an event loop, promise
   settling, and a second cancellation model. The value of a script here is
   batching known steps, which synchronous host functions already provide.
