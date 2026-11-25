@@ -17,10 +17,14 @@ All notable changes to Neo will be documented in this file.
   once at startup since changing a session's tool list breaks the cached prompt
   prefix, and the fixed floor drops from 8,084 to 2,970 bytes. Measured over
   five runs of one debugging task against the default surface: the suite passed
-  in both, input fell about 20%, read-and-write merged into a single call in 2
-  of 5 runs where the default surface produced none, and tool errors rose from
-  0–1 to 2–4 per run. #91 records the full result and why the conclusion is
-  "add capability" rather than "keep".
+  in both and input fell about 20%. A first measurement showed more tool errors
+  than the default surface; that was the instrumentation, not the mode — a
+  program's non-zero exit was counted as a tool error and `glob("*")` had no
+  binding for a bare string. After both were fixed, the same five runs showed
+  0–2 errors against the default's 1–2, 6 requests against 8 and 17,135 input
+  tokens against 23,406. #91 records both measurements and why the conclusion is
+  still "add capability" rather than "keep": the merge rarely happens and the
+  fixture is too easy to prove it would help.
 
 - Added the JavaScript `script` tool: it runs model-written code that can call
   `read_file`, `grep`, `glob`, `write_file`, and `edit_file`, returning its last

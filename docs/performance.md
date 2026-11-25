@@ -219,15 +219,28 @@ model, only `features.codemode` changed, five runs per arm.
 | default (n=5) | 7 (6–10) | 21,114 (16,723–34,842) | 5 / 5 | n/a |
 | solo (n=5) | 7 (5–9) | 16,917 (14,059–27,107) | 5 / 5 | 2 / 5 |
 
-The merge rate moved off zero for the first time: three earlier measurements of
-the default surface produced none. It is not the dominant behaviour, though —
-three of five runs still split reading, writing and verifying across separate
-calls — and the solo arm made two to four tool errors per run against zero to
-one, nearly all of them calling-convention complaints (`glob("*")` instead of
-`glob({pattern:"*"})`) that `bash` absorbs in the default surface.
+That first run counted two problems as defects of the mode rather than of the
+instrumentation: a program's non-zero exit was reported as a tool error, so every
+failing `go test` inside a script added to the count, and `glob("*")` failed in
+all five runs because the tools take objects while `run()` takes arrays. Both are
+fixed, so the table above is superseded.
 
-The 20% input saving comes from the floor, not from merging: 2,970 bytes against
-8,084. In a longer conversation that share shrinks.
+Re-measured the same day with the same fixture and model, five runs per arm:
+
+| arm | requests (median) | input tokens (median) | tool errors per run |
+| --- | ---: | ---: | --- |
+| default | 8 | 23,406 | 1, 1, 1, 2, 1 |
+| solo | 6 | 17,135 | 0, 0, 0, 2, 0 |
+
+The error difference reversed: what looked like a 2–4 against 0–1 disadvantage
+was the counter, not the mode. The 17,135 against 23,406 input difference is
+larger than the 5,114-byte floor difference at six requests, so the smaller tool
+surface is not the only cause.
+
+Merging stayed rare: one run in five put reading, writing and verifying in a
+single call. The fixture remains the weak part of this measurement — `sed -i` or
+`git checkout --` finishes it in one command, which is exactly the shape a script
+does not need to improve.
 
 Conclusion in #91 is "add capability", not "keep": forcing code was
 demonstrated, saving a round trip was not.
