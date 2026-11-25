@@ -95,3 +95,23 @@ func TestRegistryForNoScriptSurface(t *testing.T) {
 		t.Fatal("classic mode without script must keep bash, as before")
 	}
 }
+
+// TestSurfaceNameMatchesTheConfigValue keeps the refusal message honest about
+// which surface the user is in. It reads the same two constants the config
+// uses, so a message cannot name a surface the config does not have.
+func TestSurfaceNameMatchesTheConfigValue(t *testing.T) {
+	codeMode := &config.Config{}
+	codeMode.Features.CodeMode = config.CodeModeCodemode
+	if got := surfaceName(codeMode); got != config.CodeModeCodemode {
+		t.Fatalf("surfaceName(codemode) = %q", got)
+	}
+	classic := &config.Config{}
+	classic.Features.CodeMode = config.CodeModeClassic
+	if got := surfaceName(classic); got != config.CodeModeClassic {
+		t.Fatalf("surfaceName(classic) = %q", got)
+	}
+	// An unset surface is the default one, so the message says so.
+	if got := surfaceName(&config.Config{}); got != config.CodeModeCodemode {
+		t.Fatalf("surfaceName(default) = %q", got)
+	}
+}
