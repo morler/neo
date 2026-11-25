@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/owainlewis/neo/internal/logx"
 )
 
 type executionContextKey struct{}
@@ -77,6 +79,11 @@ func WithSubCallSink(ctx context.Context, sink func(SubCall)) context.Context {
 // rather than allowed to stall the work it is observing. Callers that have
 // nothing to report simply do not call this.
 func ReportSubCall(ctx context.Context, call SubCall) {
+	// Logged before the sink lookup, because headless runs have no sink and are
+	// exactly where "did this script read and write in one call?" has to be
+	// answerable from NEO_LOG alone. Arguments are left out: they carry file
+	// contents and paths, and only the shape of the call is being recorded.
+	logx.Debug("script sub-call", "name", call.Name, "done", call.Done, "error", call.IsError)
 	sink, ok := ctx.Value(subCallSinkKey{}).(func(SubCall))
 	if !ok || sink == nil {
 		return

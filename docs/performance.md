@@ -252,6 +252,55 @@ does not need to improve.
 Conclusion in #91 is "add capability", not "keep": forcing code was
 demonstrated, saving a round trip was not.
 
+### Merge rate on the single-tool surface
+
+Measured 2026-11-25 (#101) to answer the question the earlier arms left open:
+with only `script` reachable, does the model put read, judgement and write in
+one call? Fixture: a small Go module whose `Max` compares with `<` instead of
+`>`, so one test fails. Prompt: "The Go test in this module fails. Find the bug
+and fix it so go test ./... passes." `provider: openrouter`,
+`model: particle-ai/particle-1`, one binary, `features.codemode` the only
+setting flipped, n=3 per arm, `NEO_LOG_VERBOSE=1`.
+
+Merge is read from the log, not the final answer: a `script` call counts as
+merged when the `script sub-call` events between its tool call and its result
+contain both a reading tool (`read_file`/`grep`/`glob`) and a writing one
+(`write_file`/`edit_file`). That signal was added for this measurement
+(`TestScriptSubCallsAreLoggableCharacterisesTheMergeSignal`).
+
+| arm | requests (median) | input tokens (median) | suite passes | merged calls | runs with a merged call |
+| --- | ---: | ---: | --- | ---: | ---: |
+| codemode (n=3) | 4 | 6,807 | 3 / 3 | 0 / 10 | 0 / 3 |
+| classic (n=3) | 5 | 11,606 | 3 / 3 | n/a | n/a |
+
+Code mode won on both cost figures in this arm: 4 requests against 5, and
+6,807 input tokens against 11,606 (medians; codemode ranged 6,565–8,337,
+classic 11,224–11,642). That is a narrower tool surface, not merging.
+
+The merge rate is still zero, and the shape it failed in is the useful part.
+Every codemode run had the same three-step structure:
+
+```
+run 1  glob            -> read_file -> edit_file (+run)
+run 2  glob (+run)     -> read_file -> edit_file (+run)
+run 3  glob (+run)     -> read_file -> edit_file (+run)
+```
+
+Read and write never share a call. What `run` does share a call with is
+suggestive: the model batches a search and a program that belong together
+("look, then check") but treats inspecting a file and editing it as separate
+decisions, even though `codeModeCapability` asks for exactly that merge and
+shows a worked example. In classic mode the same work took three to four
+`bash` calls plus `read_file`/`edit_file`, so localisation was already cheap;
+the code-mode calls are the same steps, just counted.
+
+One reading, and one follow-up. The prompt already states the rule and shows the
+shape, and #100 added a second for a unique `old_string`, so more text is not
+the missing piece: on this fixture the edit needs a value the read returns, yet
+re-reading cost nothing, so the model had no reason to merge. The follow-up the
+data supports is a task where splitting costs more than merging, which is #97's
+design problem; #97 should be settled before another prompt change.
+
 ### Measuring a real run
 
 A run's actual cost comes from the provider, not from an estimate:

@@ -1,7 +1,7 @@
 ---
 id: 101
 title: Measure the merge rate on the single-tool surface where no top-level tool is available
-status: open
+status: closed
 priority: medium
 labels:
     - performance
@@ -12,6 +12,7 @@ relations:
         - 100
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景
@@ -44,3 +45,46 @@ updated: "2026-11-25"
 ## 备注
 
 本任务是**测量任务**，不是功能任务，因此不设 `depends-on` 代码依赖，但应与 #99 的复测分开归因：先量，再改。这也回应了 #97 提到的"在拿到真正需要合并的任务之前，无法区分'模型不会合并'和'任务不需要合并'"：本轮已经有一个默认面只剩 `script` 的已知条件，值得先用它量一次。
+
+
+## 测量记录（2026-11-25）
+
+### 先补判定信号
+
+headless 运行没有 SubCall sink，且脚本内子调用此前**不写日志**，因此合并率无法只从 `NEO_LOG` 判定。按验收标准走了"交付字段 + 单测"这条路径：
+
+- `internal/tools/execution.go` 的 `ReportSubCall` 在 sink 查找**之前**加一行 debug 日志：`script sub-call`，字段为 `name` / `done` / `error`。不记录参数（含文件内容与路径），只记录调用形状。
+- 单测 `TestScriptSubCallsAreLoggableCharacterisesTheMergeSignal`（`internal/tools/execution_log_test.go`）：断言日志含 `script sub-call`、`read_file`、`edit_file`，且**不泄露路径**。
+
+判定口径：一次 `script` 调用（从 `tool call script` 到对应 `tool result`）之间的子调用事件里，同时出现读取类（`read_file`/`grep`/`glob`）与写入类（`write_file`/`edit_file`），记为该次调用"合并"。
+
+### 运行条件
+
+- provider `openrouter`，model `particle-ai/particle-1`，同一个二进制，`features.codemode` 是唯一翻转项，n=3/arm，`NEO_LOG_VERBOSE=1`。
+- fixture：小 Go 模块，`Max` 用 `<` 比较导致一个测试失败；提示词为"测试失败，找出 bug 并修好让 go test 通过"。
+- 说明：#97 未完成，因此用的是既有形态的 fixture，其局限与 `docs/performance.md` 已记录的一致（`sed -i` 也能一步完成）。
+
+### 结果
+
+| arm | requests(中位) | 输入 tokens(中位) | 套件通过 | 合并调用 | 有合并的运行 |
+| --- | ---: | ---: | --- | ---: | ---: |
+| codemode (n=3) | 4 | 6,807 | 3/3 | 0/10 | 0/3 |
+| classic (n=3) | 5 | 11,606 | 3/3 | n/a | n/a |
+
+未合并的具体形状（三次 codemode 运行一致）：
+
+```
+run 1  glob          -> read_file -> edit_file (+run)
+run 2  glob (+run)   -> read_file -> edit_file (+run)
+run 3  glob (+run)   -> read_file -> edit_file (+run)
+```
+
+读与写**从不**同处一次调用；`run` 倒是会和 `glob` 合并（"先看再验证"），说明模型会把相关的"查"和"跑"放一起，却把"看文件"和"改文件"当作两个独立决策。
+
+### 结论与后续
+
+- 合并率仍为 0。但 code mode 在本 fixture 上两项成本都更低（4 vs 5 请求，6,807 vs 11,606 输入 tokens），收益来自**面更窄**，不是来自合并。
+- 只提一条后续：提示词已同时给出规则与两种可复制形状（#100 补了另一种），继续加文本不是缺口所在；缺的是"拆开比合并更贵"的任务。这正是 #97，故 #97 应先于任何新的提示词改动。
+- 已在 `docs/performance.md` 新增"Merge rate on the single-tool surface"小节记录上述全部数字。
+
+未改动 `scriptCapability`/`codeModeCapability` 任何字节（`TestScriptFloorBudget`、`TestCodeModeFloorBudget` 字节数不变）。`go test ./...`、`go vet ./...`、`qlty check` 通过。
