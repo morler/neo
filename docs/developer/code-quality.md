@@ -80,5 +80,26 @@ Pass a different path to `just quality <path>`.
 Model judgments are opinions to check against the file, not CI gates. Read the
 line each one points at before changing code for it.
 
+### Coverage has one known blind spot here
+
+`internal/tools` mixes `package tools` and `package tools_test` test files in the
+same directory, and Supercov's Go instrumenter cannot handle that shape: it
+generates the `__supercovTest` shim into the internal package only, so the
+external test files fail to compile and the whole package drops out of the run.
+
+```
+$ go test ./...                      # fine: 862 tests pass
+$ supercov -- go test ./...          # FAIL _test [build failed]
+                                     # undefined: __supercovTest
+[supercov] 1 test package(s) wrote no evidence and are absent from this run:
+           internal/tools
+```
+
+The run still exits non-zero and its summary marks the coverage diagnostic, but
+the missing package is easy to miss, so `internal/tools` counts as unmeasured
+in a Supercov run. Use `go test -cover ./internal/tools/` for that package until
+the instrumenter handles mixed test packages, and do not read a Supercov total
+as covering it.
+
 `.supercov/` holds instrumented copies and snapshots, and ignores itself
 through its own `.gitignore`. Do not add it to the repository's `.gitignore`.
