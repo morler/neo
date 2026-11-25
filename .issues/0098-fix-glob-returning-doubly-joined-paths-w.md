@@ -1,7 +1,7 @@
 ---
 id: 98
 title: Fix glob returning doubly-joined paths when Absolute is set on the default code-mode surface
-status: open
+status: closed
 priority: critical
 labels:
     - bug
@@ -16,6 +16,7 @@ relations:
         - 102
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景
@@ -75,3 +76,29 @@ tools.read_file({path: "/tmp/globcheck/a.txta.txt"})
 ## 备注
 
 本 issue 由 2026-11-25 的 codemode 运行时验证发现，与 #95（相对路径基准）、#96（无结果当值）属于同一类"工具返回值不能直接喂给下一步"的缺口，故 `related-to` 二者。
+
+
+## 修复记录（2026-11-25）
+
+根因正如上文所述。改法：给 `runSearch` 增加一个显式形状参数 `searchLineShape`，`Glob` 传 `searchLinesPaths`（整行就是路径），`Grep` 传 `searchLinesLabelled`（首个冒号前是路径）。不再用"有无冒号"猜测。`Absolute: false` 路径不变（仍在 `if absolute && root != ""` 内）。
+
+修复前后对比（`/tmp/globcheck`，含 `a.txt`、`b.txt`、`sub/c.txt`）：
+
+```
+修复前: /tmp/globcheck/sub/c.txtsub/c.txt
+         /tmp/globcheck/b.txtb.txt
+         /tmp/globcheck/a.txta.txt
+修复后: /tmp/globcheck/a.txt
+         /tmp/globcheck/b.txt
+         /tmp/globcheck/sub/c.txt
+```
+
+现场证据：2026-11-25 盘点进度时，用 `glob` 列 `.issues/*.md` 得到 `x.md.issues/x.md` 形式的路径，脚本随即报 `open ...: no such file or directory`——与 issue 描述完全一致，属独立复现。
+
+新增测试（均有"修复前失败"确认）：
+- `TestGlob_AbsolutePathsAreUsable`：每行 `filepath.IsAbs` 且 `os.Stat` 成功；回退到旧实现后报 `main.gomain.go`。
+- `TestGrep_AbsoluteKeepsLabels`：`path:line:text` 形状不变，含冒号的匹配文本不被破坏。
+- `TestSearch_RelativeOutputUnchanged`：`Absolute: false` 的 glob/grep 输出保持相对路径。
+- `TestSoloGlobFeedsReadFile`：默认 code mode 下 `tools.glob(...) -> tools.read_file(...)` 端到端成功。
+
+验证：`go test ./...`、`go vet ./...`、`qlty check` 全部通过。

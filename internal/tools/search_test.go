@@ -146,6 +146,80 @@ func TestGlob_MatchesRecursivelyAndHonoursGitignore(t *testing.T) {
 	}
 }
 
+// TestGlob_AbsolutePathsAreUsable pins the shape the default code-mode surface
+// uses: every line must be a real, absolute file path that the next tool call
+// can open. A doubly-joined path ("a.txta.txt") made tools.read_file fail with
+// a misleading "no such file" error.
+func TestGlob_AbsolutePathsAreUsable(t *testing.T) {
+	requireRipgrep(t)
+	root := searchWorkspace(t)
+
+	out, err := Glob{Root: root, Absolute: true}.Run(context.Background(), map[string]any{"pattern": "**/*.go"})
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) == 0 {
+		t.Fatal("glob returned no lines")
+	}
+	for _, line := range lines {
+		if !filepath.IsAbs(line) {
+			t.Fatalf("line %q is not absolute", line)
+		}
+		if _, err := os.Stat(line); err != nil {
+			t.Fatalf("line %q does not name a file: %v", line, err)
+		}
+		if strings.HasSuffix(line, "main.gomain.go") || strings.HasSuffix(line, "helper.gohelper.go") {
+			t.Fatalf("path was joined twice: %q", line)
+		}
+	}
+}
+
+// TestGrep_AbsoluteKeepsLabels checks that the glob fix left grep's
+// "path:line:text" shape intact, including match text that contains colons.
+func TestGrep_AbsoluteKeepsLabels(t *testing.T) {
+	requireRipgrep(t)
+	root := t.TempDir()
+	path := filepath.Join(root, "colon.go")
+	if err := os.WriteFile(path, []byte("package p\n// note: needle: here\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := Grep{Root: root, Absolute: true}.Run(context.Background(), map[string]any{"pattern": "needle"})
+	if err != nil {
+		t.Fatalf("grep: %v", err)
+	}
+	want := path + ":2:// note: needle: here"
+	if out != want {
+		t.Fatalf("out = %q, want %q", out, want)
+	}
+}
+
+// TestSearch_RelativeOutputUnchanged guards the Absolute: false surfaces: the
+// classic tool face and the subagent inspect face must keep ripgrep's own
+// relative output byte for byte.
+func TestSearch_RelativeOutputUnchanged(t *testing.T) {
+	requireRipgrep(t)
+	root := searchWorkspace(t)
+
+	globOut, err := Glob{Root: root}.Run(context.Background(), map[string]any{"pattern": "**/*.go"})
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	for _, line := range strings.Split(globOut, "\n") {
+		if filepath.IsAbs(line) {
+			t.Fatalf("relative glob returned an absolute path: %q", line)
+		}
+	}
+	grepOut, err := Grep{Root: root}.Run(context.Background(), map[string]any{"pattern": "needle"})
+	if err != nil {
+		t.Fatalf("grep: %v", err)
+	}
+	if !strings.Contains(grepOut, "main.go:3:") {
+		t.Fatalf("relative grep shape changed:\n%s", grepOut)
+	}
+}
+
 func TestGlob_NoMatches(t *testing.T) {
 	requireRipgrep(t)
 

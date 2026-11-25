@@ -58,6 +58,43 @@ tools.edit_file({path, old_string: "TODO", new_string: "DONE"});
 	}
 }
 
+// TestSoloGlobFeedsReadFile is the prompt's own idiom: glob a pattern, then
+// open what it returned. Before #98 the default surface handed back doubly
+// joined paths, so this failed with a misleading "no such file" error and the
+// model had no reason to blame the tool.
+func TestSoloGlobFeedsReadFile(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("body of "+name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "c.txt"), []byte("body of c\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := codeModeScript(t, dir)
+	out, err := s.Run(context.Background(), map[string]any{"source": `
+const paths = tools.glob({pattern: "**/*.txt"}).split("\n").filter(Boolean);
+const bodies = paths.map(p => tools.read_file({path: p}).split("\n")[0]);
+paths.length + ":" + bodies.sort().join("|")`})
+	if err != nil {
+		t.Fatalf("glob -> read_file failed: %v", err)
+	}
+	// read_file prefixes each line with its number, so match on the bodies.
+	for _, want := range []string{"body of a.txt", "body of b.txt", "body of c"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("result %q does not contain %q; glob handed back unusable paths", out, want)
+		}
+	}
+	if !strings.HasPrefix(out, "3:") {
+		t.Fatalf("result = %q, want all three paths read", out)
+	}
+}
+
 // TestSoloRunReturnsExitCodeAsData covers run(): a failing check has to come
 // back as a value a script can branch on, not as a thrown error that ends the
 // call. Without this the mode cannot run tests at all.

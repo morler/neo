@@ -94,7 +94,7 @@ func (g Grep) Run(ctx context.Context, input map[string]any) (string, error) {
 	if path := optString(input, "path"); path != "" {
 		args = append(args, path)
 	}
-	return runSearch(ctx, g.Root, args, optInt(input, "max_matches"), "matching lines", g.Absolute)
+	return runSearch(ctx, g.Root, args, optInt(input, "max_matches"), "matching lines", searchLinesLabelled, g.Absolute)
 }
 
 type Glob struct {
@@ -132,7 +132,7 @@ func (g Glob) Run(ctx context.Context, input map[string]any) (string, error) {
 	if path := optString(input, "path"); path != "" {
 		args = append(args, path)
 	}
-	return runSearch(ctx, g.Root, args, optInt(input, "max_matches"), "paths", g.Absolute)
+	return runSearch(ctx, g.Root, args, optInt(input, "max_matches"), "paths", searchLinesPaths, g.Absolute)
 }
 
 // runSearch executes ripgrep and returns at most maxMatches lines. Output is
@@ -142,7 +142,12 @@ func (g Glob) Run(ctx context.Context, input map[string]any) (string, error) {
 // how much memory Neo uses.
 //
 // rg exits 1 when nothing matched, which is a result rather than a failure.
-func runSearch(ctx context.Context, root string, args []string, maxMatches int, unit string, absolute bool) (string, error) {
+//
+// shape says what each output line holds, which decides how it is rebased: a
+// glob line is a bare path, a grep line is "path:line:text". Sniffing for a
+// colon instead would misread a bare path containing one (Windows drive
+// letters, odd filenames) and re-join it with the root twice.
+func runSearch(ctx context.Context, root string, args []string, maxMatches int, unit string, shape searchLineShape, absolute bool) (string, error) {
 	if maxMatches <= 0 {
 		maxMatches = defaultSearchMax
 	}
@@ -167,7 +172,7 @@ func runSearch(ctx context.Context, root string, args []string, maxMatches int, 
 	lines, total := readLines(stdout, maxMatches)
 	if absolute && root != "" {
 		for i, line := range lines {
-			lines[i] = rebaseSearchPath(line, root)
+			lines[i] = rebaseSearchPath(line, root, shape)
 		}
 	}
 	if total > maxMatches {
@@ -242,17 +247,29 @@ func isNoFilesSearched(stderr string) bool {
 	return strings.Contains(stderr, "No files were searched")
 }
 
-// rebaseSearchPath makes one search result path absolute. grep and glob emit
-// "path:line:text" and "path" lines, so only the leading field is rewritten and
-// text after the second colon stays untouched.
-func rebaseSearchPath(line, root string) string {
+// searchLineShape says what each ripgrep output line holds.
+type searchLineShape int
+
+const (
+	// searchLinesPaths is glob's output: one bare path per line.
+	searchLinesPaths searchLineShape = iota
+	// searchLinesLabelled is grep's output: "path:line:text". Only the leading
+	// path is rewritten, so line numbers and match text stay untouched.
+	searchLinesLabelled
+)
+
+// rebaseSearchPath makes one search result path absolute. The shape decides
+// where the path ends: for paths the whole line is the path, for labelled
+// lines it is everything before the first colon.
+func rebaseSearchPath(line, root string, shape searchLineShape) string {
 	if line == "" || filepath.IsAbs(line) {
 		return line
 	}
-	rest := line
-	head := line
-	if cut, tail, ok := strings.Cut(line, ":"); ok {
-		head, rest = cut, ":"+tail
+	head, rest := line, ""
+	if shape == searchLinesLabelled {
+		if cut, tail, ok := strings.Cut(line, ":"); ok {
+			head, rest = cut, ":"+tail
+		}
 	}
 	if filepath.IsAbs(head) {
 		return line
