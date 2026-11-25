@@ -97,6 +97,65 @@ func TestLoad_RejectsInvalidYAML(t *testing.T) {
 	})
 }
 
+// TestLoad_RejectsAnUnknownCodeMode covers #104. The CLI flag already refuses an
+// unknown surface, but the config file is where the value usually comes from, and
+// ClassicCodeMode only tested for "classic", so every other value ran the default
+// surface silently -- including "solo", a mode ad63f36 had removed. That silence
+// is what let a measurement compare a surface against itself (#103).
+func TestLoad_RejectsAnUnknownCodeMode(t *testing.T) {
+	for _, mode := range []string{"solo", "classicc", "codemodee", "solo "} {
+		t.Run(mode, func(t *testing.T) {
+			withTempDir(t, func(dir string) {
+				t.Setenv("HOME", dir)
+				writeFile(t, filepath.Join(dir, "neo.yaml"), "model: m\nfeatures:\n  codemode: "+strings.TrimSpace(mode)+"x\n")
+				_, err := Load()
+				if err == nil {
+					t.Fatalf("codemode %q was accepted", mode)
+				}
+				for _, want := range []string{"codemode must be", "classic"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("error = %v, want it to mention %q", err, want)
+					}
+				}
+			})
+		})
+	}
+}
+
+// TestLoad_AcceptsEveryValidCodeMode pins the states that must keep working,
+// including the empty value, which means "unset" rather than a surface name.
+func TestLoad_AcceptsEveryValidCodeMode(t *testing.T) {
+	cases := map[string]bool{
+		"":          false, // unset: default surface
+		"codemode":  false,
+		"classic":   true,
+		" Classic ": true,
+		"CODEmode":  false,
+	}
+	for mode, wantClassic := range cases {
+		name := mode
+		if name == "" {
+			name = "unset"
+		}
+		t.Run(name, func(t *testing.T) {
+			withTempDir(t, func(dir string) {
+				t.Setenv("HOME", dir)
+				body := "model: m\n"
+				if mode != "" {
+					body += "features:\n  codemode: \"" + mode + "\"\n"
+				}
+				writeFile(t, filepath.Join(dir, "neo.yaml"), body)
+				cfg, err := Load()
+				if err != nil {
+					t.Fatalf("load: %v", err)
+				}
+				if got := cfg.ClassicCodeMode(); got != wantClassic {
+					t.Fatalf("ClassicCodeMode() = %v, want %v", got, wantClassic)
+				}
+			})
+		})
+	}
+}
 func TestLoad_DefaultsProviderToAnthropic(t *testing.T) {
 	withTempDir(t, func(dir string) {
 		t.Setenv("HOME", dir)

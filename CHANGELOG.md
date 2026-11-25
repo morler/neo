@@ -6,6 +6,11 @@ All notable changes to Neo will be documented in this file.
 
 ### Changed
 
+- An unrecognised `features.codemode` value is now an error instead of the
+  default surface. The CLI flag already refused one, but the config file did
+  not: `classic` misspelled, or `solo`, a mode removed in this release, both
+  started a code-mode session with nothing to notice, which is how one
+  measurement came to compare a surface against itself.
 - `neo run` now refuses to start when `features.script: false` is combined with
   the default code mode. That combination left the headless session with no
   tools at all: the run answered normally and changed nothing. The error names
@@ -29,25 +34,19 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
-- Added an opt-in single-tool code mode: `features.codemode: solo` or
-  `--codemode=solo` replaces the whole tool surface with the `script` tool, so
-  every action — including reading a file — is JavaScript the model writes.
-  Programs stay reachable through `run(argv, timeoutSeconds)`, which returns
-  `{stdout, stderr, code}` with a non-zero exit as data; `console.log` and
-  `print` collect output into the tool result; and one interpreter is kept per
-  session so `globalThis` state survives between calls. Local declarations stay
-  per call, because a kept runtime rejects a repeated `const`. The mode is read
-  once at startup since changing a session's tool list breaks the cached prompt
-  prefix, and the fixed floor drops from 8,084 to 2,970 bytes. Measured over
-  five runs of one debugging task against the default surface: the suite passed
-  in both and input fell about 20%. A first measurement showed more tool errors
-  than the default surface; that was the instrumentation, not the mode — a
-  program's non-zero exit was counted as a tool error and `glob("*")` had no
-  binding for a bare string. After both were fixed, the same five runs showed
-  0–2 errors against the default's 1–2, 6 requests against 8 and 17,135 input
-  tokens against 23,406. #91 records both measurements and why the conclusion is
-  still "add capability" rather than "keep": the merge rarely happens and the
-  fixture is too easy to prove it would help.
+- Added the single-tool surface that this release then made the default. It was
+  introduced as an opt-in mode under the name `solo`; that name no longer
+  exists, and the behaviour it described is now what `codemode` does: one
+  `script` tool carrying `run(argv, timeoutSeconds)`, a `console`/`print`, and
+  one interpreter per session so `globalThis` survives between calls. Measured
+  over five runs of one debugging task: the suite passed in both arms and input
+  fell about 20%. A first measurement showed more tool errors; that was the
+  instrumentation, not the mode — a program's non-zero exit was counted as a
+  tool error and `glob("*")` had no binding for a bare string. After both were
+  fixed, the same five runs showed 0–2 errors against the default's 1–2, 6
+  requests against 8 and 17,135 input tokens against 23,406. #91 records both
+  measurements and why the conclusion was "add capability" rather than "keep":
+  the merge rarely happens and the fixture is too easy to prove it would help.
 
 - Added the JavaScript `script` tool: it runs model-written code that can call
   `read_file`, `grep`, `glob`, `write_file`, and `edit_file`, returning its last

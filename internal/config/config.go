@@ -143,6 +143,23 @@ const (
 	CodeModeClassic  = "classic"
 )
 
+// validateCodeMode rejects a surface this build does not have. The CLI flag is
+// already checked, but a config file is where the value usually comes from, and
+// ClassicCodeMode's equality test silently treated a typo -- or a mode removed
+// from the code, such as the old "solo" -- as the default. A session would then
+// run on a surface the user did not ask for with nothing to notice. An empty
+// value means "unset", which is the default and stays valid.
+func validateCodeMode(mode, source string) error {
+	trimmed := strings.TrimSpace(mode)
+	if trimmed == "" {
+		return nil
+	}
+	if strings.EqualFold(trimmed, CodeModeCodemode) || strings.EqualFold(trimmed, CodeModeClassic) {
+		return nil
+	}
+	return fmt.Errorf("%s: codemode must be %q or %q, got %q; fix the value in that file", source, CodeModeCodemode, CodeModeClassic, mode)
+}
+
 // ClassicCodeMode reports whether the session keeps the separate per-action
 // tools instead of writing code.
 func (c *Config) ClassicCodeMode() bool {
@@ -241,6 +258,9 @@ func parseConfig(b []byte, source string) (*Config, error) {
 		c.OpenAIAuth = OpenAIAuthAPIKey
 	}
 	if err := validateOpenAIAuth(c.OpenAIAuth, source); err != nil {
+		return nil, err
+	}
+	if err := validateCodeMode(c.Features.CodeMode, source); err != nil {
 		return nil, err
 	}
 	if err := c.normalizeProviders(source); err != nil {
