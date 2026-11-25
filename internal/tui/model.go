@@ -444,6 +444,10 @@ func newComposer() textarea.Model {
 	ta.MaxHeight = inputMaxRows
 	ta.SetHeight(1)
 	ta.ShowLineNumbers = false
+	// Draw a real terminal cursor rather than a styled block: only a real one
+	// tells the terminal (and therefore the input method) where the insertion
+	// point is, which is what anchors a candidate window. See composerAnchor.
+	ta.SetVirtualCursor(false)
 	// Give the textarea the same solid background as its wrapping bar so the
 	// composer reads as one continuous block (Codex-style), with no seams
 	// between the textarea cells and the surrounding padding.
@@ -564,14 +568,55 @@ func (m *model) View() tea.View {
 		bottom = m.approvalBarView()
 	}
 
-	parts := []string{m.viewport.View(), "", status, "", bottom}
+	// Everything above the composer, in the order JoinVertical stacks it. Its
+	// height is what offsets the composer's cursor into frame coordinates.
+	above := []string{m.viewport.View(), "", status, ""}
+	parts := append(append([]string{}, above...), bottom)
 	if picker != "" {
 		parts = append(parts, picker)
 	}
 	parts = append(parts, "", footer)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
-	return makeView(content)
+	view := makeView(content)
+	// The terminal cursor has to sit at the composer's insertion point, or an
+	// input method has nowhere to anchor its candidate window and falls back to
+	// a screen corner. See composerAnchor.
+	view.Cursor = m.composerAnchor(lipgloss.Height(strings.Join(above, "\n")))
+	return view
+}
+
+// composerAnchor places the terminal cursor on the composer's insertion point.
+//
+// bubbletea v2 moved cursor positioning out of the program: the View declares
+// where the cursor belongs and the framework moves the terminal there. A nil
+// Cursor leaves it wherever the last frame finished drawing, which is the
+// bottom-right corner of the screen -- and that is where fcitx5 and other input
+// methods then put the candidate window, far from the text being typed.
+//
+// above is the rendered height of everything stacked over the composer, in rows.
+//
+// A nil result is deliberate in the states where the composer is not what the
+// user is typing into: an approval bar replaces it, a browser or picker covers
+// the screen, the width is not known yet, or the textarea is not focused (its
+// Cursor is then nil). Pointing at the composer in those states would be worse
+// than not pointing anywhere.
+func (m *model) composerAnchor(above int) *tea.Cursor {
+	if m.approval != nil || m.width == 0 || m.quitting {
+		return nil
+	}
+	if m.providers.visible || m.models.visible || m.sessions.visible {
+		return nil
+	}
+	cur := m.input.Cursor()
+	if cur == nil {
+		return nil
+	}
+	// The composer's own padding sits between the textarea's origin and the
+	// block the terminal sees.
+	cur.X += styInputBar.GetPaddingLeft()
+	cur.Y += above + styInputBar.GetPaddingTop()
+	return cur
 }
 
 // makeView wraps a rendered string with the v2 View settings we want for

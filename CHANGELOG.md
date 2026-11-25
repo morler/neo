@@ -121,6 +121,13 @@ All notable changes to Neo will be documented in this file.
 
 ### Fixed
 
+- The terminal cursor now sits at the composer's insertion point. bubbletea v2
+  keeps cursor positioning out of the program: the view declares where the
+  cursor belongs, and with nothing declared the terminal left it wherever the
+  last frame stopped drawing. fcitx5 and other input methods anchor their
+  candidate window to that position, so Chinese input put the candidate list in
+  the screen's bottom-right corner instead of beside the text.
+
 - Editing an existing line in the composer no longer drops characters or
   crashes the TUI. `bubbles` v2.1.0 indexed a soft-wrapped row with an offset
   computed from a different wrap, so a row holding wide runes could be cut short,

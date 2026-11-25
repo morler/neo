@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	"charm.land/bubbles/v2/spinner"
-	"charm.land/bubbles/v2/textarea"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/owainlewis/neo/internal/agent"
@@ -47,11 +46,10 @@ func firstLine(s string) string {
 // tests without going through newModel (which probes the terminal). Only the
 // fields exercised by tests are populated.
 func makeTestModel() *model {
-	ta := textarea.New()
-	ta.DynamicHeight = true
-	ta.MinHeight = 1
-	ta.MaxHeight = inputMaxRows
-	ta.SetHeight(1)
+	// Built by the real composer so the fixture has the same cursor and styling
+	// behaviour a session has; a bare textarea.New keeps its virtual cursor on
+	// and would hide a missing cursor anchor.
+	ta := newComposer()
 	ta.Focus()
 	ta.SetWidth(78)
 	sp := spinner.New(spinner.WithSpinner(statusSpinner))
