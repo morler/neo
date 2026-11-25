@@ -157,6 +157,60 @@ func TestScriptHonorsCancellation(t *testing.T) {
 	}
 }
 
+// TestScriptNamespaceHintTeachesToolsForm covers #99: the host tools live on
+// the tools object, so a bare call reads as an undefined variable and gives the
+// model no way forward. The message has to name the form, for every tool.
+func TestScriptNamespaceHintTeachesToolsForm(t *testing.T) {
+	for _, name := range []string{"read_file", "grep", "glob", "write_file", "edit_file"} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := newScript(t)
+			_, err := runScript(t, s, name+"({})")
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "tools."+name) {
+				t.Fatalf("error = %v, want it to name tools.%s", err, name)
+			}
+			if !strings.HasPrefix(msg, "script threw: ReferenceError: ") {
+				t.Fatalf("error class prefix changed: %v", err)
+			}
+		})
+	}
+}
+
+// TestScriptNamespaceHintStaysSilent guards the cost of the hint: an ordinary
+// undefined variable must not be explained as a tool convention, or the model
+// chases a bug that is not there.
+func TestScriptNamespaceHintStaysSilent(t *testing.T) {
+	s, _ := newScript(t)
+	_, err := runScript(t, s, "fooBar()")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if strings.Contains(err.Error(), "tools.") {
+		t.Fatalf("error = %v, want no namespace hint for an unknown name", err)
+	}
+}
+
+// TestScriptHostToolNamesMatchGlobals keeps the hint's name set from drifting
+// from the namespace it describes: a tool added to globals without its name
+// added here would silently lose the hint.
+func TestScriptHostToolNamesMatchGlobals(t *testing.T) {
+	s, _ := newScript(t)
+	out, err := runScript(t, s, `Object.keys(tools).sort().join(",")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exposed := strings.Split(out, ",")
+	names := append([]string(nil), tools.ScriptHostToolNames()...)
+	sort.Strings(names)
+	sort.Strings(exposed)
+	if strings.Join(names, ",") != strings.Join(exposed, ",") {
+		t.Fatalf("hint names %v, globals expose %v", names, exposed)
+	}
+}
+
 // TestScriptSpecMatchesGlobals pins the description to the whitelist it
 // describes. The text said "no write" long after a script could write, and a
 // model that reads a narrower capability than it has simply stops choosing the

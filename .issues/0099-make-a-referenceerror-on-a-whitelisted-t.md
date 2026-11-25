@@ -1,7 +1,7 @@
 ---
 id: 99
 title: Make a ReferenceError on a whitelisted tool name teach the tools.<name> form
-status: open
+status: closed
 priority: high
 labels:
     - tools
@@ -15,6 +15,7 @@ relations:
         - 102
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景
@@ -65,3 +66,33 @@ updated: "2026-11-25"
 ## 备注
 
 本 issue 只改错误路径，不改成功路径、不改提示词，因此与 #85 的记录方式一致，可在 #98 修好后再复测 `glob` 相关失败率，以区分"路径错"与"名字空间错"两种失败来源。
+
+
+## 修复记录（2026-11-25）
+
+按 issue 的实现要点落在 `describeScriptError` 的 `Exception` 分支，与 `awaitHint`/`editFileHint` 同层，仅加一行拼接。判定靠**已知名字集合** `scriptHostToolNames`，从 `ReferenceError: <name> is not defined` 里取出标识符精确匹配，命中不到不加任何提示。
+
+改动：
+- `namespaceHint(err)`：只处理 `ReferenceError: X is not defined` 形态，`X` 命中白名单才追加提示。
+- `scriptHostToolNames` + 导出函数 `ScriptHostToolNames()`（返回副本，供测试对齐）。
+
+实际输出：
+
+```
+写 read_file({path: "hello.txt"})
+修复前: script threw: ReferenceError: read_file is not defined
+修复后: script threw: ReferenceError: read_file is not defined; the host tools live on the tools object, so call tools.read_file({...}) — a bare read_file(...) is undefined
+```
+
+未定义变量 `fooBar()` 的输出**保持原样**，未加提示（防误报）。
+
+新增测试：
+- `TestScriptNamespaceHintTeachesToolsForm`：5 个工具各自给出 `tools.<name>`，且 `script threw: ReferenceError: ` 前缀不变。
+- `TestScriptNamespaceHintStaysSilent`：未知名字不含 `tools.` 提示。
+- `TestScriptHostToolNamesMatchGlobals`：名字集合与 `Object.keys(tools)` 一致，防止新增工具时漏配。
+
+范围说明：issue 里"可选的第二条"（`tools.run(...)` 反向误用）实测**不报错**（`tools.run([...])` 返回 `nil`），没有失败可提示，故按 issue 允许的范围只做第一条。
+
+提示只出现在失败路径，不新增任何 prompt/schema 字节；`TestCodeModeFloorBudget`、`TestScriptFloorBudget`、`TestFixedPromptFloorBudget` 未变。
+
+验证：`go test ./...` 通过，`qlty check` 无问题。

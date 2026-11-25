@@ -443,7 +443,7 @@ func describeScriptError(err error, source string) error {
 		if exception.Name() == "SyntaxError" {
 			return fmt.Errorf("script has a syntax error: %w%s", err, awaitHint(source))
 		}
-		return fmt.Errorf("script threw: %w%s", err, editFileHint(err))
+		return fmt.Errorf("script threw: %w%s%s", err, editFileHint(err), namespaceHint(err))
 	}
 	return fmt.Errorf("script failed: %w", err)
 }
@@ -458,6 +458,42 @@ func awaitHint(source string) string {
 		return ""
 	}
 	return "; scripts are synchronous and there is no top-level await, so call the tools directly and use their return value, e.g. `const n = tools.grep({pattern: \"func \"}).split(\"\\n\").filter(Boolean).length; n + \" matches\"`"
+}
+
+// scriptHostToolNames lists the tools globals exposes. A test keeps the two in
+// step: a tool added without its name here would lose the namespace hint below.
+var scriptHostToolNames = []string{"read_file", "grep", "glob", "write_file", "edit_file"}
+
+// ScriptHostToolNames returns a copy of that list, so the test that pins it to
+// globals cannot change what the hint matches.
+func ScriptHostToolNames() []string {
+	return append([]string(nil), scriptHostToolNames...)
+}
+
+// namespaceHint covers the remaining convention trap: the host tools live under
+// the tools object, but a model fresh from a bash tool surface writes
+// read_file(...) at the top level and gets a bare "ReferenceError: read_file is
+// not defined". That wording is identical to a misspelled variable, so it is a
+// dead end unless the message names the form to use. The name is matched against
+// the known set rather than guessed from the text, so an ordinary undefined
+// variable gets no hint and the model is not sent after a bug that is not there.
+func namespaceHint(err error) string {
+	const marker = "ReferenceError: "
+	msg := err.Error()
+	i := strings.Index(msg, marker)
+	if i < 0 {
+		return ""
+	}
+	fields := strings.Fields(msg[i+len(marker):])
+	if len(fields) < 3 || fields[1] != "is" || fields[2] != "not" {
+		return ""
+	}
+	for _, name := range scriptHostToolNames {
+		if fields[0] == name {
+			return "; the host tools live on the tools object, so call tools." + name + "({...}) — a bare " + name + "(...) is undefined"
+		}
+	}
+	return ""
 }
 
 // editFileHint covers the other convention trap: read_file prefixes every line
