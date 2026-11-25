@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -100,6 +101,38 @@ func chatRuntimeFor(cfg *config.Config) *chatRuntime {
 		model:          cfg.Model,
 		providerModels: map[string]string{cfg.Provider: cfg.Model},
 		cwd:            "",
+	}
+}
+
+// TestInteractiveSurfaceIsNeverEmpty covers #106. In code mode with
+// features.script off, registryFor leaves only the coordinating tools, so the
+// surface is exactly as wide as what the caller passes in. headlessAgent checks
+// that registry and refuses an empty one; the interactive path instead relied on
+// chatExtraTools happening to return workflow and goal. This test states the
+// invariant where it can actually fail, and covers both surfaces so a future
+// change to the classic branch cannot quietly empty that one instead.
+func TestInteractiveSurfaceIsNeverEmpty(t *testing.T) {
+	for _, surface := range []string{config.CodeModeCodemode, config.CodeModeClassic} {
+		for _, script := range []bool{true, false} {
+			t.Run(surface+"/script="+strconv.FormatBool(script), func(t *testing.T) {
+				cfg := keylessConfig()
+				cfg.Features.CodeMode = surface
+				cfg.SetScript(script)
+				sess := &session.Session{Metadata: session.Metadata{CWD: t.TempDir()}}
+				cwd := t.TempDir()
+				var errOut bytes.Buffer
+
+				rt, _ := buildChatRuntime(context.Background(), cfg, &llmtest.FakeProvider{}, "local", "qwen3-coder",
+					sess, profile.Profile{}, cwd, cwd, stdio{out: &bytes.Buffer{}, err: &errOut})
+
+				// Rebuild from the runtime the way /codemode does, which is the exact
+				// path that would install an empty tool list mid-session.
+				names := registryFor(cfg, rt.runtime.cwd, rt.runtime.root, rt.runtime.extra...).Names()
+				if len(names) == 0 {
+					t.Fatalf("interactive session on %s/script=%v was built with no tools", surface, script)
+				}
+			})
+		}
 	}
 }
 
