@@ -121,26 +121,32 @@ type Features struct {
 	AgentsFile    *bool `yaml:"agents_file"`    // load AGENTS.md into the chat system prompt
 	Skills        *bool `yaml:"skills"`         // discover and expand $name and /name skills
 	PromptCaching *bool `yaml:"prompt_caching"` // cache the static system prompt prefix
-	// Script registers the JavaScript `script` tool. It is off by default: the
-	// tool costs 1,143 bytes of fixed prompt on every request and a measurement
-	// found no case where the model chose it over bash on its own. Turning it on
-	// is a decision the session pays for deliberately, not a default.
+	// Script registers the JavaScript `script` tool. It is on by default: the
+	// tool is how a session writes code instead of issuing one call per step, and
+	// the capability is what the prompt and the tool list are built around. Set it
+	// to false to go back to a surface with no code execution.
 	Script *bool `yaml:"script"`
-	// CodeMode selects how the session's tool surface is composed. "solo" keeps
-	// only the script tool, so every action is written as code, and adds run()
-	// so programs are still reachable. Empty or "default" keeps the ordinary
-	// surface. It is read once at startup: a session's tool list and base prompt
-	// must not change mid-conversation, or the cached prefix breaks.
+	// CodeMode is the session's surface shape, read once at startup so the tool
+	// list and base prompt never change mid-conversation. "codemode" is the
+	// default: every file and command action is written as code inside the script
+	// tool, which also carries run(), a console and one interpreter for the
+	// session. "classic" keeps the separate bash, read_file, write_file, edit_file,
+	// grep and glob tools. Either way the coordinating tools (agent, goal,
+	// workflow) stay.
 	CodeMode string `yaml:"codemode"`
 }
 
-// CodeModeSolo is the only mode value that changes the tool surface.
-const CodeModeSolo = "solo"
+// The two CodeMode values. CodeModeCodemode is the default and also what an
+// unrecognized value falls back to.
+const (
+	CodeModeCodemode = "codemode"
+	CodeModeClassic  = "classic"
+)
 
-// SoloCodeMode reports whether the session replaces its tool surface with the
-// script tool alone.
-func (c *Config) SoloCodeMode() bool {
-	return strings.EqualFold(strings.TrimSpace(c.Features.CodeMode), CodeModeSolo)
+// ClassicCodeMode reports whether the session keeps the separate per-action
+// tools instead of writing code.
+func (c *Config) ClassicCodeMode() bool {
+	return strings.EqualFold(strings.TrimSpace(c.Features.CodeMode), CodeModeClassic)
 }
 
 // AgentsFileEnabled reports whether AGENTS.md loading is on (default: true).
@@ -150,8 +156,8 @@ func (c *Config) AgentsFileEnabled() bool { return featureEnabled(c.Features.Age
 func (c *Config) SkillsEnabled() bool { return featureEnabled(c.Features.Skills, true) }
 
 // ScriptEnabled reports whether the JavaScript `script` tool is registered
-// (default: false).
-func (c *Config) ScriptEnabled() bool { return featureEnabled(c.Features.Script, false) }
+// (default: true).
+func (c *Config) ScriptEnabled() bool { return featureEnabled(c.Features.Script, true) }
 
 // SetScript records the script-tool preference in memory, so a switch made in
 // the TUI survives the prompt rebuild that follows it.

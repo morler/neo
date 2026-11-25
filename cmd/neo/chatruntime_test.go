@@ -14,7 +14,6 @@ import (
 	"github.com/owainlewis/neo/internal/llm/llmtest"
 	"github.com/owainlewis/neo/internal/profile"
 	"github.com/owainlewis/neo/internal/session"
-	"github.com/owainlewis/neo/internal/tools"
 )
 
 // These tests cover the chat runtime: the assembly that happens once before the
@@ -89,7 +88,9 @@ func chatRuntimeFor(cfg *config.Config) *chatRuntime {
 	ag := agent.New(agent.Config{
 		Model:    cfg.Model,
 		Provider: &llmtest.FakeProvider{},
-		Tools:    tools.NewRegistry(tools.ReadFile{}),
+		// Built through the composition root so the fixture's tool surface is the
+		// one a session actually gets, which is what /codemode switches.
+		Tools: registryFor(cfg, "", ""),
 	})
 	return &chatRuntime{
 		cfg:            cfg,
@@ -177,6 +178,9 @@ func TestBuildChatRuntimeWarnsAboutAnUnreadableSavedGoal(t *testing.T) {
 
 func TestBuildChatRuntimeInstallsTheApprovalMatcher(t *testing.T) {
 	cfg := keylessConfig()
+	// bash only exists on the classic surface, and a prefix rule is what this
+	// test is about.
+	cfg.Features.CodeMode = config.CodeModeClassic
 	cwd := t.TempDir()
 	cfg.ToolApprovals = []string{"bash"}
 	var out, errOut bytes.Buffer
@@ -402,33 +406,34 @@ func TestSwitchCodeModeRegistersTheToolPromptAndSetting(t *testing.T) {
 	home := tempHome(t)
 	cfg := keylessConfig()
 	rt := chatRuntimeFor(cfg)
-	if scriptAvailable(t, rt.ag) {
-		t.Fatal("script must start unregistered")
+	// Code execution is the default surface, so the switch starts on.
+	if !scriptAvailable(t, rt.ag) {
+		t.Fatal("script must start registered by default")
 	}
 
-	if err := rt.switchCodeMode(true); err != nil {
-		t.Fatalf("switchCodeMode: %v", err)
+	if err := rt.switchCodeMode(false); err != nil {
+		t.Fatalf("switchCodeMode(off): %v", err)
 	}
-	if !rt.cfg.ScriptEnabled() {
+	if rt.cfg.ScriptEnabled() {
 		t.Fatal("the running config must record the switch")
 	}
-	if !scriptAvailable(t, rt.ag) {
-		t.Fatal("the script tool was not registered")
+	if scriptAvailable(t, rt.ag) {
+		t.Fatal("the script tool is still registered after turning code mode off")
 	}
 	b, err := os.ReadFile(filepath.Join(home, ".neo", "config.yaml"))
 	if err != nil {
 		t.Fatalf("read persisted config: %v", err)
 	}
-	if !strings.Contains(string(b), "script: true") {
+	if !strings.Contains(string(b), "script: false") {
 		t.Fatalf("persisted config does not record the feature:\n%s", b)
 	}
 
-	// Turning it back off must remove the tool again, from the same agent.
-	if err := rt.switchCodeMode(false); err != nil {
-		t.Fatalf("switchCodeMode(off): %v", err)
+	// Turning it back on must restore the tool on the same agent.
+	if err := rt.switchCodeMode(true); err != nil {
+		t.Fatalf("switchCodeMode(on): %v", err)
 	}
-	if scriptAvailable(t, rt.ag) {
-		t.Fatal("the script tool is still registered after turning code mode off")
+	if !scriptAvailable(t, rt.ag) {
+		t.Fatal("the script tool was not restored")
 	}
 }
 
@@ -440,14 +445,14 @@ func TestSwitchCodeModeRestoresEverythingWhenTheWriteFails(t *testing.T) {
 	rt := chatRuntimeFor(cfg)
 	blockedHome(t)
 
-	if err := rt.switchCodeMode(true); err == nil {
+	if err := rt.switchCodeMode(false); err == nil {
 		t.Fatal("expected the config write to fail")
 	}
-	if rt.cfg.ScriptEnabled() {
-		t.Fatal("the failed write left the running config claiming code mode is on")
+	if !rt.cfg.ScriptEnabled() {
+		t.Fatal("the failed write left the running config claiming code mode is off")
 	}
-	if scriptAvailable(t, rt.ag) {
-		t.Fatal("the failed write left the script tool registered")
+	if !scriptAvailable(t, rt.ag) {
+		t.Fatal("the failed write removed the script tool")
 	}
 }
 

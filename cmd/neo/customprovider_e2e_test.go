@@ -167,6 +167,9 @@ func customProviderWorkspace(t *testing.T, endpoint, apiKeyEnv string) (string, 
 	}
 	b.WriteString("    default_model: qwen3-coder\n")
 	b.WriteString("    models:\n      - id: qwen3-coder\n        name: Qwen3 Coder\n")
+	// These tests drive the classic surface, whose read_file and bash the stubs
+	// call by name; the default surface is code mode.
+	b.WriteString("features:\n  codemode: classic\n")
 	if err := os.WriteFile(filepath.Join(dir, "neo.yaml"), []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}

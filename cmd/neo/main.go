@@ -66,11 +66,11 @@ reasoning. ` + chatPromptTail
 const chatPromptTail = `Issue independent reads, searches, or inspections together in one
 response. When you finish a task, briefly summarize what changed.`
 
-// chatPromptTailSolo closes the prompt in single-tool mode. The batching rule is
+// chatPromptTailCodeMode closes the prompt in single-tool mode. The batching rule is
 // dropped rather than qualified: with one tool there is no second top-level call
 // to batch, so keeping the instruction would only tell the model to do something
 // it cannot.
-const chatPromptTailSolo = `Work inside one script call: read, decide, and write together when the decision
+const chatPromptTailCodeMode = `Work inside one script call: read, decide, and write together when the decision
 depends on what you read. When you finish a task, briefly summarize what changed.`
 
 // chatPromptTailScripted is chatPromptTail plus the tie-break. It is used only
@@ -336,8 +336,8 @@ func takeCodeModeFlag(args []string) ([]string, error) {
 			continue
 		}
 		mode := strings.ToLower(strings.TrimSpace(value))
-		if mode != config.CodeModeSolo {
-			return nil, fmt.Errorf("--codemode must be %q, got %q", config.CodeModeSolo, value)
+		if mode != config.CodeModeCodemode && mode != config.CodeModeClassic {
+			return nil, fmt.Errorf("--codemode must be %q or %q, got %q", config.CodeModeCodemode, config.CodeModeClassic, value)
 		}
 		codeModeOverride = mode
 	}
@@ -450,16 +450,16 @@ AGENT PROMPTS:
     neo run --agent=reviewer "review the current diff"
 
 OPT-IN TOOLS:
-  --script           Register the JavaScript script tool for this run.
-  --no-script        Leave it unregistered, overriding features.script.
-                     The tool costs ~1.7 KB of prompt and schema per request,
-                     so it is off unless asked for. In chat,
-                     /codemode on|off|status changes it and writes the choice
-                     to features.script.
+  --codemode=codemode   Default. Act by writing code: one script tool with
+                        run(), a console, and one interpreter per session.
+                        agent, goal and workflow stay available.
+  --codemode=classic    Keep the separate bash, read_file, write_file,
+                        edit_file, grep and glob tools. Read once at startup.
 
-  --codemode=solo    Replace the whole tool surface with the script tool, so
-                     every action is code, and add run() so programs still run.
-                     Read once at startup: a session cannot switch mid-way.
+  --script           Register the JavaScript script tool (default: on).
+  --no-script        Leave it unregistered, overriding features.script.
+                     In chat, /codemode on|off|status changes it and writes the
+                     choice to features.script.
 
 HEADLESS RUN:
   neo run --json --timeout 10m "Review this repo without changing files"
@@ -487,40 +487,44 @@ func newRegistry(cwd, root string, extra ...tools.Tool) *tools.Registry {
 	return tools.NewRegistry(append(append(base, tools.NewFileTools()...), extra...)...)
 }
 
-// registryFor is the composition root's single decision about the script tool.
-// It is off unless the config or --script says otherwise: the tool costs fixed
-// prompt bytes on every request, and a measurement found no task where the model
-// chose it on its own.
+// registryFor is the composition root's single decision about the tool surface.
 //
-// When it is on, the script tool receives the same file tools the registry
-// holds, so a read inside a script records the file a later edit checks, and
-// bash points at it from the place the model reads before choosing a tool.
+// Code mode is the default: the model gets one code tool and writes what it
+// would otherwise express as a sequence of separate calls, with run() for
+// programs, a console, and one interpreter per session. The coordinating tools
+// (agent, goal, workflow) are passed in by the caller and stay either way: a
+// session that writes code still delegates, tracks a goal, and shows a checklist.
+//
+// Classic mode keeps the per-action tools for a session that wants them. The
+// script tool is still there when features.script is on, but nothing depends on
+// it, and bash names it from the place the model reads before choosing a tool.
 func registryFor(cfg *config.Config, cwd, root string, extra ...tools.Tool) *tools.Registry {
+	scripted := cfg == nil || cfg.ScriptEnabled()
+
+	if cfg == nil || !cfg.ClassicCodeMode() {
+		// Absolute paths are what make grep's output usable: inside one code call
+		// there is no cd, so a relative path from grep would not resolve.
+		codeFiles := append([]tools.Tool{
+			tools.Grep{Root: root, Absolute: true},
+			tools.Glob{Root: root, Absolute: true},
+		}, tools.NewFileTools()...)
+		code := tools.NewScript(codeFiles)
+		code.CodeMode = true
+		code.CWD = cwd
+		code.Session = &tools.ScriptSession{}
+		base := []tools.Tool{code}
+		if !scripted {
+			// features.script: false in code mode leaves only the coordinating
+			// tools, which is the file-and-command-free session.
+			base = nil
+		}
+		return tools.NewRegistry(append(base, extra...)...)
+	}
+
 	files := append([]tools.Tool{
 		tools.Grep{Root: root},
 		tools.Glob{Root: root},
 	}, tools.NewFileTools()...)
-
-	// Solo mode is one complete replacement, not an addition: the model gets the
-	// script tool and nothing else, so every action is written as code. run()
-	// comes with it or the session could not run a test, a build, or git at all.
-	// Every other tool stays out on purpose; leaving bash in would keep the
-	// cheaper path that the experiment exists to remove.
-	if cfg != nil && cfg.SoloCodeMode() {
-		// Absolute paths are what make grep's output usable: inside one script
-		// there is no cd, so a relative path from grep would not resolve.
-		soloFiles := append([]tools.Tool{
-			tools.Grep{Root: root, Absolute: true},
-			tools.Glob{Root: root, Absolute: true},
-		}, tools.NewFileTools()...)
-		solo := tools.NewScript(soloFiles)
-		solo.Solo = true
-		solo.CWD = cwd
-		solo.Session = &tools.ScriptSession{}
-		return tools.NewRegistry(solo)
-	}
-
-	scripted := cfg != nil && cfg.ScriptEnabled()
 	base := append([]tools.Tool{
 		tools.Bash{Timeout: tools.DefaultBashTimeout, CWD: cwd, ScriptAvailable: scripted},
 	}, files...)
@@ -544,8 +548,8 @@ func chatSystem(cfg *config.Config, cwd string, sk []skills.Skill, agentProfile 
 	// to them: a personal assistant should not be carrying "run tests after you
 	// change code". Everything after this block composes unchanged.
 	instructions := chatSystemPrompt
-	if soloScript(reg) {
-		instructions = strings.TrimSuffix(chatSystemPrompt, chatPromptTail) + chatPromptTailSolo
+	if codeModeScript(reg) {
+		instructions = strings.TrimSuffix(chatSystemPrompt, chatPromptTail) + chatPromptTailCodeMode
 	} else if hasScript(reg) {
 		instructions = strings.TrimSuffix(chatSystemPrompt, chatPromptTail) + chatPromptTailScripted
 	}
@@ -625,18 +629,18 @@ func capabilitySections(reg *tools.Registry) string {
 	if _, ok := reg.Get("goal"); ok {
 		b.WriteString(goalCapability)
 	}
-	if soloScript(reg) {
-		b.WriteString(soloCapability)
+	if codeModeScript(reg) {
+		b.WriteString(codeModeCapability)
 	} else if hasScript(reg) {
 		b.WriteString(scriptCapability)
 	}
 	return b.String()
 }
 
-// soloScript reports whether the registry is the single-tool surface. It is a
-// different question from hasScript: both modes register a script tool, and the
+// codeModeScript reports whether the session acts by writing code. It is a
+// different question from hasScript: both shapes register a script tool, and the
 // prompt sections cannot be shared because each names tools the other lacks.
-func soloScript(reg *tools.Registry) bool {
+func codeModeScript(reg *tools.Registry) bool {
 	if reg == nil {
 		return false
 	}
@@ -645,20 +649,21 @@ func soloScript(reg *tools.Registry) bool {
 		return false
 	}
 	s, ok := t.(tools.Script)
-	return ok && s.Solo
+	return ok && s.CodeMode
 }
 
-// soloCapability replaces scriptCapability in single-tool mode. The two cannot
+// codeModeCapability replaces scriptCapability when code is how the session acts. The two cannot
 // share text: this one must not offer a top-level tool as the alternative to
 // wrapping work in a script, because there is none, and it must say that run()
 // and persistent variables exist, which the default section has no reason to.
-const soloCapability = `
+const codeModeCapability = `
 
-# One tool
+# Acting by code
 
-This session has one tool: script. Every action is code, including reading a
-file, and run() is how a program starts. There is no top-level bash, read_file,
-or edit_file to fall back on.
+Every file and command action goes through script: reading a file, searching,
+editing, and starting a program with run(). There is no top-level bash,
+read_file, or edit_file to fall back on. The other tools here — agent, goal,
+workflow — coordinate the work rather than perform it.
 
 Read, decide, and write inside the same call whenever the decision comes from
 what you read. One call that greps, branches on the match, and edits the file

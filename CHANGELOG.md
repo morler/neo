@@ -4,6 +4,23 @@ All notable changes to Neo will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Code mode is now the default surface. The model acts by writing JavaScript in
+  the `script` tool, which carries `run(argv, timeoutSeconds)` for programs, a
+  `console`/`print`, and one interpreter per session, so `globalThis` state
+  survives between calls while local declarations stay per call. `agent`, `goal`
+  and `workflow` remain: they coordinate the work, and writing code does not mean
+  giving up delegation, goals or the visible checklist. Absolute paths keep
+  `grep`/`glob` output usable inside a call where there is no `cd`, and relative
+  paths resolve against the session directory so a script and `run()` agree.
+- `features.codemode: classic` or `--codemode=classic` keeps the separate `bash`,
+  `read_file`, `write_file`, `edit_file`, `grep` and `glob` tools. The fixed floor
+  is 3,075 bytes in code mode against 8,084 in classic.
+- `features.script` now defaults to `true`, since code execution is what the
+  surface is built around. `/codemode on|off` still toggles it and persists the
+  choice.
+
 ### Added
 
 - Added an opt-in single-tool code mode: `features.codemode: solo` or

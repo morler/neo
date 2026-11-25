@@ -1,7 +1,7 @@
 ---
 id: 95
 title: Resolve script file-tool paths against the script's working directory
-status: open
+status: in-progress
 priority: medium
 labels:
     - bug

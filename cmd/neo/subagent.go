@@ -55,7 +55,8 @@ func chatAgentTool(prov llm.Provider, model, cwd, root string, cfg *config.Confi
 		// Same decision as the coordinator's registry (registryFor), so a
 		// session that enabled the tool does not end up with children that
 		// cannot use it.
-		Script: cfg != nil && cfg.ScriptEnabled(),
+		Script:   cfg != nil && cfg.ScriptEnabled(),
+		CodeMode: cfg == nil || !cfg.ClassicCodeMode(),
 	}
 	sup := subagent.NewSupervisor(runner, subagent.DefaultBudget())
 	return subagent.AgentTool{Sup: sup, Dir: cwd}, sup.Events, runner

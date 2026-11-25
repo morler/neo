@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -215,13 +216,15 @@ func BenchmarkChatSystem(b *testing.B) {
 	b.ReportMetric(float64(len(prompt)), "prompt_bytes")
 }
 
-// TestScriptFloorBudget covers the same measurement with the tool turned on.
-// It exists because the previous version of this file measured only the default
-// surface and would have kept passing after the tool's cost grew.
+// TestScriptFloorBudget measures the classic surface with the script tool on,
+// which is the largest floor the code produces. It exists because an earlier
+// version of this file measured only the default surface and would have kept
+// passing after the tool's cost grew.
 func TestScriptFloorBudget(t *testing.T) {
 	on := true
 	cfg := &config.Config{}
 	cfg.Features.Script = &on
+	cfg.Features.CodeMode = config.CodeModeClassic
 	reg := registryFor(cfg, "", "", workflow.Tool{}, subagent.AgentTool{}, goal.Tool{})
 	schemas, err := json.Marshal(reg.Specs())
 	if err != nil {
@@ -237,74 +240,70 @@ func TestScriptFloorBudget(t *testing.T) {
 	}
 }
 
-// TestScriptToolIsOffByDefault is the decision itself, as a test: registering
-// the tool has to be a deliberate act, because it costs prompt bytes on every
-// request and a measurement found no task where the model chose it.
-func TestScriptToolIsOffByDefault(t *testing.T) {
-	if (&config.Config{}).ScriptEnabled() {
-		t.Fatal("script tool is enabled by default")
+// TestScriptToolIsOnByDefault is the decision itself, as a test: code execution
+// is what the surface is built around, so a session gets it without asking.
+func TestScriptToolIsOnByDefault(t *testing.T) {
+	if !(&config.Config{}).ScriptEnabled() {
+		t.Fatal("script tool is disabled by default")
 	}
-	if _, ok := registryFor(&config.Config{}, "", "").Get("script"); ok {
-		t.Fatal("default registry contains the script tool")
+	if _, ok := registryFor(&config.Config{}, "", "").Get("script"); !ok {
+		t.Fatal("default registry has no script tool")
 	}
 }
 
 // TestBashHintFollowsTheScriptTool is the composition contract for the hint in
-// bash's description: registryFor is the one place that decides, so the text
-// the model reads about bash and the availability of script cannot disagree.
+// bash's description, which only the classic surface has. registryFor is the one
+// place that decides, so the text about bash and the availability of script
+// cannot disagree.
 func TestBashHintFollowsTheScriptTool(t *testing.T) {
-	defaultBash, ok := registryFor(&config.Config{}, "", "").Get("bash")
+	withoutScript := &config.Config{Features: config.Features{CodeMode: config.CodeModeClassic, Script: new(bool)}}
+	withScript := &config.Config{Features: config.Features{CodeMode: config.CodeModeClassic}}
+
+	plainBash, ok := registryFor(withoutScript, "", "").Get("bash")
 	if !ok {
-		t.Fatal("default registry has no bash")
+		t.Fatal("classic registry without script has no bash")
 	}
-	on := true
-	cfg := &config.Config{}
-	cfg.Features.Script = &on
-	scriptedBash, ok := registryFor(cfg, "", "").Get("bash")
+	scriptedBash, ok := registryFor(withScript, "", "").Get("bash")
 	if !ok {
-		t.Fatal("scripted registry has no bash")
+		t.Fatal("classic registry with script has no bash")
 	}
 
-	// Compared against the tool itself rather than a literal: this test is
-	// about which description the registry selects, and the literal is pinned
-	// in internal/tools.
-	if off, want := defaultBash.Spec().Description, (tools.Bash{}).Spec().Description; off != want {
-		t.Fatalf("default description = %q, want the plain one %q", off, want)
+	// Compared against the tool itself rather than a literal: this test is about
+	// which description the registry selects, and the literal is pinned in
+	// internal/tools.
+	if got, want := plainBash.Spec().Description, (tools.Bash{}).Spec().Description; got != want {
+		t.Fatalf("description without script = %q, want the plain one %q", got, want)
 	}
 	if got, want := scriptedBash.Spec().Description, (tools.Bash{ScriptAvailable: true}).Spec().Description; got != want {
-		t.Fatalf("scripted description = %q, want the hinted one %q", got, want)
-	}
-	if defaultBash.Spec().Description == scriptedBash.Spec().Description {
-		t.Fatal("the hint did not reach the scripted registry")
+		t.Fatalf("description with script = %q, want the hinted one %q", got, want)
 	}
 }
 
-// TestScriptTieBreakReachesThePromptOnlyWithScript covers the prompt half of
-// the batching conflict: the scripted prompt says which case wins between
-// "batch independent calls" and a script being one serial call, and the default
-// prompt says nothing of the sort.
-func TestScriptTieBreakReachesThePromptOnlyWithScript(t *testing.T) {
+// TestScriptTieBreakReachesTheClassicPromptOnly covers the prompt half of the
+// batching conflict on the surface that still batches: classic with bash and the
+// file tools. Code mode has no second top-level call, so it drops the rule
+// instead, which TestCodeModePromptDropsTheBatchingRule pins.
+func TestScriptTieBreakReachesTheClassicPromptOnly(t *testing.T) {
 	if !strings.HasSuffix(chatSystemPrompt, chatPromptTail) {
 		t.Fatal("chatSystemPrompt does not end with chatPromptTail, so the scripted rewrite cannot replace it")
 	}
 	if strings.Contains(chatSystemPrompt, "one script call") {
-		t.Fatal("the default prompt mentions script; a session without the tool pays for it")
+		t.Fatal("the base prompt mentions script; a session without the tool pays for it")
 	}
 
-	plain, _ := chatSystem(promptConfig(false), "", nil, profile.Profile{}, registryFor(promptConfig(false), "", ""), io.Discard)
-	scripted, _ := chatSystem(promptConfig(true), "", nil, profile.Profile{}, registryFor(promptConfig(true), "", ""), io.Discard)
+	classicOff := &config.Config{Features: config.Features{CodeMode: config.CodeModeClassic, Script: new(bool)}}
+	classicOn := &config.Config{Features: config.Features{CodeMode: config.CodeModeClassic}}
+	plain, _ := chatSystem(classicOff, "", nil, profile.Profile{}, registryFor(classicOff, "", ""), io.Discard)
+	scripted, _ := chatSystem(classicOn, "", nil, profile.Profile{}, registryFor(classicOn, "", ""), io.Discard)
 
 	// chatSystem appends environment and project sections after the
-	// instructions, so the tail is found in the body rather than compared to
-	// the end of the whole prompt.
+	// instructions, so the tail is found in the body rather than compared to the
+	// end of the whole prompt.
 	if !strings.Contains(plain, chatPromptTail) {
-		t.Fatal("the prompt without script does not carry the plain tail")
+		t.Fatal("the classic prompt without script does not carry the plain tail")
 	}
 	if !strings.Contains(scripted, chatPromptTailScripted) {
-		t.Fatal("the prompt with script does not carry the scripted tail")
-	}
-	if !strings.Contains(scripted, "one script call") {
-		t.Fatal("the scripted prompt does not resolve the batching conflict")
+		t.Fatal("the classic prompt with script does not carry the scripted tail")
 	}
 	if strings.Contains(plain, "one script call") {
 		t.Fatal("the plain prompt resolves a conflict it cannot have")
@@ -342,19 +341,17 @@ func TestDefaultPromptKeepsThePlainBatchingRule(t *testing.T) {
 	}
 }
 
-// soloFloorByteBudget covers the single-tool mode: one tool schema plus the
-// prompt a session with only that tool builds. Measured 2026-11-25 at 2,890
-// bytes (812 schema + 2,078 prompt), well under the default floor because one
-// tool replaces nine. A ceiling rather than a target: the mode costs what its
-// single description costs, and growth there is visible.
-const soloFloorByteBudget = 3_500
+// codeModeFloorByteBudget covers the default surface: one code tool plus the
+// prompt a session that acts by writing code builds. Measured 2026-11-25 at
+// 2,970 bytes (856 schema + 2,114 prompt) before the coordinating tools and
+// their sections are added, so this is the floor of the mode itself.
+const codeModeFloorByteBudget = 3_500
 
-// TestSoloFloorBudget measures the mode #91 evaluates. It is separate from the
-// other two because this mode's tool list and prompt sections are both
-// different, so folding it into either floor would hide which mode moved.
-func TestSoloFloorBudget(t *testing.T) {
+// TestCodeModeFloorBudget measures the surface the default registry builds. It
+// is separate from the classic floor because the tool list and prompt sections
+// are both different, so folding it into one number would hide which moved.
+func TestCodeModeFloorBudget(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Features.CodeMode = config.CodeModeSolo
 	reg := registryFor(cfg, "", "")
 	schemas, err := json.Marshal(reg.Specs())
 	if err != nil {
@@ -362,44 +359,51 @@ func TestSoloFloorBudget(t *testing.T) {
 	}
 	prompt, _ := chatSystem(cfg, "", nil, profile.Profile{}, reg, io.Discard)
 	total := len(schemas) + len(prompt)
-	t.Logf("solo floor: tools %d + prompt %d = %d bytes (budget %d)",
-		len(schemas), len(prompt), total, soloFloorByteBudget)
-	if total > soloFloorByteBudget {
-		t.Fatalf("solo floor = %d bytes, budget = %d", total, soloFloorByteBudget)
+	t.Logf("code-mode floor: tools %d + prompt %d = %d bytes (budget %d)",
+		len(schemas), len(prompt), total, codeModeFloorByteBudget)
+	if total > codeModeFloorByteBudget {
+		t.Fatalf("code-mode floor = %d bytes, budget = %d", total, codeModeFloorByteBudget)
 	}
 }
 
-// TestSoloRegistersOnlyTheScriptTool is the whole point of the mode: bash and
-// the file tools are absent on purpose, because leaving them in keeps the
-// cheaper path the experiment exists to remove.
-func TestSoloRegistersOnlyTheScriptTool(t *testing.T) {
+// TestCodeModeKeepsTheCoordinatingTools is the decision that separates this mode
+// from a single-tool session: writing code does not mean giving up delegation,
+// goals or the checklist, so the tools the caller passes in must survive.
+func TestCodeModeKeepsTheCoordinatingTools(t *testing.T) {
+	names := registryFor(&config.Config{}, "", "", workflow.Tool{}, subagent.AgentTool{}, goal.Tool{}).Names()
+	want := []string{"agent", "goal", "script", "workflow"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("code-mode tools = %v, want %v", names, want)
+	}
+}
+
+// TestClassicModeKeepsThePerActionTools pins the other shape, which is what a
+// session asks for when it does not want its actions written as code.
+func TestClassicModeKeepsThePerActionTools(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Features.CodeMode = config.CodeModeSolo
+	cfg.Features.CodeMode = config.CodeModeClassic
 	names := registryFor(cfg, "", "").Names()
-	if len(names) != 1 || names[0] != "script" {
-		t.Fatalf("solo tools = %v, want [script]", names)
-	}
-	// The default surface must not move because this mode exists.
-	if _, ok := registryFor(&config.Config{}, "", "").Get("script"); ok {
-		t.Fatal("the default registry gained the script tool")
+	for _, want := range []string{"bash", "read_file", "write_file", "edit_file", "grep", "glob", "script"} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("classic tools = %v, want %q", names, want)
+		}
 	}
 }
 
-// TestSoloPromptDropsTheBatchingRule keeps the two prompts from contradicting
-// themselves. With one tool there is no second top-level call to batch, so the
-// solo prompt must not ask for it, and it must not offer a tool as the
-// alternative to writing a script.
-func TestSoloPromptDropsTheBatchingRule(t *testing.T) {
+// TestCodeModePromptDropsTheBatchingRule keeps the two prompts from
+// contradicting themselves. Acting through one code tool leaves no second
+// top-level call to batch, so asking for it would describe a decision the model
+// cannot make.
+func TestCodeModePromptDropsTheBatchingRule(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Features.CodeMode = config.CodeModeSolo
 	prompt, _ := chatSystem(cfg, "", nil, profile.Profile{}, registryFor(cfg, "", ""), io.Discard)
 
 	if strings.Contains(prompt, "Issue independent reads") {
-		t.Fatal("the solo prompt still asks for independent top-level calls")
+		t.Fatal("the code-mode prompt still asks for independent top-level calls")
 	}
-	for _, want := range []string{"one tool", "run(", "globalThis"} {
+	for _, want := range []string{"run(", "globalThis"} {
 		if !strings.Contains(prompt, want) {
-			t.Fatalf("solo prompt lacks %q", want)
+			t.Fatalf("code-mode prompt lacks %q", want)
 		}
 	}
 }

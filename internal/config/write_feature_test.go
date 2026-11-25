@@ -65,14 +65,28 @@ func TestWriteFeatureCreatesTheBlock(t *testing.T) {
 	}
 }
 
-// TestScriptEnabledDefaultsOff is the product decision as a test.
-func TestScriptEnabledDefaultsOff(t *testing.T) {
-	if (&Config{}).ScriptEnabled() {
-		t.Fatal("script is enabled by default")
+// TestScriptEnabledDefaultsOn is the product decision as a test: code execution
+// is what the tool surface and the prompt are built around, so a session gets it
+// unless it says otherwise.
+func TestScriptEnabledDefaultsOn(t *testing.T) {
+	if !(&Config{}).ScriptEnabled() {
+		t.Fatal("script is disabled by default")
 	}
-	on := true
-	if !(&Config{Features: Features{Script: &on}}).ScriptEnabled() {
-		t.Fatal("script: true did not enable it")
+	off := false
+	if (&Config{Features: Features{Script: &off}}).ScriptEnabled() {
+		t.Fatal("script: false did not disable it")
+	}
+}
+
+// TestCodeModeIsTheDefaultSurface pins the shape, not just the flag: an unset
+// and an unrecognized codemode both build the code-first registry.
+func TestCodeModeIsTheDefaultSurface(t *testing.T) {
+	if (&Config{}).ClassicCodeMode() {
+		t.Fatal("the default surface is classic")
+	}
+	set := &Config{Features: Features{CodeMode: "classic"}}
+	if !set.ClassicCodeMode() {
+		t.Fatal("codemode: classic did not select the classic surface")
 	}
 }
 

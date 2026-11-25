@@ -77,11 +77,28 @@ func (s *Supervisor) toolsFor(mode AgentMode) []string {
 	if mode == AgentModeInspect {
 		return append([]string(nil), inspectAgentTools...)
 	}
+	// A code-mode child acts through the script tool alone, like the coordinator.
+	// Keeping the per-action names here would filter the registry down to tools a
+	// code-mode child does not have.
+	if s.codeModeEnabled() {
+		return []string{scriptToolName}
+	}
 	tools := append([]string(nil), dynamicAgentTools...)
 	if s.scriptEnabled() {
 		tools = append(tools, scriptToolName)
 	}
 	return tools
+}
+
+// codeModeEnabled asks the runner whether children act by writing code. A runner
+// that cannot answer gets the classic list, which is the surface that works
+// without the extension.
+func (s *Supervisor) codeModeEnabled() bool {
+	type coded interface{ CodeModeEnabled() bool }
+	if r, ok := s.runner.(coded); ok {
+		return r.CodeModeEnabled()
+	}
+	return false
 }
 
 // scriptEnabled reports whether work-mode children may use the script tool.

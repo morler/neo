@@ -11,21 +11,19 @@ Neo exposes a small built-in tool surface to the model.
 | `goal` | Interactive chat | Read or finish the session's standing goal. `action: "get"` reports the goal id, objective, status, attempt budget, and stopping rules; `complete` and `blocked` need that goal id plus a reason. The tool cannot pause, resume, clear, or change the budget. |
 | `grep` | Chat and headless | Search the workspace with a regular expression, honouring `.gitignore`. Returns matching lines as `path:line:text`. |
 | `read_file` | Chat and headless | Read a file from disk, prefixing each line with its 1-indexed number and a tab so the numbers match what `grep` reports. Returns up to `tools.MaxOutputBytes` (64 KiB); use `offset` and `limit` to page through larger files. |
-| `script` | Opt-in (`features.script`, `--script`, or `/codemode on`) | Run JavaScript that can call a whitelisted tool set, returning its last expression's value. The whitelist is `read_file`, `grep`, `glob`, `write_file`, and `edit_file`; `bash` is never included, there is no `import`, and `node:fs` is not reachable. Each scripted call passes the same approval matcher a top-level call would, so `tool_approvals` keeps its meaning one level down, and an approval prompt names `script` as the requester. Always serial. Off by default because it costs ~1.7 KB of prompt and schema on every request (1,712 bytes: 949 schema, 763 instructions). When it is registered, `bash`'s description gains one sentence pointing at it, because that is where the model reads before choosing a tool, and the base prompt's batching rule gains a tie-break saying a dependent step is one script call rather than two responses; a session without the tool carries neither. |
+| `script` | Default surface | Run JavaScript that can call a whitelisted tool set, returning its last expression's value. On the code-mode surface (the default) it is how every file and command action happens: globals include `run(argv, timeoutSeconds)` for programs, `console`/`print`, and one interpreter kept for the session so `globalThis.x = …` survives between calls, while local declarations stay per call. `run` returns `{stdout, stderr, code}` and a non-zero code is data, not an error. On the classic surface it is the opt-in batch tool with only the file globals. Either way the whitelist is `read_file`, `grep`, `glob`, `write_file`, `edit_file`; `bash` is never included and there is no `import`. A bare string argument binds to the tool's one required field, so `glob(\"*\")` works as well as `glob({pattern: \"*\"})`. Each scripted call passes the same approval matcher a top-level call would. |
 | `workflow` | Interactive chat | Create or update the visible workflow checklist. Neo attaches tool and subagent activity to the active item automatically. |
 | `write_file` | Chat and headless | Write content to a file, creating parent directories. Overwrites the file if it exists. |
 
-Single-tool mode (`features.codemode: solo`, `--codemode=solo`) replaces this
-whole table with the `script` tool: no `bash`, `read_file`, `edit_file`, `grep`,
-`glob`, `write_file`, `agent`, `goal` or `workflow`. Inside a script, `run(argv,
-timeoutSeconds)` starts a program and returns `{stdout, stderr, code}`, with a
-non-zero code as data rather than an error; `console.log` and `print` collect
-output that joins the tool result; `globalThis.x = …` survives to later calls
-while local declarations do not. Approval still applies to the file tools the
-script calls. Process execution is the one thing that loses its confirmation
-hook: `tool_approvals` can match `bash` but cannot see inside `run()`, which is
-the same position `permissions.md` takes — the environment contains, the
-prompt only reminds.
+The default surface is **code mode**: the model acts by writing code in the
+`script` tool, which carries `run()` for programs, a console, and one interpreter
+per session, and keeps `agent`, `goal` and `workflow` because those coordinate
+rather than act. `features.codemode: classic` restores the separate per-action
+tools in the table above.
+
+Process execution loses its confirmation hook in either surface: `tool_approvals`
+can match `bash` but cannot see inside `run()`, which is the same position
+`permissions.md` takes — the environment contains, the prompt only reminds.
 
 Independent inspect calls issued in one model response can run concurrently.
 Inspect children receive only `read_file`, `grep`, and `glob`. Work-mode children

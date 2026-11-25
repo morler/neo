@@ -32,6 +32,9 @@ type AgentRunner struct {
 	// the session has it enabled. It is a field rather than a lookup because the
 	// contract is over a capability the runner shares with the coordinator.
 	Script bool
+	// CodeMode gives children the same code-first surface the coordinator has:
+	// one code tool with run() instead of bash and the per-action file tools.
+	CodeMode bool
 }
 
 // SetBackend updates the default provider and model used by future workers.
@@ -53,6 +56,9 @@ func (r *AgentRunner) SetBackend(provider llm.Provider, model string) error {
 
 // ScriptEnabled answers the supervisor's question about the script tool.
 func (r *AgentRunner) ScriptEnabled() bool { return r.Script }
+
+// CodeModeEnabled answers the supervisor's question about the surface shape.
+func (r *AgentRunner) CodeModeEnabled() bool { return r.CodeMode }
 
 func (r *AgentRunner) backend() (llm.Provider, string) {
 	r.backendMu.RLock()
@@ -107,10 +113,27 @@ func (r *AgentRunner) registryWithOptions(dir string, opts RunOptions) *tools.Re
 	// read inside a child's script is the same read its later edit consults.
 	files := append([]tools.Tool{tools.Grep{Root: r.Root}, tools.Glob{Root: r.Root}},
 		tools.NewFileTools()...)
-	base := append([]tools.Tool{tools.Bash{Timeout: bashTimeout, CWD: dir, ScriptAvailable: r.Script}}, files...)
-	if r.Script {
-		base = append(base, tools.NewScript(files))
+
+	var base []tools.Tool
+	if r.CodeMode {
+		// A child in code mode acts the way the coordinator does. Absolute paths
+		// are what make grep's output usable inside one call, where there is no cd.
+		codeFiles := append([]tools.Tool{
+			tools.Grep{Root: r.Root, Absolute: true},
+			tools.Glob{Root: r.Root, Absolute: true},
+		}, tools.NewFileTools()...)
+		code := tools.NewScript(codeFiles)
+		code.CodeMode = true
+		code.CWD = dir
+		code.Session = &tools.ScriptSession{}
+		base = []tools.Tool{code}
+	} else {
+		base = append([]tools.Tool{tools.Bash{Timeout: bashTimeout, CWD: dir, ScriptAvailable: r.Script}}, files...)
+		if r.Script {
+			base = append(base, tools.NewScript(files))
+		}
 	}
+
 	all := tools.NewRegistry(base...)
 	if len(opts.Tools) == 0 {
 		return all

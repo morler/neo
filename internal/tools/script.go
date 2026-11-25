@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -90,11 +91,11 @@ type Script struct {
 	// working directory, which is what a session usually wants.
 	CWD string
 
-	// Solo selects the single-tool mode: globals() also exposes run(), and the
-	// composition root registers this tool as the session's only capability. It
-	// is set once at startup, because changing a session's tool list mid-turn
-	// breaks the cached prefix.
-	Solo bool
+	// CodeMode makes this the session's way of acting: globals() also exposes
+	// run(), the session keeps one interpreter, and a bare string argument binds
+	// to the tool's one required field. It is set once at startup, because
+	// changing a session's tool list mid-turn breaks the cached prefix.
+	CodeMode bool
 
 	// Session keeps one runtime alive across calls, so a declaration a script
 	// made is still there for the next one. Nil means every call starts fresh,
@@ -131,8 +132,8 @@ func (Script) ParallelSafe(map[string]any) bool { return false }
 // gate landed; the model read the conservative text and routed around the tool.
 // TestScriptSpecMatchesGlobals now fails if the two drift apart again.
 func (s Script) Spec() llm.ToolSpec {
-	if s.Solo {
-		return s.soloSpec()
+	if s.CodeMode {
+		return s.codeModeSpec()
 	}
 	return llm.ToolSpec{
 		Name: "script",
@@ -186,8 +187,8 @@ func (s Script) Run(ctx context.Context, input map[string]any) (string, error) {
 	// still sees; inside eval they belong to the eval scope and vanish, which
 	// would make the promised persistence a lie. RunScript already returns the
 	// script's completion value, so the last expression is still the result.
-	if s.Solo {
-		return s.runSolo(ctx, source)
+	if s.CodeMode {
+		return s.runCodeMode(ctx, source)
 	}
 
 	wrapper, err := moejs.CompileScript("script", scriptWrapper)
@@ -272,13 +273,13 @@ func (s Script) globals(ctx context.Context) map[string]any {
 	// agent can tell two read_file calls apart even when the arguments match.
 	calls := &subCallCounter{}
 	globals := map[string]any{
-		"read_file":  s.hostTool(ctx, s.Read, calls, "path"),
-		"grep":       s.hostTool(ctx, s.Grep, calls, "pattern"),
-		"glob":       s.hostTool(ctx, s.Glob, calls, "pattern"),
-		"write_file": s.hostTool(ctx, s.Write, calls, "path"),
-		"edit_file":  s.hostTool(ctx, s.Edit, calls, "path"),
+		"read_file":  s.hostTool(ctx, s.Read, calls, hostCall{required: "path", path: "path"}),
+		"grep":       s.hostTool(ctx, s.Grep, calls, hostCall{required: "pattern"}),
+		"glob":       s.hostTool(ctx, s.Glob, calls, hostCall{required: "pattern"}),
+		"write_file": s.hostTool(ctx, s.Write, calls, hostCall{required: "path", path: "path"}),
+		"edit_file":  s.hostTool(ctx, s.Edit, calls, hostCall{required: "path", path: "path"}),
 	}
-	if s.Solo {
+	if s.CodeMode {
 		globals["run"] = s.runTool(ctx, calls)
 	}
 	return globals
@@ -303,10 +304,10 @@ func (s Script) consoleGlobals(console *consoleLog) map[string]any {
 	}
 }
 
-// soloExtras are the globals only a one-tool session has. The console is not
-// here: it belongs to every script, so splitting it out is what keeps the two
-// modes from drifting.
-func (s Script) soloExtras(ctx context.Context) map[string]any {
+// codeModeExtras are the globals a code-mode session has beyond the tools. The
+// console is not here: it belongs to every script, so splitting it out is what
+// keeps the two modes from drifting.
+func (s Script) codeModeExtras(ctx context.Context) map[string]any {
 	globals := s.globals(ctx)
 	return map[string]any{"run": globals["run"]}
 }
@@ -325,7 +326,7 @@ func (c *subCallCounter) next(parent string) string {
 // The arguments are converted to Go before the tool runs, so nothing the script
 // does to its own object afterwards can change what executes. An error thrown
 // here surfaces as a JS exception, which is how a script sees a failed tool.
-func (s Script) hostTool(ctx context.Context, t Tool, calls *subCallCounter, required string) moejs.NativeFunc {
+func (s Script) hostTool(ctx context.Context, t Tool, calls *subCallCounter, call hostCall) moejs.NativeFunc {
 	// The parent's tool-use ID is what the agent already knows: reusing
 	// CallMetadata means this file needs no second context key and no import of
 	// the agent package.
@@ -348,11 +349,19 @@ func (s Script) hostTool(ctx context.Context, t Tool, calls *subCallCounter, req
 				// string is the obvious mistake, and measured runs made it in five
 				// of five sessions. Binding it to the one required string field is
 				// unambiguous: it is what the model meant.
-				input[required] = value
+				input[call.required] = value
 			default:
-				return engine.Undefined(), fmt.Errorf("%s takes an object of named arguments, not %T; write %s({%s: ...})", t.Name(), converted, t.Name(), required)
+				return engine.Undefined(), fmt.Errorf("%s takes an object of named arguments, not %T; write %s({%s: ...})", t.Name(), converted, t.Name(), call.required)
 			}
 		}
+		// Relative paths resolve against the script's working directory, which is
+		// where run() starts programs. Without this, "./a.txt" in a tool call meant
+		// the process directory while run(["cat", "a.txt"]) meant CWD, so a script
+		// had two answers for the same path. Resolved before approval so a rule and
+		// a prompt both see the real path, and before the tool runs so the read and
+		// the write that follow use one key.
+		resolvePath(input, call.path, s.CWD)
+
 		id := calls.next(parent.ToolUseID)
 		name := t.Name()
 		report(id, name, input, "", false, false)
@@ -530,11 +539,11 @@ func (s Script) runInSession(ctx context.Context, wrapper *moejs.Script, source 
 	return s.limitOutput(out)
 }
 
-// soloSpec is the whole tool surface in single-tool mode, so its description
+// codeModeSpec describes the tool when it is how the session acts, so the text
 // carries both what a script may call and what run() is for. It lists the
 // whitelist for the same reason the default description does: this text is the
 // model's only account of what exists.
-func (s Script) soloSpec() llm.ToolSpec {
+func (s Script) codeModeSpec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: "script",
 		Description: `Do the work by writing JavaScript; the last expression is the result.
@@ -566,10 +575,10 @@ func (s Script) bindGlobals(rt *moejs.Runtime, ctx context.Context, console *con
 			return err
 		}
 	}
-	if !s.Solo {
+	if !s.CodeMode {
 		return nil
 	}
-	for name, value := range s.soloExtras(ctx) {
+	for name, value := range s.codeModeExtras(ctx) {
 		if err := rt.SetGlobal(name, value); err != nil {
 			return err
 		}
@@ -577,25 +586,7 @@ func (s Script) bindGlobals(rt *moejs.Runtime, ctx context.Context, console *con
 	return nil
 }
 
-// soloScript is the compiled source of one solo call, cached per source text so
-// a session that repeats a snippet does not recompile it.
-var soloCompiled sync.Map
-
-// compileSolo compiles one solo source. Compilation is where a syntax error is
-// found, so it happens before any state is touched.
-func compileSolo(source string) (*moejs.Script, error) {
-	if cached, ok := soloCompiled.Load(source); ok {
-		return cached.(*moejs.Script), nil
-	}
-	script, err := moejs.CompileScript("script", source)
-	if err != nil {
-		return nil, err
-	}
-	soloCompiled.Store(source, script)
-	return script, nil
-}
-
-// runSoloSnippet is what a solo call runs. The model's source keeps its last
+// runCodeModeSnippet is what a code-mode call runs. The model's source keeps its last
 // expression as the call's value: eval returns it, which is the rule the default
 // mode already documents.
 //
@@ -605,14 +596,17 @@ func compileSolo(source string) (*moejs.Script, error) {
 // no other mode asks for. So the snippet runs inside eval, declarations stay in
 // this call, and state a model wants to keep is assigned to globalThis, which the
 // prompt says.
-const runSoloSnippet = `(function () {
+const runCodeModeSnippet = `(function () {
 	if (typeof globalThis === "undefined") throw new Error("no globalThis");
 	return eval(%q);
 })()`
 
-// runSolo runs one script in the session's kept runtime as a real script.
-func (s Script) runSolo(ctx context.Context, source string) (string, error) {
-	script, err := compileSolo(fmt.Sprintf(runSoloSnippet, source))
+// runCodeMode runs one script in the session's kept runtime as a real script.
+func (s Script) runCodeMode(ctx context.Context, source string) (string, error) {
+	// Compiled per call on purpose: a cache keyed by model-written source has no
+	// natural bound, and a session writes different code every turn, so it would
+	// grow for the life of the process. Compilation was never the bottleneck.
+	script, err := moejs.CompileScript("script", fmt.Sprintf(runCodeModeSnippet, source))
 	if err != nil {
 		return "", describeScriptError(err, source)
 	}
@@ -725,4 +719,28 @@ func (c *consoleLog) describeFailure(err error, source string) error {
 		return fmt.Errorf("%w\n(printed before the error)\n%s", described, printed)
 	}
 	return described
+}
+
+// resolvePath makes a tool call's path absolute against the script's working
+// directory. It touches nothing when the path is already absolute or when there
+// is no working directory to resolve against, which keeps a session that never
+// set one behaving as it did before.
+func resolvePath(input map[string]any, key, dir string) {
+	if dir == "" || key == "" {
+		return
+	}
+	path, ok := input[key].(string)
+	if !ok || path == "" || filepath.IsAbs(path) {
+		return
+	}
+	input[key] = filepath.Join(dir, path)
+}
+
+// hostCall says how one tool's arguments are read. required is the field a bare
+// string argument binds to; path is the field holding a filesystem path, which is
+// resolved against the script's directory. They are separate because grep and
+// glob take a pattern, and a pattern is not a path.
+type hostCall struct {
+	required string
+	path     string
 }

@@ -10,17 +10,17 @@ import (
 	"github.com/owainlewis/neo/internal/tools"
 )
 
-// soloScript builds the single-tool surface: one script tool whose globals
+// codeModeScript builds the code-first surface: one script tool whose globals
 // include run(). It mirrors what cmd/neo's registryFor assembles, so these tests
 // cover the mode rather than a stand-in for it.
-func soloScript(t *testing.T, dir string) tools.Script {
+func codeModeScript(t *testing.T, dir string) tools.Script {
 	t.Helper()
 	files := append([]tools.Tool{
 		tools.Grep{Root: dir, Absolute: true},
 		tools.Glob{Root: dir, Absolute: true},
 	}, tools.NewFileTools()...)
 	s := tools.NewScript(files)
-	s.Solo = true
+	s.CodeMode = true
 	s.CWD = dir
 	s.Session = &tools.ScriptSession{}
 	return s
@@ -35,7 +35,7 @@ func TestSoloMergesReadDecideWrite(t *testing.T) {
 	if err := os.WriteFile(path, []byte("alpha\n// TODO: one\nbeta\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	s := soloScript(t, dir)
+	s := codeModeScript(t, dir)
 	out, err := s.Run(context.Background(), map[string]any{"source": `
 const hits = tools.grep({pattern: "TODO"}).split("\n").filter(Boolean);
 if (hits.length !== 1) throw new Error("expected exactly one match, got " + hits.length);
@@ -63,7 +63,7 @@ tools.edit_file({path, old_string: "TODO", new_string: "DONE"});
 // call. Without this the mode cannot run tests at all.
 func TestSoloRunReturnsExitCodeAsData(t *testing.T) {
 	dir := t.TempDir()
-	s := soloScript(t, dir)
+	s := codeModeScript(t, dir)
 	out, err := s.Run(context.Background(), map[string]any{"source": `
 const ok = run(["sh", "-c", "echo fine; exit 0"]);
 const bad = run(["sh", "-c", "echo broke >&2; exit 3"]);
@@ -84,7 +84,7 @@ const bad = run(["sh", "-c", "echo broke >&2; exit 3"]);
 // script writes `const cwd = ...`; the mode keeps redeclaration working and
 // persists through globalThis instead, which the prompt states.
 func TestSoloKeepsGlobalStateAcrossCalls(t *testing.T) {
-	s := soloScript(t, t.TempDir())
+	s := codeModeScript(t, t.TempDir())
 	if _, err := s.Run(context.Background(), map[string]any{"source": `globalThis.base = 40; globalThis.add = (n) => globalThis.base + n;`}); err != nil {
 		t.Fatalf("declaring failed: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestSoloKeepsGlobalStateAcrossCalls(t *testing.T) {
 // In a kept runtime a second `const cwd = ...` would otherwise be a SyntaxError
 // before anything ran, which is exactly what one measured run hit eight times.
 func TestSoloAllowsRepeatedLocalDeclarations(t *testing.T) {
-	s := soloScript(t, t.TempDir())
+	s := codeModeScript(t, t.TempDir())
 	for i := 0; i < 3; i++ {
 		out, err := s.Run(context.Background(), map[string]any{"source": `const cwd = "same"; let n = 1; cwd + n`})
 		if err != nil {
@@ -116,7 +116,7 @@ func TestSoloAllowsRepeatedLocalDeclarations(t *testing.T) {
 // TestSoloWithoutSessionStartsFresh pins the default: a Script with no Session
 // keeps the documented behaviour of one call per runtime.
 func TestSoloWithoutSessionStartsFresh(t *testing.T) {
-	s := soloScript(t, t.TempDir())
+	s := codeModeScript(t, t.TempDir())
 	s.Session = nil
 	if _, err := s.Run(context.Background(), map[string]any{"source": `const keep = 1;`}); err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestSoloWithoutSessionStartsFresh(t *testing.T) {
 // default description says nothing about run(); the model reads only this text,
 // so a missing sentence is a capability it will not use.
 func TestSoloSpecListsRunAndPersistence(t *testing.T) {
-	solo := tools.Script{Solo: true}.Spec().Description
+	solo := tools.Script{CodeMode: true}.Spec().Description
 	for _, want := range []string{"run([", "globalThis"} {
 		if !strings.Contains(solo, want) {
 			t.Fatalf("solo description lacks %q", want)
@@ -146,7 +146,7 @@ func TestSoloSpecListsRunAndPersistence(t *testing.T) {
 // wrote run([...], 10) was rejected three times in one run because only a
 // float64 was accepted. An integer and a string are the same request as 10.5.
 func TestSoloRunAcceptsEveryNumericTimeout(t *testing.T) {
-	s := soloScript(t, t.TempDir())
+	s := codeModeScript(t, t.TempDir())
 	for _, literal := range []string{"10", "10.5", `"10"`} {
 		out, err := s.Run(context.Background(), map[string]any{
 			"source": `run(["echo", "hi"], ` + literal + `).code`,
@@ -166,7 +166,7 @@ func TestSoloRunAcceptsEveryNumericTimeout(t *testing.T) {
 // now the string binds to that tool's one required field, and a tool that cannot
 // be guessed says so in terms the model can act on.
 func TestSoloToolArgumentShapeIsTaught(t *testing.T) {
-	s := soloScript(t, t.TempDir())
+	s := codeModeScript(t, t.TempDir())
 	out, err := s.Run(context.Background(), map[string]any{"source": `tools.glob("*")`})
 	if err != nil {
 		t.Fatalf("a bare string argument was rejected: %v", err)
@@ -191,7 +191,7 @@ func TestSoloToolArgumentShapeIsTaught(t *testing.T) {
 // "console is not defined" instead. The engine has no console, so the mode
 // supplies one and joins its output to the result.
 func TestSoloConsoleLogReachesTheResult(t *testing.T) {
-	s := soloScript(t, t.TempDir())
+	s := codeModeScript(t, t.TempDir())
 	out, err := s.Run(context.Background(), map[string]any{
 		"source": `console.log("first", 1); print("second"); "value"`,
 	})
@@ -208,7 +208,7 @@ func TestSoloConsoleLogReachesTheResult(t *testing.T) {
 // TestSoloConsoleOutputSurvivesAFailure keeps the debugging information a
 // failing script printed: that is usually why it was printed.
 func TestSoloConsoleOutputSurvivesAFailure(t *testing.T) {
-	s := soloScript(t, t.TempDir())
+	s := codeModeScript(t, t.TempDir())
 	_, err := s.Run(context.Background(), map[string]any{
 		"source": `console.log("about to fail"); throw new Error("boom")`,
 	})
@@ -226,7 +226,7 @@ func TestSoloConsoleOutputSurvivesAFailure(t *testing.T) {
 // failing `go test` inflate the session's tool-error count, which is what the
 // #91 measurement read as a defect of the mode rather than of the counter.
 func TestSoloFailingProgramIsNotAToolError(t *testing.T) {
-	s := soloScript(t, t.TempDir())
+	s := codeModeScript(t, t.TempDir())
 	var results []tools.SubCall
 	ctx := tools.WithSubCallSink(context.Background(), func(sub tools.SubCall) {
 		if sub.Done {
@@ -254,7 +254,7 @@ func TestSoloFailingProgramIsNotAToolError(t *testing.T) {
 // TestSoloUnstartableProgramIsAnError keeps the other side: when the program
 // cannot run at all, that is a failure of the call, not a result to branch on.
 func TestSoloUnstartableProgramIsAnError(t *testing.T) {
-	s := soloScript(t, t.TempDir())
+	s := codeModeScript(t, t.TempDir())
 	var results []tools.SubCall
 	ctx := tools.WithSubCallSink(context.Background(), func(sub tools.SubCall) {
 		if sub.Done {
@@ -281,7 +281,7 @@ func TestBareStringArgumentBindsToTheRequiredField(t *testing.T) {
 	if err := os.WriteFile(path, []byte("alpha\nTODO: beta\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	s := soloScript(t, dir)
+	s := codeModeScript(t, dir)
 
 	cases := []struct {
 		source string
@@ -312,7 +312,7 @@ func TestBareStringKeepsTheObjectFormWorking(t *testing.T) {
 	for _, solo := range []bool{true, false} {
 		var s tools.Script
 		if solo {
-			s = soloScript(t, dir)
+			s = codeModeScript(t, dir)
 		} else {
 			files := append([]tools.Tool{
 				tools.Grep{Root: dir},
@@ -338,7 +338,7 @@ func TestBareStringKeepsTheObjectFormWorking(t *testing.T) {
 // than the one string cannot be guessed, and guessing would run a write with a
 // made-up body.
 func TestBareStringIsRejectedWhenItIsAmbiguous(t *testing.T) {
-	s := soloScript(t, t.TempDir())
+	s := codeModeScript(t, t.TempDir())
 	_, err := s.Run(context.Background(), map[string]any{"source": `tools.write_file("out.txt")`})
 	if err == nil {
 		t.Fatal("write_file accepted a bare string")
