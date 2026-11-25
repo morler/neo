@@ -1,7 +1,7 @@
 ---
 id: 93
 title: Drop the unbounded process-wide source cache in solo mode
-status: in-progress
+status: closed
 priority: medium
 labels:
     - refactor
@@ -11,6 +11,7 @@ relations:
         - 91
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景

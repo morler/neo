@@ -1,7 +1,7 @@
 ---
 id: 95
 title: Resolve script file-tool paths against the script's working directory
-status: in-progress
+status: closed
 priority: medium
 labels:
     - bug
@@ -10,6 +10,7 @@ relations:
         - 91
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景
