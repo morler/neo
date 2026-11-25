@@ -1,7 +1,7 @@
 ---
 id: 102
 title: Refuse or warn when the default code mode would start a headless session with zero tools
-status: open
+status: closed
 priority: high
 labels:
     - config
@@ -12,6 +12,7 @@ relations:
         - 99
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景
@@ -58,3 +59,28 @@ updated: "2026-11-25"
 ## 备注
 
 属于"让失败可见而不是静默"这一类（MISSION 的 engineering principles），与 #98/#99/#100 修的是不同层：它们修"用了但用错"，本任务修"根本没用上"。因此在依赖链上放在最末，但它不阻塞任何其它任务。
+
+
+## 修复记录（2026-11-25）
+
+采用 issue 的首选方案：在 headless 启动路径显式失败。
+
+- `cmd/neo/main.go` 的 `headlessAgent`：构建 registry 后若 `len(reg.Names()) == 0`，写一条 stderr 并以 `ok = false` 返回，**在第一次 provider 请求之前**。判断条件是"实际没有任何工具"，而不是"只看 scripted"，所以交互面（带 `agent`/`goal`/`workflow`）不受影响。
+- 新增 `surfaceName(cfg)`，消息里复用 `config.CodeModeCodemode`/`CodeModeClassic` 的值，不另造词。
+- 修正 `registryFor` 里"leaves only the coordinating tools"的注释，补上 headless 没有协调工具这一前提，并指出由 `headlessAgent` 拒绝该组合。
+
+实际输出：
+
+```
+$ neo run hi      # features: {codemode: codemode, script: false}
+修复前: exit 0, stdout "should not be asked"    （无工具，静默失能）
+修复后: exit 1, stderr: neo run: features.script is false in codemode mode, which leaves this session with no tools: set features.script: true, or use features.codemode: classic for bash and the file tools
+```
+
+新增测试（`cmd/neo/headless_notools_test.go`）：
+- `TestHeadlessRunRefusesSessionWithNoTools`：走真实 `run()` 入口，断言非零退出、stdout 为空、stderr 含两种修法、且**一次请求都没发出**。回退守卫后该测试失败（`run exited 0`），保留下来可防回归。
+- `TestRegistryForNoScriptSurface`：code mode + script off → 0 个工具；补上协调工具 → 非空（交互面仍可启动）；classic + script off → 仍有 `bash`。
+
+文档：`docs/developer/config.md` 的 `script` 行补充了在 code mode 下与 `neo run` 组合的后果；`CHANGELOG.md` 在 Unreleased/Changed 记录。
+
+验证：`go test ./...`、`go vet ./...`、`qlty check` 全部通过；prompt/schema 字节未改动（三个 floor 预算测试均通过）。

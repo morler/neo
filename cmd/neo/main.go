@@ -515,7 +515,11 @@ func registryFor(cfg *config.Config, cwd, root string, extra ...tools.Tool) *too
 		base := []tools.Tool{code}
 		if !scripted {
 			// features.script: false in code mode leaves only the coordinating
-			// tools, which is the file-and-command-free session.
+			// tools: a session that delegates but acts on nothing itself. That is
+			// only a session if there are coordinating tools to leave; headless
+			// passes none, so it would run with no tools at all. headlessAgent
+			// refuses that combination instead of letting the run degrade into
+			// prose advice.
 			base = nil
 		}
 		return tools.NewRegistry(append(base, extra...)...)
@@ -844,6 +848,12 @@ func (p *countingProvider) Complete(ctx context.Context, req llm.Request) (*llm.
 // headlessAgent builds the agent for one prompt. It shares the chat registry
 // but advertises no skills: /name and $name invocation are interactive, so the
 // catalog would only spend prompt tokens.
+//
+// It refuses to start a session with no tools. In code mode with
+// features.script off, registryFor leaves only the coordinating tools, and
+// headless passes none, so the request would advertise nothing: the run would
+// answer normally and change no file, with no signal to the caller. Failing
+// here names both ways out instead.
 func headlessAgent(ctx context.Context, cfg *config.Config, prov llm.Provider, model, agentName string, streams stdio) (*agent.Agent, string, bool) {
 	cwd, _ := os.Getwd()
 	root := workspace.Root(cwd)
@@ -852,6 +862,10 @@ func headlessAgent(ctx context.Context, cfg *config.Config, prov llm.Provider, m
 		return nil, "", false
 	}
 	reg := registryFor(cfg, cwd, root)
+	if len(reg.Names()) == 0 {
+		fmt.Fprintf(streams.err, "neo run: features.script is false in %s mode, which leaves this session with no tools: set features.script: true, or use features.codemode: classic for bash and the file tools\n", surfaceName(cfg))
+		return nil, "", false
+	}
 	system, systemBlocks := chatSystem(cfg, cwd, nil, agentProfile, reg, streams.err)
 	return agent.New(agent.Config{
 		Model:        model,
@@ -861,6 +875,15 @@ func headlessAgent(ctx context.Context, cfg *config.Config, prov llm.Provider, m
 		Tools:        reg,
 		Compactor:    chatCompactor(prov, model, cfg),
 	}), model, true
+}
+
+// surfaceName names the surface in a message the user has to act on. It reuses
+// the config value rather than inventing a second vocabulary for it.
+func surfaceName(cfg *config.Config) string {
+	if cfg.ClassicCodeMode() {
+		return config.CodeModeClassic
+	}
+	return config.CodeModeCodemode
 }
 
 func parseHeadlessArgs(args []string, stdin io.Reader) (headlessOptions, string, error) {

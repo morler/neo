@@ -6,6 +6,12 @@ All notable changes to Neo will be documented in this file.
 
 ### Changed
 
+- `neo run` now refuses to start when `features.script: false` is combined with
+  the default code mode. That combination left the headless session with no
+  tools at all: the run answered normally and changed nothing. The error names
+  both ways out, `features.script: true` or `features.codemode: classic`.
+  Interactive sessions keep starting, since they still have `agent`, `goal`
+  and `workflow`.
 - Code mode is now the default surface. The model acts by writing JavaScript in
   the `script` tool, which carries `run(argv, timeoutSeconds)` for programs, a
   `console`/`print`, and one interpreter per session, so `globalThis` state
