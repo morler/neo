@@ -400,9 +400,10 @@ AGENT PROMPTS:
 OPT-IN TOOLS:
   --script           Register the JavaScript script tool for this run.
   --no-script        Leave it unregistered, overriding features.script.
-                     The tool costs ~1.1 KB of prompt per request, so it is
-                     off unless asked for. In chat, /codemode on|off|status
-                     changes it and writes the choice to features.script.
+                     The tool costs ~1.4 KB of prompt and schema per request,
+                     so it is off unless asked for. In chat,
+                     /codemode on|off|status changes it and writes the choice
+                     to features.script.
 
 HEADLESS RUN:
   neo run --json --timeout 10m "Review this repo without changing files"

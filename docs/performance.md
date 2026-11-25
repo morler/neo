@@ -70,11 +70,11 @@ exists:
 | **Fixed floor** | **8,084** | **~2,020** |
 
 These are the default surface, which has no script tool. Turning the tool on
-adds 851 bytes of schema and 682 bytes of prompt, for a floor of 9,555; that is
+adds 851 bytes of schema and 620 bytes of prompt, for a floor of 9,555; that is
 `scriptFloorByteBudget` (10,000), checked separately by `TestScriptFloorBudget`.
 The prompt section grew when it was rewritten around task shapes with a worked
 example, which is what an opt-in tool has to do to be chosen at all. It grew
-again by 78 bytes on 2026-11-25 when the judgement moved from file count to
+again by 56 bytes on 2026-11-25 when the judgement moved from file count to
 dependency (`TestScriptCapabilityNamesDependencyNotVolume`); that is the same
 section restated, not a new feature.
 

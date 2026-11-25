@@ -47,7 +47,8 @@ const fixedFloorByteBudget = 8_500
 // measured 2026-11-24 at 9,499 bytes (5,873 tool definitions + 3,626 prompt),
 // then 9,555 on 2026-11-25 when the judgement moved from file count to
 // dependency (5,873 + 3,682). The script schema is 851 and its prompt section
-// is now 682. The ceiling was 9,500
+// is 620, which is the section's own length rather than the difference from the
+// 3,000 chat budget. The ceiling was 9,500
 // before the prompt was rewritten around task shapes with a runnable example;
 // that left one byte of room, which would have made the next edit a failing
 // test rather than a decision. Rounded up to the next 500, as before.
