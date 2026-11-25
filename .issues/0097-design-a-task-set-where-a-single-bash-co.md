@@ -1,7 +1,7 @@
 ---
 id: 97
 title: Design a task set where a single bash command cannot finish, for a fair merge measurement
-status: open
+status: closed
 priority: low
 labels:
     - performance
@@ -11,6 +11,7 @@ relations:
         - 101
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景
@@ -40,3 +41,33 @@ updated: "2026-11-25"
 - 再用 solo 模式跑 5 次，按 #91 预注册的布尔判据记录合并次数。
 - 报告中位数与跨度；token 数据只记录不作判据（沿用 #86 的噪声底结论）。
 - 不修改产品代码；若结论需要产品改动，另开 issue。
+
+
+## 结果记录（2026-11-25）
+
+任务集与结果已写入 `docs/performance.md` 的"A task set where one bash command cannot finish"小节（含逐字任务原文、fixture 布局、验证方式）。
+
+fixture：`stats` 模块，`stats.go` 里六个函数各自有文档化行为与一个 bug，`stats_test.go` 每个函数一条测试（修复前 5 条失败）。六个 bug 无共同文本形态（`len(xs)` 代替求和、`xs[0]` 代替最大值、奇偶判断写反、`s[1:2]`、除以 `len(xs)-1`、`>=` 代替严格计数），因此必须先读出函数体才能决定怎么改——这正是"单条 bash 无法完成"的判据来源。
+
+| arm | requests(中位, 跨度) | 输入 tokens(中位) | 套件通过 | 合并调用 | 有合并的运行 |
+| --- | --- | ---: | --- | ---: | ---: |
+| codemode (n=3) | 5 (5–7) | 11,433 | 3/3 | 1/12 | 1/3 |
+| solo (n=5) | 5 (4–6) | 11,299 | 5/5 | 2/18 | 2/5 |
+
+### 本轮最关键的发现
+
+这是所有 fixture 上**首次出现非零合并率**（此前 #83 2/6、#91 1/6、#101 0/3 均为 0）。没有任何一次运行能用单条命令完成：每次都是先读后写，单次调用内 4–10 个子调用。
+
+两种形态区分清晰：
+```
+合并:   read_file x2 + run + write_file x2       （读、改、验证、再改）
+未合并: read_file x4..10 | edit_file x10 | run    （批量读、批量写、验证）
+```
+
+合并在本任务上**不比拆分更省**（两者 requests 中位都是 5），区别在形态而非成本。任务集带来的变化是：它让合并**成为可能**——"一次调用写 10 处"是此前 fixture 从未产生的形态，因为它要求先读完 10 个函数体才能写 10 处。
+
+### 结论
+
+不支持再改提示词：任务一旦需要"读的值决定写的内容"，合并在零新增文本下自然出现。任何进一步的提示词改动都只是在测噪声。
+
+未修改产品代码（`go test ./...`、`qlty check` 通过）。

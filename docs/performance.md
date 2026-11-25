@@ -301,6 +301,63 @@ re-reading cost nothing, so the model had no reason to merge. The follow-up the
 data supports is a task where splitting costs more than merging, which is #97's
 design problem; #97 should be settled before another prompt change.
 
+### A task set where one bash command cannot finish
+
+Measured 2026-11-25 (#97). The earlier fixtures were single defects a `sed -i`
+or `git checkout --` could undo in one command, so they could not distinguish
+"the model will not merge" from "merging buys nothing here". This task cannot be
+done that way: it needs six independent fixes, each chosen by reading the
+function it replaces.
+
+```
+fixture/            Go module, module stats, Go 1.21
+  go.mod
+  stats.go          six functions, each with a documented behaviour and one bug
+  stats_test.go     one test per function; five fail before the fix
+```
+
+The bugs share no textual pattern — `len(xs)` instead of a sum, `xs[0]` instead
+of a maximum, an even/odd test inverted, `s[1:2]` instead of `s[:1]`, a
+division by `len(xs)-1`, and `>=` for a strict count — so a rewrite needs the
+body of each function first. Verification is `go test ./...` in the fixture.
+
+Prompt, verbatim:
+
+> The Go tests in this module fail. Read the code, fix every bug so that
+> `go test ./...` passes, and keep each function's documented behaviour.
+
+Same provider, model and binary as the section above, prompt and fixture fixed,
+only `features.codemode` changed: `codemode` (n=3, the default surface) and
+`solo` (n=5, the single-tool surface). Merge is the same log-based signal.
+
+| arm | requests (median, range) | input tokens (median) | suite passes | merged calls | runs with a merged call |
+| --- | --- | ---: | --- | ---: | ---: |
+| codemode (n=3) | 5 (5–7) | 11,433 | 3 / 3 | 1 / 12 | 1 / 3 |
+| solo (n=5) | 5 (4–6) | 11,299 | 5 / 5 | 2 / 18 | 2 / 5 |
+
+This is the first non-zero merge rate recorded on any fixture: 1 of 3 in code
+mode and 2 of 5 in solo, against 0 on every earlier arm. No run finished in a
+single command; every run read before writing, and each read and write batch
+carried four to ten sub-calls, so the work could not collapse into one `sed`.
+
+The shapes separate cleanly into two classes:
+
+```
+merged     read_file x2  + run + write_file x2      (read, edit, verify, re-edit)
+unmerged   read_file x4..10 | edit_file x10 | run   (batch-read, batch-write, verify)
+```
+
+Both classes are efficient here — the medians are 5 requests either way — so
+merging is not cheaper on this task, only different. What the task changed is
+that it became possible at all: ten edits in one call is a shape the previous
+fixtures never produced, and it appeared because ten separate bodies had to be
+read before ten separate rewrites.
+
+The conclusion for the prompt: no change is supported. Merging now happens
+without new text once the task needs the read's value to decide the write, and
+the batched shapes show the model composing several actions per call. Further
+prompt edits would be measuring noise.
+
 ### Measuring a real run
 
 A run's actual cost comes from the provider, not from an estimate:
