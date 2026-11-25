@@ -464,6 +464,15 @@ func newComposer() textarea.Model {
 // newTranscriptViewport builds the scrollback pane. Horizontal scrolling stays
 // off: the content is word-wrapped, and a horizontal trackpad swipe would
 // otherwise slide the whole transcript.
+//
+// SoftWrap is deliberately off, and worth stating because it looks like the fix
+// for a clipped wide line. It is not: every block already breaks its own text
+// with lipgloss, which breaks CJK and long paths at the pane width, so the
+// viewport never receives a row wider than the pane. Measured by turning it on
+// and off, an unbreakable 92-column path in a 40-column pane reaches its tail
+// either way. An over-wide row is a block's own width bug — the one thinkingBlock
+// had — not the viewport's, and enabling soft wrap would hide such a bug behind
+// the viewport instead of failing a test.
 func newTranscriptViewport() viewport.Model {
 	vp := viewport.New(viewport.WithWidth(80), viewport.WithHeight(20))
 	vp.MouseWheelEnabled = true

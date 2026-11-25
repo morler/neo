@@ -11,7 +11,6 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
-	"charm.land/bubbles/v2/viewport"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/owainlewis/neo/internal/agent"
@@ -57,12 +56,14 @@ func makeTestModel() *model {
 	ta.SetWidth(78)
 	sp := spinner.New(spinner.WithSpinner(statusSpinner))
 	return &model{
-		ctx:      context.Background(),
-		width:    80,
-		height:   24,
-		ag:       agent.New(agent.Config{Model: "test", Provider: &llmtest.FakeProvider{}, Tools: tools.NewRegistry(tools.ReadFile{})}),
-		input:    ta,
-		viewport: viewport.New(viewport.WithWidth(80), viewport.WithHeight(20)),
+		ctx:    context.Background(),
+		width:  80,
+		height: 24,
+		ag:     agent.New(agent.Config{Model: "test", Provider: &llmtest.FakeProvider{}, Tools: tools.NewRegistry(tools.ReadFile{})}),
+		input:  ta,
+		// Built by the real constructor so tests cannot pass while the shipped
+		// viewport settings differ from the ones they exercise.
+		viewport: newTranscriptViewport(),
 		spin:     sp,
 		modelTag: "test",
 		cwd:      "~",

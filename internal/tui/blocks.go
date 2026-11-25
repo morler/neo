@@ -139,8 +139,15 @@ func (b textBlock) render(width int, md *glamour.TermRenderer) string {
 type thinkingBlock struct{ text string }
 
 func (b thinkingBlock) render(width int, _ *glamour.TermRenderer) string {
-	body := strings.ReplaceAll(wrap(b.text, width-2), "\n", "\n  ")
-	return "  " + styThinking.Render(body)
+	// wrap pads each line to the full width, so a trailing pad followed by the
+	// two-space indent would push every continuation line past the pane. Each
+	// line is unwrapped back to its content before the indent is added, and the
+	// indent is taken out of the wrap width rather than added on top of it.
+	lines := strings.Split(strings.TrimRight(wrap(b.text, max(width-2, 1)), "\n"), "\n")
+	for i, line := range lines {
+		lines[i] = "  " + strings.TrimRight(line, " ")
+	}
+	return styThinking.Render(strings.Join(lines, "\n"))
 }
 
 type toolCallBlock struct {

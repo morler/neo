@@ -77,6 +77,15 @@ All notable changes to Neo will be documented in this file.
 
 ### Fixed
 
+- Editing an existing line in the composer no longer drops characters or
+  crashes the TUI. `bubbles` v2.1.0 indexed a soft-wrapped row with an offset
+  computed from a different wrap, so a row holding wide runes could be cut short,
+  and a backspace could shift the cursor past the end of the rune slice and panic
+  with `index out of range`. The bug was not Chinese-specific — a plain ASCII
+  line failed the same way — but wide runes fill a row with fewer characters, so
+  Chinese text reached it after a couple of keystrokes. Upgraded to `bubbles`
+  v2.2.2, which fixes it; `TestComposerRendersEveryCharacterAfterInLineEdit`
+  fails on the old version and passes on the new one.
 - A model stuck reissuing the same tool call with the same arguments now gets a
   short reminder on the 3rd, 5th, and 8th attempt and has that call refused on
   the 12th, ending the turn with a readable error instead of spending every
