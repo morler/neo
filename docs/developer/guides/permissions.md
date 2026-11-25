@@ -77,6 +77,18 @@ their meaning.
 Remove the old mode and add `tool_approvals` only for calls you want to confirm.
 Run Neo inside a suitable VM or sandbox.
 
+## Why Not Replace Bash With a Sandboxed Script
+
+Running model-written JavaScript instead of shell commands does not remove the
+need for this boundary, and cannot substitute for it. An embedded runtime can
+confine its own file access and network, but a process it starts is outside that
+confinement: the child has its own credentials, working directory, and path
+resolution, and the only things that can contain it are the kernel, a container,
+or a VM.
+
+[Script as a Bash replacement](../../design/script-vs-bash.md) records the
+evidence and the two arrangements that remain.
+
 ## Where To Look
 
 - `internal/approval/matcher.go`: literal matching.

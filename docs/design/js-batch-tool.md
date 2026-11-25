@@ -55,6 +55,12 @@ whose approvals are decoration.
 `import` is not available. A script is one unit of work, not a place to load
 code from elsewhere.
 
+For the same reason the tool cannot grow into a `bash` replacement: process
+execution cannot be confined by a runtime that itself runs unconfined. That is
+answered separately in [Script as a Bash
+replacement](script-vs-bash.md), and it is why the whitelist above is not a
+sign of an incomplete feature.
+
 ## 3. The Runtime
 
 [moejs](https://github.com/MoeForge/moejs) is a JavaScript engine written in Go.

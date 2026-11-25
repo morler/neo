@@ -21,4 +21,7 @@ Start here when changing Neo:
 - [Embedded JS batch tool design](../design/js-batch-tool.md) records why Neo runs
   model-written JavaScript through the `script` tool, which tools it may call,
   what it deliberately does not do, and what the engine costs in binary size.
+- [Script as a Bash replacement](../design/script-vs-bash.md) records why an
+  embedded JavaScript runtime cannot replace `bash` while staying sandboxed, and
+  the two arrangements that remain.
 - [Teaching guides](guides/index.md) explain the core ideas in plain language.
