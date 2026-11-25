@@ -6,6 +6,8 @@ priority: low
 labels:
     - llm
 relations:
+    blocks:
+        - 91
     related-to:
         - 87
 created: "2026-11-25"
