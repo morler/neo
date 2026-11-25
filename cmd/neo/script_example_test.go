@@ -84,3 +84,20 @@ func TestScriptCapabilityDoesNotRestateTheWhitelist(t *testing.T) {
 		}
 	}
 }
+
+// TestScriptCapabilityNamesDependencyNotVolume pins the judgement itself, not
+// just the wording around it. #83 measured nine runs on a 2,001-line file: the
+// model never called read_file, it narrowed the window with `sed`. A script over
+// many files is N serial host calls, so "many files" is the shape where the tool
+// loses; the reason to script is that the next call needs this result.
+func TestScriptCapabilityNamesDependencyNotVolume(t *testing.T) {
+	if strings.Contains(scriptCapability, "across many files") {
+		t.Fatal("scriptCapability still offers file count as the reason to script")
+	}
+	if strings.Contains(scriptCapability, "not over one read") {
+		t.Fatal("scriptCapability still discourages a script over a single read")
+	}
+	if !strings.Contains(scriptCapability, "depends on what this one returns") {
+		t.Fatal("scriptCapability does not state the dependency judgement")
+	}
+}

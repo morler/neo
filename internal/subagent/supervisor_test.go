@@ -296,3 +296,14 @@ func TestRunnerErrorFormatting(t *testing.T) {
 		t.Fatalf("result=%+v", res)
 	}
 }
+
+// childRegistry builds the registry a work-mode child would receive. It goes
+// through the supervisor's own tool list so a name missing there fails here
+// too, rather than passing a copy that the real path never produces.
+func (s *Supervisor) childRegistry(dir string) *tools.Registry {
+	runner, ok := s.runner.(*AgentRunner)
+	if !ok {
+		panic("childRegistry needs an AgentRunner")
+	}
+	return runner.registryWithOptions(dir, RunOptions{Tools: s.toolsFor(AgentModeWork)})
+}

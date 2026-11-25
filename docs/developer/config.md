@@ -197,7 +197,7 @@ Each feature flag is tri-state in Go: absent means use the built-in default, whi
 | `agents_file` | `true` | Load AGENTS.md into the chat system prompt. Project files are read through a rooted workspace boundary. Relative and absolute project symlinks load only when their resolved targets stay inside the workspace; escaping files are skipped with a warning. Safe project files and the explicit user-global `~/.neo/AGENTS.md` remain loaded. |
 | `skills` | `true` | Discover skills and expand $name references or /name slash invocations. |
 | `prompt_caching` | `true` | Mark the stable system prompt prefix as cacheable when the provider supports it. |
-| `script` | `false` | Register the JavaScript `script` tool. It costs 1,455 bytes of prompt on every request (851 schema, 604 instructions) and a measurement found no task where the model chose it over `bash`, so it is off unless asked for. Turn it on per invocation with `--script` (or `--no-script`), or at runtime with `/codemode on`. The choice made with `/codemode` is written back to this key. |
+| `script` | `false` | Register the JavaScript `script` tool. It costs 1,533 bytes of prompt on every request (851 schema, 682 instructions) and a measurement found no task where the model chose it over `bash`, so it is off unless asked for. Turn it on per invocation with `--script` (or `--no-script`), or at runtime with `/codemode on`. The choice made with `/codemode` is written back to this key. |
 
 Interrupting a running goal turn with `esc` or quitting with `ctrl+c` pauses the
 goal instead of letting it continue, so a canceled turn never loops. `/goal

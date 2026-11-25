@@ -106,22 +106,31 @@ offers no such action.`
 // tool's own schema lists the calls and their return shapes, so the prompt does
 // not repeat that list. Repeating it is how the two drifted apart before.
 // cmd/neo/script_example_test.go runs the example and fails if it stops working.
+//
+// The judgement is written around dependency, not volume. A script's host calls
+// are synchronous, so looping over many files is slower than one `grep -r`,
+// which is what the model reaches for anyway: issue #83 measured nine runs on a
+// 2,001-line file and the model never called read_file, it narrowed the window
+// with `sed`. Naming "many files" as the reason to script therefore advertised
+// the one shape where the tool loses. What a script actually saves is a round
+// trip, and one file is enough to need one.
 const scriptCapability = `
 
 # Scripts
 
-Write a script when a later step needs an earlier result, so the intermediate
-output stays out of the conversation: count or test matches rather than reading
-the list and judging it; run the same check across many files; read, branch,
-then write inside one call. The description lists what a script may call.
+Write a script when the next call depends on what this one returns: whether a
+pattern matched, how many times, which line, or what that line says. The saving
+is the round trip, not the number of files, so read, branch, and write inside
+one script whenever the branch decides the write. The description lists what a
+script may call.
 
 ` + "```js" + `
 const hits = tools.grep({pattern: "TODO"}).split("\n").filter(Boolean);
 hits.length + " matches: " + hits.join(", ")
 ` + "```" + `
 
-` + "`grep`" + ` says "no matches" instead of returning an empty string. Prefer a script
-over two turns, not over one read.`
+` + "`grep`" + ` says "no matches" instead of returning an empty string. When the next
+call does not need this result, call the tool instead of wrapping it.`
 
 func main() {
 	os.Exit(execute(os.Args[1:], stdio{
@@ -1174,6 +1183,10 @@ func (r *chatRuntime) switchCodeMode(on bool) error {
 		return err
 	}
 	r.ag.SetPrompt(system, blocks)
+	// Children build their tool list per run from the runner, so the switch has
+	// to reach it too; otherwise a session that says "codemode on" would spawn
+	// subagents that cannot use the tool.
+	r.setRunnerScript(on)
 
 	if _, err := r.cfg.WriteFeature("script", on); err != nil {
 		// Put the old capability back before reporting, or the session would
@@ -1183,9 +1196,19 @@ func (r *chatRuntime) switchCodeMode(on bool) error {
 		system, blocks = chatSystem(r.cfg, r.cwd, r.sk, r.profile, reg, io.Discard)
 		_ = r.ag.SetTools(reg)
 		r.ag.SetPrompt(system, blocks)
+		r.setRunnerScript(previous)
 		return err
 	}
 	return nil
+}
+
+// setRunnerScript keeps the subagent runner's copy of the setting in step with
+// the coordinator's. A nil runner means the session has no agent tool, which is
+// already the case in which no child exists to disagree.
+func (r *chatRuntime) setRunnerScript(on bool) {
+	if r.runner != nil {
+		r.runner.Script = on
+	}
 }
 
 func (r *chatRuntime) switchModel(nextModel string) error {

@@ -3,9 +3,12 @@ package subagent
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/owainlewis/neo/internal/agent"
 	"github.com/owainlewis/neo/internal/compact"
@@ -173,5 +176,78 @@ func TestTranslateStatusLines(t *testing.T) {
 	}
 	if _, ok := translate(agent.Event{Kind: agent.EventToolCall, Name: "agent"}); ok {
 		t.Fatal("agent call should not produce a status event")
+	}
+}
+
+// TestScriptToolFollowsTheRunnerSetting covers both directions of the switch.
+// A child's tool list is built per run, so a setting that only reached the
+// coordinator would leave children silently unable to use the tool.
+func TestScriptToolFollowsTheRunnerSetting(t *testing.T) {
+	dir := t.TempDir()
+	off := NewSupervisor(&AgentRunner{Root: dir}, DefaultBudget())
+	if names := off.childRegistry(dir).Names(); slices.Contains(names, "script") {
+		t.Fatalf("script registered while disabled: %v", names)
+	}
+	on := NewSupervisor(&AgentRunner{Root: dir, Script: true}, DefaultBudget())
+	names := on.childRegistry(dir).Names()
+	if !slices.Contains(names, "script") {
+		t.Fatalf("script missing while enabled: %v", names)
+	}
+}
+
+// TestInspectModeNeverGetsScript pins the deliberate exclusion. The inspect
+// whitelist is read-only by construction, and a script reaches write_file
+// through the same globals, so enabling the tool must not widen that mode.
+func TestInspectModeNeverGetsScript(t *testing.T) {
+	dir := t.TempDir()
+	r := &AgentRunner{Root: dir, Script: true}
+	sup := NewSupervisor(r, DefaultBudget())
+	names := r.registryWithOptions(dir, RunOptions{Tools: sup.toolsFor(AgentModeInspect)}).Names()
+	if slices.Contains(names, "script") {
+		t.Fatalf("inspect registry has script: %v", names)
+	}
+	if !slices.Equal(names, []string{"glob", "grep", "read_file"}) {
+		t.Fatalf("inspect registry=%v", names)
+	}
+}
+
+// TestScriptSharesReadStateWithTheChildsFileTools is the reason the file tools
+// are built once and handed to the script tool rather than built twice: a read
+// inside a child's script must count as the child having seen the file, or the
+// stale-edit guard protects nothing across the script boundary.
+func TestScriptSharesReadStateWithTheChildsFileTools(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "target.txt")
+	if err := os.WriteFile(path, []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &AgentRunner{Root: dir, Script: true}
+	sup := NewSupervisor(r, DefaultBudget())
+	reg := sup.childRegistry(dir)
+
+	scripted, ok := reg.Get("script")
+	if !ok {
+		t.Fatal("script not registered")
+	}
+	// Read through the script, then change the file behind the agent's back.
+	if _, err := scripted.Run(context.Background(), map[string]any{
+		"source": `tools.read_file({path: "` + path + `"})`,
+	}); err != nil {
+		t.Fatalf("scripted read: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := os.WriteFile(path, []byte("alpha\nbeta\ngamma\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	editor, ok := reg.Get("edit_file")
+	if !ok {
+		t.Fatal("edit_file not registered")
+	}
+	_, err := editor.Run(context.Background(), map[string]any{
+		"path": path, "old_string": "alpha", "new_string": "ALPHA",
+	})
+	if err == nil || !strings.Contains(err.Error(), "changed since you read it") {
+		t.Fatalf("edit error = %v, want the stale-read refusal", err)
 	}
 }

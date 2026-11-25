@@ -173,7 +173,7 @@ func (s Script) Run(ctx context.Context, input map[string]any) (string, error) {
 
 	result, err := rt.RunScript(wrapper)
 	if err != nil {
-		return "", describeScriptError(err)
+		return "", describeScriptError(err, source)
 	}
 	return s.limitOutput(scriptResult(rt, result))
 }
@@ -295,7 +295,7 @@ func scriptResult(rt *moejs.Runtime, result engine.Value) (string, error) {
 	}
 	converted, err := rt.ToGo(result)
 	if err != nil {
-		return "", describeScriptError(err)
+		return "", describeScriptError(err, "")
 	}
 	if text, ok := converted.(string); ok {
 		return text, nil
@@ -313,7 +313,14 @@ func scriptResult(rt *moejs.Runtime, result engine.Value) (string, error) {
 // compile-time *SyntaxError, since the source is only parsed when the script
 // runs. Both are reported as syntax errors so the model does not go looking for
 // a runtime bug it cannot find.
-func describeScriptError(err error) error {
+//
+// Each class is followed by one sentence saying how to fix it, because naming a
+// class is not the same as telling the model what to write next: a run that
+// tried to use this tool spent three failed calls discovering the convention
+// (docs/performance.md). The hint costs bytes only on the failure path, so the
+// fixed floor is untouched. It is added only when the source confirms the cause,
+// since a wrong hint sends the model after a bug that is not there.
+func describeScriptError(err error, source string) error {
 	// A memory limit and a deadline both surface as an interrupt. Telling them
 	// apart matters: one means "allocate less", the other "finish sooner", and a
 	// model given the wrong one retries the wrong thing.
@@ -329,16 +336,39 @@ func describeScriptError(err error) error {
 	}
 	var syntax *moejs.SyntaxError
 	if errors.As(err, &syntax) {
-		return fmt.Errorf("script has a syntax error: %w", err)
+		return fmt.Errorf("script has a syntax error: %w%s", err, awaitHint(source))
 	}
 	var exception *moejs.Exception
 	if errors.As(err, &exception) {
 		if exception.Name() == "SyntaxError" {
-			return fmt.Errorf("script has a syntax error: %w", err)
+			return fmt.Errorf("script has a syntax error: %w%s", err, awaitHint(source))
 		}
-		return fmt.Errorf("script threw: %w", err)
+		return fmt.Errorf("script threw: %w%s", err, editFileHint(err))
 	}
 	return fmt.Errorf("script failed: %w", err)
+}
+
+// awaitHint recognizes the one syntax failure the model makes for a convention
+// reason rather than a typo. The engine reports `await 1` as "Unexpected
+// number", which says nothing about the script being synchronous; the source is
+// the signal that makes the correct reading available, so it is checked rather
+// than guessed from the message.
+func awaitHint(source string) string {
+	if !strings.Contains(source, "await") {
+		return ""
+	}
+	return "; scripts are synchronous and there is no top-level await, so call the tools directly and use their return value, e.g. `const n = tools.grep({pattern: \"func \"}).split(\"\\n\").filter(Boolean).length; n + \" matches\"`"
+}
+
+// editFileHint covers the other convention trap: read_file prefixes every line
+// with its number and a tab, while edit_file matches raw text, so feeding one
+// result into the other fails with "old_string not found" and reads like a bug
+// in the file rather than in the call.
+func editFileHint(err error) string {
+	if !strings.Contains(err.Error(), "old_string not found") {
+		return ""
+	}
+	return "; if old_string came from read_file, strip the leading line number and tab it adds, since edit_file matches the file's raw text"
 }
 
 // NewScript builds the script tool over the file tools the coordinator already

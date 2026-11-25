@@ -41,6 +41,11 @@ var ErrAgents = errors.New("denied: session agent cap reached")
 var (
 	dynamicAgentTools = []string{"bash", "read_file", "write_file", "edit_file", "grep", "glob"}
 	inspectAgentTools = []string{"read_file", "grep", "glob"}
+	// scriptToolName is appended to the work-mode set only when the runner has
+	// the tool enabled. inspect never gets it: its whitelist is read-only by
+	// construction, and a script would reach write_file through the same globals
+	// the work mode uses.
+	scriptToolName = "script"
 )
 
 // Supervisor enforces budgets, owns agent state, and tags every agent
@@ -63,6 +68,32 @@ func NewSupervisor(runner Runner, b Budget) *Supervisor {
 		Events: make(chan Event, 256),
 		nodes:  map[int]*Node{},
 	}
+}
+
+// toolsFor is the one place that decides a child's tool list. The registry
+// builder filters by name, so a name missing here is a tool the child cannot
+// see however it was constructed.
+func (s *Supervisor) toolsFor(mode AgentMode) []string {
+	if mode == AgentModeInspect {
+		return append([]string(nil), inspectAgentTools...)
+	}
+	tools := append([]string(nil), dynamicAgentTools...)
+	if s.scriptEnabled() {
+		tools = append(tools, scriptToolName)
+	}
+	return tools
+}
+
+// scriptEnabled reports whether work-mode children may use the script tool.
+// The supervisor owns the per-run tool list, so it asks the runner rather than
+// duplicating the setting; a runner that cannot answer gets no script tool,
+// which is the safe side of the decision.
+func (s *Supervisor) scriptEnabled() bool {
+	type scripted interface{ ScriptEnabled() bool }
+	if r, ok := s.runner.(scripted); ok {
+		return r.ScriptEnabled()
+	}
+	return false
 }
 
 // RunAgentPrompt starts a fresh subagent with a self-contained prompt.
@@ -88,10 +119,7 @@ func (s *Supervisor) RunAgentPrompt(ctx context.Context, dir, prompt string, opt
 		return fail(fmt.Sprintf("agent: invalid mode %q", mode), "invalid_input")
 	}
 
-	opts := RunOptions{Tools: append([]string(nil), dynamicAgentTools...)}
-	if mode == AgentModeInspect {
-		opts.Tools = append([]string(nil), inspectAgentTools...)
-	}
+	opts := RunOptions{Tools: s.toolsFor(mode)}
 	id, err := s.admitAndRegister(prompt, call, tools.ConversationGenerationFrom(ctx))
 	if err != nil {
 		return fail(err.Error(), "admission_denied")

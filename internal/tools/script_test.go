@@ -194,3 +194,68 @@ func TestScriptDescriptionStatesTheReturnShapes(t *testing.T) {
 		}
 	}
 }
+
+// TestScriptErrorsCarryAFixableNextStep checks the hint, not just the class.
+// A class alone leaves the model to rediscover the convention, which is what
+// three failed calls cost in the first measurement (docs/performance.md). The
+// hint must appear only where the source confirms the cause: a wrong hint sends
+// the model after a bug that is not there.
+func TestScriptErrorsCarryAFixableNextStep(t *testing.T) {
+	s, _ := newScript(t)
+
+	_, err := runScript(t, s, "await 1")
+	if err == nil {
+		t.Fatal("await: expected an error")
+	}
+	if !strings.Contains(err.Error(), "synchronous and there is no top-level await") {
+		t.Fatalf("await error = %v, want a synchronous rewrite", err)
+	}
+	if !strings.Contains(err.Error(), "tools.grep") {
+		t.Fatalf("await error = %v, want a concrete example", err)
+	}
+
+	// A syntax error that is not about await keeps the plain message; the hint
+	// is a convention reminder, not a general "fix your syntax" note.
+	_, err = runScript(t, s, "1 +")
+	if err == nil {
+		t.Fatal("syntax: expected an error")
+	}
+	if strings.Contains(err.Error(), "await") {
+		t.Fatalf("plain syntax error = %v, want no await hint", err)
+	}
+
+	// A throw unrelated to the file tools stays unadorned.
+	_, err = runScript(t, s, `throw new Error("boom")`)
+	if err == nil {
+		t.Fatal("throw: expected an error")
+	}
+	if strings.Contains(err.Error(), "read_file") {
+		t.Fatalf("throw error = %v, want no edit_file hint", err)
+	}
+}
+
+// TestScriptEditHintNamesTheLineNumberGutter covers the trap the schema can only
+// describe abstractly: read_file prefixes each line with its number and a tab,
+// edit_file matches raw text, and the natural "feed one into the other" script
+// fails with a message that reads like a file problem.
+func TestScriptEditHintNamesTheLineNumberGutter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	if err := os.WriteFile(path, []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := tools.NewScript([]tools.Tool{
+		tools.ReadFile{}, tools.EditFile{}, tools.WriteFile{},
+		tools.Grep{Root: dir}, tools.Glob{Root: dir},
+	})
+	source := `const raw = tools.read_file({path: "` + path + `"});
+const line = raw.split("\n")[0];
+tools.edit_file({path: "` + path + `", old_string: line, new_string: "ALPHA"})`
+	_, err := s.Run(context.Background(), map[string]any{"source": source})
+	if err == nil {
+		t.Fatal("expected the edit to fail on the numbered line")
+	}
+	if !strings.Contains(err.Error(), "strip the leading line number") {
+		t.Fatalf("error = %v, want the gutter hint", err)
+	}
+}

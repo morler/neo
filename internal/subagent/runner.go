@@ -28,6 +28,10 @@ type AgentRunner struct {
 	ContextWindowTokens int
 	Root                string
 	BashTimeout         time.Duration
+	// Script registers the JavaScript script tool for work-mode children when
+	// the session has it enabled. It is a field rather than a lookup because the
+	// contract is over a capability the runner shares with the coordinator.
+	Script bool
 }
 
 // SetBackend updates the default provider and model used by future workers.
@@ -46,6 +50,9 @@ func (r *AgentRunner) SetBackend(provider llm.Provider, model string) error {
 	r.backendMu.Unlock()
 	return nil
 }
+
+// ScriptEnabled answers the supervisor's question about the script tool.
+func (r *AgentRunner) ScriptEnabled() bool { return r.Script }
 
 func (r *AgentRunner) backend() (llm.Provider, string) {
 	r.backendMu.RLock()
@@ -96,11 +103,15 @@ func (r *AgentRunner) registryWithOptions(dir string, opts RunOptions) *tools.Re
 	if bashTimeout <= 0 {
 		bashTimeout = tools.DefaultBashTimeout
 	}
-	all := tools.NewRegistry(append([]tools.Tool{
-		tools.Bash{Timeout: bashTimeout, CWD: dir},
-		tools.Grep{Root: r.Root},
-		tools.Glob{Root: r.Root},
-	}, tools.NewFileTools()...)...)
+	// The file tools are built once and handed to the script tool as well, so a
+	// read inside a child's script is the same read its later edit consults.
+	files := append([]tools.Tool{tools.Grep{Root: r.Root}, tools.Glob{Root: r.Root}},
+		tools.NewFileTools()...)
+	base := append([]tools.Tool{tools.Bash{Timeout: bashTimeout, CWD: dir}}, files...)
+	if r.Script {
+		base = append(base, tools.NewScript(files))
+	}
+	all := tools.NewRegistry(base...)
 	if len(opts.Tools) == 0 {
 		return all
 	}

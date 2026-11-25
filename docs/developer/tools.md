@@ -16,7 +16,13 @@ Neo exposes a small built-in tool surface to the model.
 | `write_file` | Chat and headless | Write content to a file, creating parent directories. Overwrites the file if it exists. |
 
 Independent inspect calls issued in one model response can run concurrently.
-Inspect children receive only `read_file`, `grep`, and `glob`.
+Inspect children receive only `read_file`, `grep`, and `glob`. Work-mode children
+also receive `script` when the session has it enabled (`features.script`,
+`--script`, or `/codemode on`), so delegated file work can batch dependent steps
+the way the coordinator can; inspect children never do, because their whitelist
+is read-only by construction and a script reaches `write_file` through the same
+globals. A child's script shares the file tools a later edit consults, so a read
+inside a script counts as the child having seen the file.
 
 ## Goal ownership
 
@@ -52,6 +58,25 @@ head-and-tail at that size so a failing command's trailing error survives;
 same cap as a backstop for any tool that does not bound itself. A single line
 longer than the limit cannot be read by `read_file`, since pagination cuts on
 line boundaries; use `bash` for that.
+
+## Script error hints
+
+`script` reports the failure class (`script has a syntax error`, `script threw`,
+`script stopped`, `script exceeded its memory limit`) and then, only where the
+source confirms the cause, one sentence saying what to write instead:
+
+- A syntax error whose source contains `await` gets the synchronous rewrite,
+  because the engine reports `await 1` as `Unexpected number` and that says
+  nothing about scripts being synchronous.
+- A `script threw` whose message is `edit_file` rejecting `old_string not found`
+  gets the line-number gutter note: `read_file` prefixes each line with its
+  number and a tab, while `edit_file` matches raw text.
+
+The hints are deliberately narrow. A hint attached to the wrong cause sends the
+model after a bug that is not in the file, which costs more than the silence it
+replaced, so a plain syntax error or an unrelated throw stays unadorned. They
+cost bytes only on the failure path, so `TestFixedPromptFloorBudget` and
+`TestScriptFloorBudget` do not move when one is added.
 
 ## Command timeouts
 

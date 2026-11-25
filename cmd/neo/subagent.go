@@ -52,6 +52,10 @@ func chatAgentTool(prov llm.Provider, model, cwd, root string, cfg *config.Confi
 		ContextWindowTokens: contextWindowTokens,
 		Root:                root,
 		BashTimeout:         5 * time.Minute,
+		// Same decision as the coordinator's registry (registryFor), so a
+		// session that enabled the tool does not end up with children that
+		// cannot use it.
+		Script: cfg != nil && cfg.ScriptEnabled(),
 	}
 	sup := subagent.NewSupervisor(runner, subagent.DefaultBudget())
 	return subagent.AgentTool{Sup: sup, Dir: cwd}, sup.Events, runner

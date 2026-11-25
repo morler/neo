@@ -35,7 +35,7 @@ budgets:
   built-in skill catalog — must remain at or below 8,500 bytes. It is 8,084
   (5,022 for nine tool definitions, 3,062 for the prompt);
 - the same floor with the opt-in script tool enabled must remain at or below
-  10,000 bytes. It is 9,499 (5,873 and 3,626).
+  10,000 bytes. It is 9,555 (5,873 and 3,682).
 
 Re-measure the binary before adding a dependency: the ceiling is generous on
 purpose, and a second engine-sized cost would use it up.
@@ -70,10 +70,13 @@ exists:
 | **Fixed floor** | **8,084** | **~2,020** |
 
 These are the default surface, which has no script tool. Turning the tool on
-adds 851 bytes of schema and 604 bytes of prompt, for a floor of 9,499; that is
+adds 851 bytes of schema and 682 bytes of prompt, for a floor of 9,555; that is
 `scriptFloorByteBudget` (10,000), checked separately by `TestScriptFloorBudget`.
 The prompt section grew when it was rewritten around task shapes with a worked
-example, which is what an opt-in tool has to do to be chosen at all.
+example, which is what an opt-in tool has to do to be chosen at all. It grew
+again by 78 bytes on 2026-11-25 when the judgement moved from file count to
+dependency (`TestScriptCapabilityNamesDependencyNotVolume`); that is the same
+section restated, not a new feature.
 
 The schema grew by 147 bytes on 2026-11-24 when the description was corrected:
 it had claimed a script could not write, long after write_file and edit_file
@@ -132,6 +135,49 @@ save; the +13.7% is the fixed cost of having the tool registered, now visible
 in a run that uses it. The honest summary is narrow: the tool is chosen when a
 task matches the shapes the prompt names, and it still costs prompt bytes on
 every request whether or not it is chosen.
+
+### Why a script competes with a narrowed command, not a whole file
+
+Measured 2026-11-25 (#83) on one task built to favour the tool: read a
+2,001-line file, find the line holding a unique marker, change only the word
+after the marker, leave every other line byte-identical. Nine runs on
+`commandcode` / `deepseek/deepseek-v4.1-flash`, one binary, only
+`features.script` flipped.
+
+| | off (n=3) | on (n=6) |
+| --- | ---: | ---: |
+| requests (median) | 5 | 6 |
+| input tokens (median) | 11,331 | 16,769 |
+| runs that called `script` | 0 / 3 | 2 / 6 |
+| top-level `read_file` calls | 0 | 0 |
+
+The number that matters is the last one. `read_file` was never called, in any
+run of either arm: the model narrowed the window with `sed -n '1499,1503p'` and
+`grep -n`, so the cost `docs/design/js-batch-tool.md` §1 attributes to reading a
+large file never arrived. The script is therefore not competing with "pull 2,001
+lines into the conversation"; it is competing with one already-narrow `bash`
+command, and it loses on bytes because its own fixed cost is re-sent every turn.
+
+Where it was chosen, the scripts were not what the design predicts. One run
+wrote four of them, reached 8 requests and 26,813 input tokens, and its first
+script only replaced a `grep` before the edit happened at the top level — read,
+branch, and write were not merged into one call. So the dependency shape raises
+the selection rate but the model uses the tool as a faster `grep`, not as a way
+to save a round trip.
+
+Two consequences recorded here rather than discovered later:
+
+- The noise floor on this model is wide. The `on` arm spans 5–8 requests and
+  13,768–26,813 input tokens across six runs, which is larger than any wording
+  change could produce. A re-measurement at n=3 cannot decide keep-or-narrow on
+  request or token counts; it needs either many more runs or a non-random
+  signal (did the chosen script merge read, branch, and write?).
+- A task a `sed` one-liner cannot solve is still unmeasured. This fixture was
+  small enough that no script was needed.
+
+The byte figures in #80 treated 1,455 bytes as roughly 2,000 tokens. At four
+characters per token that is about 364. The qualitative conclusion there stands;
+the conversion should not be reused.
 
 ### Measuring a real run
 
