@@ -54,8 +54,24 @@ unrelated work alone, and do not commit, push, or deploy unless asked.
 
 Before a tool call, write one short sentence explaining what you are checking or
 changing and why. Do not narrate obvious individual calls or expose private
-reasoning. Issue independent reads, searches, or inspections together in one
+reasoning. ` + chatPromptTail
+
+// chatPromptTail closes chatSystemPrompt and carries the batching rule, which
+// script can contradict. A script is a serial barrier: its host calls are
+// synchronous, and the agent flushes a parallel batch around it. Left
+// unqualified, "put independent calls in one response" makes the cheapest way
+// to obey the rule a split into two responses, which is exactly the round trip
+// a script exists to remove. Kept as its own constant so only a session that
+// can script pays for the clarification.
+const chatPromptTail = `Issue independent reads, searches, or inspections together in one
 response. When you finish a task, briefly summarize what changed.`
+
+// chatPromptTailScripted is chatPromptTail plus the tie-break. It is used only
+// when the script tool is registered, so the default prompt stays byte-identical.
+const chatPromptTailScripted = `Issue independent reads, searches, or inspections together in one
+response. That batching is for calls that do not depend on each other; when one
+depends on another's output, that is one script call, not two responses. When
+you finish a task, briefly summarize what changed.`
 
 // workflowCapability is appended when the workflow tool is registered.
 const workflowCapability = `
@@ -400,7 +416,7 @@ AGENT PROMPTS:
 OPT-IN TOOLS:
   --script           Register the JavaScript script tool for this run.
   --no-script        Leave it unregistered, overriding features.script.
-                     The tool costs ~1.5 KB of prompt and schema per request,
+                     The tool costs ~1.7 KB of prompt and schema per request,
                      so it is off unless asked for. In chat,
                      /codemode on|off|status changes it and writes the choice
                      to features.script.
@@ -468,6 +484,9 @@ func chatSystem(cfg *config.Config, cwd string, sk []skills.Skill, agentProfile 
 	// to them: a personal assistant should not be carrying "run tests after you
 	// change code". Everything after this block composes unchanged.
 	instructions := chatSystemPrompt
+	if hasScript(reg) {
+		instructions = strings.TrimSuffix(chatSystemPrompt, chatPromptTail) + chatPromptTailScripted
+	}
 	if agentProfile.Body != "" {
 		instructions = agentProfile.Body
 	}
@@ -544,10 +563,21 @@ func capabilitySections(reg *tools.Registry) string {
 	if _, ok := reg.Get("goal"); ok {
 		b.WriteString(goalCapability)
 	}
-	if _, ok := reg.Get("script"); ok {
+	if hasScript(reg) {
 		b.WriteString(scriptCapability)
 	}
 	return b.String()
+}
+
+// hasScript answers whether the session can write scripts. Both the capability
+// section and the tie-break in chatPromptTail hang off it, so they cannot
+// disagree about whether a script is available.
+func hasScript(reg *tools.Registry) bool {
+	if reg == nil {
+		return false
+	}
+	_, ok := reg.Get("script")
+	return ok
 }
 
 // scriptOverride carries --script / --no-script from argument parsing into

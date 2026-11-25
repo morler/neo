@@ -1659,7 +1659,7 @@ func (m *model) handleCodeModeCommand(rest string) tea.Cmd {
 // was never called.
 func (m *model) codeModeStatusLine() string {
 	if m.scriptEnabled != nil && m.scriptEnabled() {
-		line := "codemode on: the script tool is available (+~1.5 KB prompt and schema per request)"
+		line := "codemode on: the script tool is available (+~1.7 KB prompt and schema per request)"
 		return line + m.scriptUsageLine()
 	}
 	return "codemode off: the script tool is not registered"

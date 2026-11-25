@@ -259,3 +259,17 @@ tools.edit_file({path: "` + path + `", old_string: line, new_string: "ALPHA"})`
 		t.Fatalf("error = %v, want the gutter hint", err)
 	}
 }
+
+// TestScriptStaysASerialBarrier records a decision this task deliberately did
+// not revisit. A script's host calls are synchronous, so two scripts running
+// together would need a runtime pool (#66, decided wontfix for lack of a second
+// consumer). The prompt now says where a script belongs instead of making it
+// parallel, and this test fails if that changes by accident.
+func TestScriptStaysASerialBarrier(t *testing.T) {
+	if (tools.Script{}).ParallelSafe(nil) {
+		t.Fatal("script must stay serial; a parallel script needs a runtime pool")
+	}
+	if (tools.Script{}).ParallelSafe(map[string]any{"source": "1"}) {
+		t.Fatal("script must stay serial whatever it is asked to run")
+	}
+}

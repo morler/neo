@@ -37,9 +37,10 @@ estimate `compact.EstimateTokens` uses.
 | System prompt with built-in skill catalog | 3,062 | 765 |
 | **Fixed floor** | **8,084** | **~2,020** |
 
-The opt-in script tool adds 1,569 bytes when enabled (949 schema, 620 prompt).
-The schema's last 98 bytes are a sentence added to `bash`'s description (#87)
-that appears only where the script tool is registered.
+The opt-in script tool adds 1,712 bytes when enabled (949 schema, 763 prompt).
+Only that arm carries them: 98 schema bytes are a sentence added to `bash`'s
+description (#87) and 143 prompt bytes qualify the batching rule against a
+script being one serial call (#89).
 
 Largest definitions: `agent` 808 B, `goal` 775 B, `grep` 645 B, `workflow`
 536 B. A project `AGENTS.md` adds an uncached tail on top.

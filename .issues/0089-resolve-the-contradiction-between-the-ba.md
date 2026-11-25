@@ -1,7 +1,7 @@
 ---
 id: 89
 title: Resolve the contradiction between the base prompt's batch-one-response rule and script being a serial barrier
-status: open
+status: in-progress
 priority: low
 labels:
     - llm
@@ -44,3 +44,33 @@ updated: "2026-11-25"
 - 单测：`script` 开启时，`corePromptByteBudget`（1,400，现 1,282）仍通过。
 - 明确记录：本任务不改变任何工具的 `ParallelSafe` 结果（可用断言固定 `tools.Script{}.ParallelSafe(nil) == false`，若尚无此测试则补上）。
 - `go test ./cmd/neo ./internal/agent ./internal/tools` 通过。
+
+## 实施记录（2026-11-25）
+
+已实现，`Script.ParallelSafe` 与运行时池均未改动。
+
+**改动**：
+- `cmd/neo/main.go`：`chatSystemPrompt` 的收尾句拆为 `chatPromptTail`（原文本，逐字节不变）与 `chatPromptTailScripted`（追加限定）。新增 `hasScript(reg)`，能力段与尾段选择共用它，两者不可能对"脚本是否可用"给出不同答案。
+- 限定语（+143 B，只在 `script` 注册时出现）：
+
+  > That batching is for calls that do not depend on each other; when one depends on another's output, that is one script call, not two responses.
+
+**实测字节**（`go test ./cmd/neo -run 'TestFixedPromptFloorBudget|TestScriptFloorBudget| -v`）：
+
+| 项 | 改前 | 改后 |
+| --- | ---: | ---: |
+| 默认固定地板 | 8,084 | **8,084（不变）** |
+| 默认提示词 | 3,062 | 3,062（不变） |
+| script 地板 | 9,653 | 9,796 |
+| 其中 prompt | 3,682 | 3,825 |
+
+**过程中发现并修正的一处**：首版把尾段拼成 `` ` + chatPromptTail + `\n` ``，多出 1 字节，默认提示词变成 3,063。`TestDefaultPromptKeepsThePlainBatchingRule` 现在以字面量钉死整段默认提示词，这类"重组常量时多一个换行"的偏移会立刻失败。
+
+**测试**：
+- `TestDefaultPromptKeepsThePlainBatchingRule`：默认提示词与字面量逐字节相同。
+- `TestScriptTieBreakReachesThePromptOnlyWithScript`：`chatSystemPrompt` 以 `chatPromptTail` 收尾（否则替换不成立）；默认提示词不含 "one script call"；带脚本时含限定；两臂只有尾段不同。
+- `TestScriptStaysASerialBarrier`（`internal/tools`）：`Script.ParallelSafe` 在 nil 与带 source 两种输入下都为 false，把"本任务不改并行分类"钉成断言。
+
+**文档同步**：`docs/performance.md`、`docs/design/token-budget.md`、`docs/developer/config.md`、`docs/developer/tools.md`、`CHANGELOG.md`、CLI `--script` 帮助、`/codemode status` 统一为 1,712 B（949 schema + 763 prompt）。
+
+**未做**：任务集复测，理由同 #87——它需要真实 provider 与多次运行，且其结果是 #91 的输入。

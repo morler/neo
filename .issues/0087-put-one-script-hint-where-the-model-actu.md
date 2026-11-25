@@ -1,7 +1,7 @@
 ---
 id: 87
 title: Put one script hint where the model actually chooses a tool, not only in the system prompt
-status: in-progress
+status: closed
 priority: low
 labels:
     - llm
@@ -14,6 +14,7 @@ relations:
         - 89
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景

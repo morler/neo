@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/owainlewis/neo/internal/config"
@@ -48,12 +49,13 @@ const fixedFloorByteBudget = 8_500
 // measured 2026-11-24 at 9,499 bytes (5,873 tool definitions + 3,626 prompt),
 // then 9,555 on 2026-11-25 when the judgement moved from file count to
 // dependency (5,873 + 3,682), then 9,653 when bash's description gained one
-// sentence naming the script decision point (5,971 + 3,682, #87). The script
-// schema is 851 and its prompt section is 620, which is the section's own
-// length rather than the difference from the 3,000 chat budget. The ceiling was
-// 9,500 before the prompt was rewritten around task shapes with a runnable
-// example; that left one byte of room, which would have made the next edit a
-// failing test rather than a decision. Rounded up to the next 500, as before.
+// sentence naming the script decision point (5,971 + 3,682, #87), then 9,796
+// when the batching rule was qualified against a script being one serial call
+// (5,971 + 3,825, #89). The script schema is 851 and the script tool's own
+// prompt section is 620; the rest of the prompt delta is that tie-break. The
+// ceiling was 9,500 before the prompt was rewritten around task shapes with a
+// runnable example; that left one byte of room, which would have made the next
+// edit a failing test rather than a decision. Rounded up to the next 500.
 const scriptFloorByteBudget = 10_000
 
 func TestChatSystemPromptSizeBudgets(t *testing.T) {
@@ -274,5 +276,68 @@ func TestBashHintFollowsTheScriptTool(t *testing.T) {
 	}
 	if defaultBash.Spec().Description == scriptedBash.Spec().Description {
 		t.Fatal("the hint did not reach the scripted registry")
+	}
+}
+
+// TestScriptTieBreakReachesThePromptOnlyWithScript covers the prompt half of
+// the batching conflict: the scripted prompt says which case wins between
+// "batch independent calls" and a script being one serial call, and the default
+// prompt says nothing of the sort.
+func TestScriptTieBreakReachesThePromptOnlyWithScript(t *testing.T) {
+	if !strings.HasSuffix(chatSystemPrompt, chatPromptTail) {
+		t.Fatal("chatSystemPrompt does not end with chatPromptTail, so the scripted rewrite cannot replace it")
+	}
+	if strings.Contains(chatSystemPrompt, "one script call") {
+		t.Fatal("the default prompt mentions script; a session without the tool pays for it")
+	}
+
+	plain, _ := chatSystem(promptConfig(false), "", nil, profile.Profile{}, registryFor(promptConfig(false), "", ""), io.Discard)
+	scripted, _ := chatSystem(promptConfig(true), "", nil, profile.Profile{}, registryFor(promptConfig(true), "", ""), io.Discard)
+
+	// chatSystem appends environment and project sections after the
+	// instructions, so the tail is found in the body rather than compared to
+	// the end of the whole prompt.
+	if !strings.Contains(plain, chatPromptTail) {
+		t.Fatal("the prompt without script does not carry the plain tail")
+	}
+	if !strings.Contains(scripted, chatPromptTailScripted) {
+		t.Fatal("the prompt with script does not carry the scripted tail")
+	}
+	if !strings.Contains(scripted, "one script call") {
+		t.Fatal("the scripted prompt does not resolve the batching conflict")
+	}
+	if strings.Contains(plain, "one script call") {
+		t.Fatal("the plain prompt resolves a conflict it cannot have")
+	}
+}
+
+// promptConfig builds a config whose script setting is the given one.
+func promptConfig(on bool) *config.Config {
+	cfg := &config.Config{}
+	cfg.Features.Script = &on
+	return cfg
+}
+
+// TestDefaultPromptKeepsThePlainBatchingRule pins the default prompt byte for
+// byte. The batching rule moved into a constant so a session that can script
+// can qualify it; a session that cannot must read exactly the text it read
+// before, or the fixed floor grows for a capability it does not have.
+func TestDefaultPromptKeepsThePlainBatchingRule(t *testing.T) {
+	const want = "You are neo, a coding agent working in the user's current working directory.\n" +
+		"\n" +
+		"Inspect the project before changing it, and prefer the smallest change that does\n" +
+		"the job. After changing code, run the checks that cover it and say what you ran;\n" +
+		"if something could not be verified, say that instead of implying it passed.\n" +
+		"\n" +
+		"Answer the request that was made. An inspection, explanation, review, or design\n" +
+		"request is answered, not implemented, unless changes were asked for. Leave\n" +
+		"unrelated work alone, and do not commit, push, or deploy unless asked.\n" +
+		"\n" +
+		"Before a tool call, write one short sentence explaining what you are checking or\n" +
+		"changing and why. Do not narrate obvious individual calls or expose private\n" +
+		"reasoning. Issue independent reads, searches, or inspections together in one\n" +
+		"response. When you finish a task, briefly summarize what changed."
+	if chatSystemPrompt != want {
+		t.Fatalf("chatSystemPrompt = %q, want %q", chatSystemPrompt, want)
 	}
 }
