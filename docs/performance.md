@@ -185,6 +185,29 @@ The byte figures in #80 treated 1,455 bytes as roughly 2,000 tokens. At four
 characters per token that is about 364. The qualitative conclusion there stands;
 the conversion should not be reused.
 
+### Re-measured after the decision-point hint and the batching tie-break
+
+Measured 2026-11-25 (#91) on the same fixture as #83, after #87 added a hint to
+bash's description and #89 qualified the base prompt's batching rule. Same
+model and provider as #83, one binary, only `features.script` flipped.
+
+| | off (n=3) | on (n=6) |
+| --- | ---: | ---: |
+| requests (median, range) | 5 (5–5) | 5.5 (4–8) |
+| input tokens (median, range) | 12,135 (11,481–12,342) | 16,028 (11,110–24,186) |
+| runs that called `script` | 0 / 3 | 1 / 6 |
+| runs that called `read_file` | 0 / 3 | 1 / 6 |
+
+No run merged read, judgement and write into one script. The single scripted
+run read the file and then edited it at the top level with `sed -i`, which is
+the same shape #83 and #86 recorded. The hint did produce the first top-level
+`read_file` any arm of this fixture has shown (one run of six, and it was also
+the most expensive), so it is visible but not established.
+
+The conclusion this supports is narrow and worth stating plainly: after two
+rounds of prompt changes the merge rate is still zero, so prompt length is not
+what keeps a script from replacing a round trip.
+
 ### Measuring a real run
 
 A run's actual cost comes from the provider, not from an estimate:

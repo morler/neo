@@ -94,3 +94,68 @@ updated: "2026-11-25"
 - 不做 `agent()` 式的脚本内子代理编排（那是 `agent` 工具与新协议的事）。
 - 不改 `internal/agent` 的策略中立性；模式的差异只体现在注册表与提示词，由 CLI 边界组合。
 - 不在本任务里决定 `/codemode` 是否改名。
+
+## 复测结果（2026-11-25，提交 `b3d8c9b`）
+
+#87（bash 描述指向 script）与 #89（批处理规则限定）落地后的第一次测量。任务、cwd、fixture 与 provider/model 逐字沿用 #83，只改二进制版本。
+
+**环境**：`/tmp/remeasure/ws4`；`big.txt` 2001 行，第 1501 行 `prefix needle-7f3a PLACEHOLDER suffix`；`commandcode` / `deepseek/deepseek-v4.1-flash`；同一二进制 `/tmp/remeasure/neo`（`CGO_ENABLED=0 go build -trimpath -ldflags "-s -w"`，`remeasure-b3d8c9b`），只改 `neo.yaml` 的 `features.script`。
+
+**任务原文**（与 #83 逐字相同）：
+
+```
+Read the line containing the unique needle marker in big.txt, change only the word immediately after it to UPDATED, and write the file back. Do not touch any other line.
+```
+
+### 原始数据
+
+| 版本 | 运行 | requests | input_tokens | script 调用 | read_file 调用 | 第 1501 行 | 其余行未变 |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| off | r1 | 5 | 12,135 | 0 | 0 | UPDATED | 是 |
+| off | r2 | 5 | 12,342 | 0 | 0 | UPDATED | 是 |
+| off | r3 | 5 | 11,481 | 0 | 0 | UPDATED | 是 |
+| on | r1 | 8 | 24,186 | 0 | 2 | UPDATED | 是 |
+| on | r2 | 5 | 13,732 | 0 | 0 | UPDATED | 是 |
+| on | r3 | 4 | 11,110 | 0 | 0 | UPDATED | 是 |
+| on | r4 | 5 | 14,789 | 0 | 0 | UPDATED | 是 |
+| on | r5 | 6 | 18,689 | **2** | 0 | UPDATED | 是 |
+| on | r6 | 6 | 17,267 | 0 | 0 | UPDATED | 是 |
+
+| 指标 | off（n=3） | on（n=6） |
+| --- | ---: | ---: |
+| requests 中位数（跨度） | 5（5–5） | 5.5（4–8） |
+| input 中位数（跨度） | 12,135（11,481–12,342） | 16,028（11,110–24,186） |
+| 运行中调用过 `script` | 0 / 3 | 1 / 6 |
+| 运行中调用过 `read_file` | 0 / 3 | 1 / 6 |
+
+### 主判据判定：**合并数 0**
+
+`on` r5 是唯一调用脚本的运行。其 `source` 全文：
+
+```js
+const path = "/tmp/remeasure/ws4/big.txt";
+const raw = tools.read_file({path}).split("\n");
+// read_file adds line-number prefixes; read via bash-cat style instead to avoid prefix contamination
+```
+
+`has_read: True`、`has_write: False`。脚本只读了文件，判断与写入都留在顶层——随后它用 `sed -i '1501s/^\(prefix needle-7f3a \)PLACEHOLDER\( suffix\)$/\1UPDATED\2/'` 完成改写。
+
+按预注册判据（同一 `eval` 内同时出现读取类与写入类动作），这是**未出现合并**，与 #83 的 2/6 调用、合并 0，以及 #86 的合并 0 完全一致。
+
+### 结论：提示词侧已改到位，仍不足以让脚本承担一次往返
+
+三条观察：
+
+1. **#87 的作用可见但很窄。** `on` 组首次出现顶层 `read_file`（r1，`offset: 1499, limit: 4`），#83 的九个运行里一次都没有。这是 bash 描述里那句提示唯一能指认的效果，但样本只有 1/6，且该次运行请求数反而最高（8 次 / 24,186）。不能据此说提示有效。
+
+2. **#89 没有改变行为。** 两次实测（#83 与本任务）的脚本都只读不写。批处理规则的限定语让"独立调用可并行、依赖调用用一次脚本"在文本上不再矛盾，但模型仍然把脚本当成一个更贵的 `grep`/`read_file`，判断与写入照旧放在顶层。这说明障碍不在两条指令的措辞冲突，而在模型对"一次脚本能同时改文件"的不信任或没想到。
+
+3. **`on` 组成本仍高于 off。** input 中位数 16,028 对 12,135（+32%），请求数中位数 5.5 对 5。差值约等于固定成本（1,712 B ≈ 428 tokens/请求 × 5.5 请求 ≈ 2,354）乘以请求数后的量级，没有返回。
+
+### 对 #91 的影响
+
+#91 的两条前置（#87、#89）已完成，第三条可选路径（#90 轮末提示）已 `wontfix`。按 #91 预先写下的分支，本次属于"未出现合并"，因此：
+
+- **不要**再通过继续加大提示词篇幅来提高合并率——两轮措辞改动（#84、#89）后合并数仍是 0。
+- 单工具模式的假设前提（"模型不用脚本是因为 bash 更便宜"）**部分成立**：去掉 bash 确实能强制写代码，但本次数据显示即使强制，模型也未必把读-判断-写合并进一次调用。这正是 #91 需要实测的核心问题，而它现在有了一个明确的对照基线：**合并率 0/6**。
+- 若做 #91，主判据应能区分"被迫写代码"与"真的合并"，否则一次成功的单工具实验可能只证明了前者。
