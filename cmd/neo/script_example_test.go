@@ -28,6 +28,73 @@ func scriptExample(t *testing.T) string {
 	return body[:end]
 }
 
+// TestCodeModeWindowExampleRuns is the guard for the code-mode shape that
+// turns a "found N times" refusal into one edit. #100 recorded the failure and
+// measured the budget: the example fits in code mode, so it lives next to the
+// read-decide-write section rather than in the error message.
+//
+// The example is extracted from codeModeCapability itself, and it keeps the
+// read_file line numbers, which is the part a model gets wrong: the raw text
+// after the tab is what edit_file matches, so the window must be given back
+// without the prefix.
+func TestCodeModeWindowExampleRuns(t *testing.T) {
+	source, ok := windowExample(t)
+	if !ok {
+		t.Fatal("codeModeCapability no longer shows how to build a unique old_string")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.txt")
+	body := "alpha\nbeta\n// TODO: one\n// TODO: two\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The ambiguous call is the one the prompt is answering: two matches.
+	s := tools.NewScript(nil)
+	s.Edit = tools.EditFile{}
+	s.Read = tools.ReadFile{}
+	s.Session = &tools.ScriptSession{}
+	if _, err := s.Run(context.Background(), map[string]any{"source": "tools.edit_file({path: " + quoted(path) + ", old_string: \"// TODO:\", new_string: \"// DONE:\"})"}); err == nil {
+		t.Fatal("this test needs an old_string that matches more than once")
+	}
+
+	src := strings.ReplaceAll(source, "marker", "two")
+	src = strings.ReplaceAll(src, "{path}", "{path: "+quoted(path)+"}")
+	if _, err := s.Run(context.Background(), map[string]any{"source": src + "; tools.edit_file({path: " + quoted(path) + ", old_string: raw, new_string: \"// DONE: two\"}); raw"}); err != nil {
+		t.Fatalf("the prompt example failed: %v\n%s", err, src)
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(updated) != "alpha\nbeta\n// TODO: one\n// DONE: two\n" {
+		t.Fatalf("file after the windowed edit = %q", updated)
+	}
+}
+
+// windowExample pulls the one-line window snippet out of the prompt. It looks
+// for the read_file-to-raw idiom rather than a fence, because the snippet sits
+// in the prose next to the example, where a model reads it in order.
+func windowExample(t *testing.T) (string, bool) {
+	t.Helper()
+	const open = "`const raw = "
+	start := strings.Index(codeModeCapability, open)
+	if start < 0 {
+		return "", false
+	}
+	rest := codeModeCapability[start+len(open):]
+	end := strings.Index(rest, "`")
+	if end < 0 {
+		t.Fatal("the window snippet is not closed")
+	}
+	return "const raw = " + rest[:end], true
+}
+
+// quoted renders a path as a JavaScript string literal.
+func quoted(s string) string {
+	return "\"" + strings.ReplaceAll(s, "\\", "\\\\") + "\""
+}
+
 // TestScriptExampleRuns is the guard the prompt needs. An example a model
 // copies and cannot run is worse than no example: it costs a turn and teaches
 // the wrong calling convention, which is what the first measurement found.

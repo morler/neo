@@ -78,6 +78,13 @@ again by 56 bytes on 2026-11-25 when the judgement moved from file count to
 dependency (`TestScriptCapabilityNamesDependencyNotVolume`); that is the same
 section restated, not a new feature.
 
+The code-mode floor is 3,379 bytes (tools 856 + prompt 2,523) against a budget
+of 3,500. It grew by 304 bytes on 2026-11-25 when the section gained the shape
+for turning an "old_string found N times" refusal into one edit (#100): cut the
+window from the read_file output already in hand rather than reading again. The
+budget had 425 bytes free and #100 measured that before choosing the prompt over
+a second error hint; both places would have said the same thing twice.
+
 The scripted arm's schema moved 851 → 949 on 2026-11-25 when bash's description
 gained one sentence pointing at the script tool (#87), and its prompt moved
 682 → 763 the same day when the batching rule was qualified against a script

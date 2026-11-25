@@ -1,7 +1,7 @@
 ---
 id: 100
 title: Teach the script path a one-pass read-locate-edit shape instead of a retry loop
-status: open
+status: closed
 priority: medium
 labels:
     - tools
@@ -15,6 +15,7 @@ relations:
         - 101
 created: "2026-11-25"
 updated: "2026-11-25"
+closed: "2026-11-25"
 ---
 
 ## 背景
@@ -73,3 +74,35 @@ tools.edit_file({path, old_string, new_string})   // old_string 定位到了 3 �
 ## 备注
 
 与 #85 的关系是"补完同一原则的剩余分支"，不是重复：#85 做了 `await` 与 `old_string not found`，本任务处理"匹配到多处"这一分支，或在预算允许时用示例从根上避免它。与 #84 的关系：`codeModeCapability` 是 #89 之后新增的文本，本任务只在其后追加，不重写判断句。
+
+
+## 修复记录（2026-11-25）
+
+采用 issue 的**方案 A**（提示词示例），依据是预算实测：code mode 余量 425 B，新形状 304 B，装得下；按 #100 的约束只选一处实现，不动错误文案，避免同一件事出现两种说法。
+
+实测先确认了缺口与解法（临时测试，未保留）：
+- `tools.edit_file({old_string: "// TODO:"})` 在两处匹配 → `old_string found 2 times ...; include more surrounding text so it is unique`，模型只能重读、重猜。
+- 从 `read_file` 的 `"     3\t// TODO: one"` 切出 raw 行后再编辑 → 成功，文件只改到目标那一行。
+
+改动（`cmd/neo/main.go` 的 `codeModeCapability`）：在 read-decide-write 示例后加 4 行，给出"匹配到多处时从已有 read_file 输出切唯一窗口"的形状：
+
+```js
+const raw = tools.read_file({path}).split("\n").find((l) => l.includes("marker")).replace(/^\s*\d+\t/, "");
+```
+
+只加这一处，未新增章节。
+
+预算变化（`go test ./cmd/neo -run 'Test.*Floor.*' -v`）：
+| 面 | 改动前 | 改动后 | 预算 |
+| --- | ---: | ---: | ---: |
+| code mode | 3,075 | 3,379 | 3,500 |
+| script（classic+script） | 9,796 | 9,796 | 10,000 |
+| fixed floor | 8,084 | 8,084 | 8,500 |
+
+文档：`docs/performance.md` 的固定开销小节记录了这次 +304 B 及原因；`CHANGELOG.md` 的 code mode floor 数字同步为 3,379。
+
+新增测试 `TestCodeModeWindowExampleRuns`：从 `codeModeCapability` 里**抽出**该片段（不复制），先制造"匹配到多处"的失败，再用片段构造唯一窗口完成编辑，断言文件内容精确变为期望值。这样提示词腐烂时测试会失败，而不是一直通过。
+
+未改动：`edit_file` 的匹配语义与"必须唯一"约束；`editFileHint`（`old_string not found`）的既有提示与测试。
+
+验证：`go test ./...`、`go vet ./...`、`qlty check` 全部通过。

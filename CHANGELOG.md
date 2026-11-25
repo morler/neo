@@ -16,7 +16,7 @@ All notable changes to Neo will be documented in this file.
   paths resolve against the session directory so a script and `run()` agree.
 - `features.codemode: classic` or `--codemode=classic` keeps the separate `bash`,
   `read_file`, `write_file`, `edit_file`, `grep` and `glob` tools. The fixed floor
-  is 3,075 bytes in code mode against 8,084 in classic.
+  is 3,379 bytes in code mode against 8,084 in classic.
 - `features.script` now defaults to `true`, since code execution is what the
   surface is built around. `/codemode on|off` still toggles it and persists the
   choice.
