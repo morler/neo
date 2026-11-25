@@ -10,6 +10,7 @@ relations:
     related-to:
         - 98
         - 99
+        - 106
 created: "2026-11-25"
 updated: "2026-11-25"
 closed: "2026-11-25"

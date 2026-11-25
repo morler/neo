@@ -10,6 +10,7 @@ relations:
         - 91
         - 97
         - 100
+        - 103
 created: "2026-11-25"
 updated: "2026-11-25"
 closed: "2026-11-25"
@@ -88,3 +89,12 @@ run 3  glob (+run)   -> read_file -> edit_file (+run)
 - 已在 `docs/performance.md` 新增"Merge rate on the single-tool surface"小节记录上述全部数字。
 
 未改动 `scriptCapability`/`codeModeCapability` 任何字节（`TestScriptFloorBudget`、`TestCodeModeFloorBudget` 字节数不变）。`go test ./...`、`go vet ./...`、`qlty check` 通过。
+
+## 更正（2026-11-25 全盘评审）
+
+本 issue 的结果记录有一处错误，已开 #103 跟踪修正：
+
+测量时把 features.codemode 设为 solo，但 solo 在 ad63f36 已被移除，config.Load() 不做校验，于是静默回退成 codemode。因此当时记录的 "codemode (n=3)" 与 "solo (n=5)" 并非两种工具面的对照，而是同一个面的 8 次采样。
+
+原始计数仍然有效（8 次运行、3 次合并），但不能表述为两模式对比。归因错误的根因另见 #104（配置校验缺失）。
+
