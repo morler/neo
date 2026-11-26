@@ -116,6 +116,18 @@ func optString(input map[string]any, key string) string {
 	return s
 }
 
+// optBool reads a boolean flag. Only a real bool counts: a string like "true"
+// is treated as absent, the same way optInt refuses a non-numeric string, so a
+// caller cannot half-enable a mode through the wrong JSON type.
+func optBool(input map[string]any, key string) bool {
+	v, ok := input[key]
+	if !ok {
+		return false
+	}
+	b, ok := v.(bool)
+	return ok && b
+}
+
 // optInt accepts JSON numbers (float64), ints, or numeric strings; returns 0
 // if absent or unparseable.
 func optInt(input map[string]any, key string) int {

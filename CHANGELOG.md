@@ -6,6 +6,19 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
+- `read_file` takes `raw: true`, which returns the file's own text without the
+  `%6d\t` line-number gutter. The gutter is for the model's eyes — it matches
+  what `grep` reports — but `edit_file` matches the file's raw text, so a script
+  that read a file and passed that text back as `old_string` failed with
+  "old_string not found" and then had to strip the prefix by hand
+  (`lines.map((l) => l.replace(/^\s*\d+\t/, ""))`), which is the step that kept
+  read-decide-write from collapsing into one call. Measured over 85 local
+  sessions, 218 script calls with sub-calls merged a read and a write 45 times
+  (20.6%), and 12 `old_string not found` results and 6 "found N times" results
+  traced back to the same mismatch. The default output is byte-for-byte
+  unchanged; only the opt-in flag differs, and the fixed floor grew by 158 bytes
+  for the description that names it.
+
 - A custom provider's context window can be discovered from its catalogue
   instead of being typed into the config. Neo already fetched
   `<endpoint>/models` for the `/model` picker; it now also reads the window that

@@ -583,7 +583,7 @@ func (s Script) codeModeSpec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: "script",
 		Description: `Do the work by writing JavaScript; the last expression is the result.
-Inside the script: tools.read_file, tools.grep, tools.glob, tools.write_file, tools.edit_file, all returning strings (grep returns "path:line:text" lines, glob one path per line).
+Inside the script: tools.read_file, tools.grep, tools.glob, tools.write_file, tools.edit_file, all returning strings (grep returns "path:line:text" lines, glob one path per line); read_file({raw:true}) drops line numbers for edit_file.
 Start programs with run(["prog", "arg"], timeoutSeconds), which returns {stdout, stderr, code}; a non-zero code is data, not a failure. Use it for git, tests and builds.
 No import. Writes pass the same approval a top-level call does. Synchronous only; top-level await is an error.
 Assign to globalThis (globalThis.cwd = ...) for state a later call needs; each call has its own scope otherwise.`,

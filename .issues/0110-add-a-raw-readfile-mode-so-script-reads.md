@@ -1,13 +1,14 @@
 ---
 id: 110
 title: Add a raw read_file mode so script reads can feed edit_file directly
-status: open
+status: closed
 priority: medium
 labels:
     - tools
     - prompting
 created: "2026-11-26"
 updated: "2026-11-26"
+closed: "2026-11-26"
 ---
 
 ## 背景
@@ -74,3 +75,76 @@ hashline（读时给每行附内容哈希、编辑时按哈希定位）解的是
 - 与 #100 的关系：本任务**不**修改 `edit_file` 的匹配语义，只是给读取侧多一个出口，因此不违背 #100 的约束；#100 交付的"构造唯一窗口"示例仍有效，且 raw 出口能让那一步更直接。
 - 与 #83/#86/#91/#97/#101 的关系：这些结论一致指向"提示词不是症结"，本任务是把那个结论落到契约层面。
 - 若实测发现 raw 出口并未提高合并率，结论应如实写入本 issue，并按 #91 的口径判定"不改工具面、补能力已到尽头"，不要再开新的提示词任务。
+
+## 实现记录（2026-11-26）
+
+已按 `raw` 出口方案落地，未采纳 hashline（理由见上）。
+
+### 改动
+
+- `internal/tools/fs.go`：`ReadFile.Spec()` 增加 `raw` boolean 属性；描述改为"raw: true drops that prefix so the text feeds edit_file directly"。`readFileWindow` 增收 `raw bool`，`windowScanner` 增 `raw` 字段，`consume` 在 `raw` 为真时不写 `lineNumberPrefix`。**默认输出逐字节不变。**
+- `internal/tools/tool.go`：新增 `optBool`，只接受真 bool——字符串 `"true"` 视为未设置，与 `optInt` 拒绝非数值字符串同一原则。
+- `internal/tools/script.go`：code 模式描述加一句 `read_file({raw:true}) drops line numbers for edit_file.`（该模式下 read_file schema 不可见，故写在这里）。
+- `cmd/neo/main.go`：`codeModeCapability` 的"构造唯一窗口"片段由手工 `replace(/^\s*\d+\t/, "")` 改为直接 `raw: true`，**这一步反而省了字节**。
+
+### 预算（实测，未抬门限）
+
+| 面 | 改动前 | 改动后 | 预算 |
+| --- | ---: | ---: | ---: |
+| fixed floor | 8,084 | **8,242** | 8,500 |
+| script floor | 9,796 | **9,954** | 10,000 |
+| code-mode floor | 3,379 | **3,421** | 3,500 |
+
+第一次改动曾把 script floor 顶到 10,015（超 15 B）与 10,045（超 45 B）。处理方式不是抬预算，而是：classic 模式下 `read_file` 是顶层工具、其 schema 本身可见，因此把说明从 script schema 里移走，只保留 code 模式那一句，并把示例改成更短的 `raw` 形式。
+
+### 测试
+
+- `TestReadFile_RawOmitsGutter`、`TestReadFile_RawMatchesGutterStripped`（raw 必须等于"默认输出剥掉前缀"）、`TestReadFile_RawHonorsOffsetLimit`、`TestReadFile_RawIgnoresNonBooleanFlag`、`TestReadFile_RawPreservesCRLFAndMissingNewline`、`TestReadFile_RawAbsentKeepsTheGutter`。
+- 端到端：`TestScriptRawReadFeedsEditFile`（脚本内 raw 读→直接 edit 成功），`TestScriptGutterReadStillFailsEditFile`（对照：默认读仍不能让 edit_file 直接用，防止契约悄悄漂回）。
+- 提示词守卫：`TestCodeModeWindowExampleRuns` 随示例形状更新并通过。
+- `go test ./...`、`go vet ./...`、`go test ./cmd/neo -run Floor -v` 全绿；`qlty check` 退出码 0。
+
+### 文档
+
+`docs/developer/tools.md`（read_file 行）、`docs/performance.md`、`docs/design/token-budget.md`（固定开销数字）、`CHANGELOG.md`（用户可见变更 + 实测数据来源）均已同步。
+
+### 判据复核
+
+1. `read_file({raw:true})` 输出可直接喂 `edit_file` 且成功 —— 由 `TestScriptRawReadFeedsEditFile` 与 CRLF 用例证明。
+2. 默认路径逐字节不变 —— 由 `TestReadFile_RawAbsentKeepsTheGutter` 与既有 `TestReadFile_Basic` 等锁住。
+3. 合并率作为观察项：本次未做新的 A/B 测量，沿用 `docs/performance.md` 的既有基线，符合 issue 判据中"不作成败判据"的约定。
+
+## 复核：关闭 codemode 后的影响（2026-11-26）
+
+用户提问"关闭 codemode 后这个改动不会影响正常使用吗"，据此补充实测验证。
+
+先说清一个容易混淆的点：neo 有**两个不同**的开关。
+
+- `features.codemode`（`/--codemode=`）切换**工具面**：`codemode`（默认，只有 script）或 `classic`（bash + read_file + write_file + edit_file + grep + glob）。
+- `features.script`（`/codemode on|off`）切换**script 工具是否注册**，不切换工具面。
+
+所以 chat 里输入 `/codemode off` 实际改的是 `features.script`（`cmd/neo/main.go:1382` 的 `SetScript`），不是工具面。
+
+### 四种工具面实测（`TestReadFileRawOnEverySurface`）
+
+| 工具面 | 注册的工具 | raw 可达路径 | 结果 |
+| --- | --- | --- | --- |
+| code-mode / script on | `script` | `tools.read_file({raw:true})` | 通过 |
+| code-mode / script off | 无 | 无 read_file，自然不涉及 | 通过（断言无该面） |
+| classic / script on | bash, edit_file, glob, grep, read_file, script, write_file | 顶层 `read_file` 的 schema，加上 script 内 | 通过 |
+| classic / script off | bash, edit_file, glob, grep, read_file, write_file | 顶层 `read_file` 的 schema | 通过 |
+
+**结论：不影响正常使用。** `raw` 是纯增量参数：
+
+- 不传 `raw` 时输出逐字节不变（`TestReadFile_RawAbsentKeepsTheGutter` 锁住）。
+- classic 工具面里 `read_file` 是顶层工具，其 schema 已声明 `raw`，模型按需使用；不用就完全不受影响。
+- code-mode 下 `read_file` 只在 script 内可见，故那一句说明写在 `codeModeSpec` 里。
+- code-mode + script off 本就是"只有协调工具"的退化配置（`neo run` 对此直接拒绝启动），与本次改动无关。
+
+### 提示词不串味
+
+classic 模式的 chat prompt **不含** code-mode 那句 `raw:true` 说明（`codeModeSpec` 仅在 `Script.CodeMode` 为真时使用，`internal/tools/script.go:134-137`），已用临时测试验证通过。因此关闭 codemode 后，提示词与工具面都和改动前一致，唯一差异是 `read_file` 多了一个可选参数。
+
+### 验证命令
+
+`go test ./...`（exit 0）、`go vet ./...`、`gofmt -l cmd internal`（干净）、`qlty check`（exit 0）全部通过。新增测试 `TestReadFileRawOnEverySurface`（`cmd/neo/readfile_raw_test.go`）把上表四种工具面固化为回归保护。

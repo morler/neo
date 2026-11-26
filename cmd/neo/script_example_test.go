@@ -59,7 +59,12 @@ func TestCodeModeWindowExampleRuns(t *testing.T) {
 	}
 
 	src := strings.ReplaceAll(source, "marker", "two")
-	src = strings.ReplaceAll(src, "{path}", "{path: "+quoted(path)+"}")
+	// The snippet reads with raw: true so the returned line already matches
+	// edit_file's notion of the file's text; only the path is a placeholder.
+	src = strings.ReplaceAll(src, "{path, raw: true}", "{path: "+quoted(path)+", raw: true}")
+	if strings.Contains(src, "{path,") {
+		t.Fatalf("the prompt snippet's placeholder changed shape:\n%s", src)
+	}
 	if _, err := s.Run(context.Background(), map[string]any{"source": src + "; tools.edit_file({path: " + quoted(path) + ", old_string: raw, new_string: \"// DONE: two\"}); raw"}); err != nil {
 		t.Fatalf("the prompt example failed: %v\n%s", err, src)
 	}

@@ -33,11 +33,14 @@ estimate `compact.EstimateTokens` uses.
 
 | Component | Bytes | ~Tokens |
 | --- | ---: | ---: |
-| 9 tool definitions (chat registry) | 5,022 | 1,255 |
+| 9 tool definitions (chat registry) | 5,180 | 1,295 |
 | System prompt with built-in skill catalog | 3,062 | 765 |
-| **Fixed floor** | **8,084** | **~2,020** |
+| **Fixed floor** | **8,242** | **~2,060** |
 
 The opt-in script tool adds 1,712 bytes when enabled (949 schema, 763 prompt).
+`read_file`'s description accounts for the rise from 5,022 to 5,180: it gained
+the `raw: true` option (#110), which is also the one clause added to the code
+mode description.
 Only that arm carries them: 98 schema bytes are a sentence added to `bash`'s
 description (#87) and 143 prompt bytes qualify the batching rule against a
 script being one serial call (#89).
@@ -49,7 +52,7 @@ What gates these numbers:
 
 - `cmd/neo/performance_test.go` enforces 1,400 bytes for the core prompt, 3,000
   for the chat prompt, 8,500 for the fixed floor (tool schemas plus chat prompt,
-  measured here as 8,084), and 10,000 for that floor with the script tool on. The same test renders the cacheable prefix
+  measured here as 8,242), and 10,000 for that floor with the script tool on. The same test renders the cacheable prefix
   twice and fails if the bytes differ.
 - `docs/performance.md` records the same three budgets and the token baseline,
   so the doc and the gate cannot drift apart quietly.

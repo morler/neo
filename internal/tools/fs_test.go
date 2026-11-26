@@ -27,6 +27,159 @@ func TestReadFile_Basic(t *testing.T) {
 	}
 }
 
+func TestReadFile_RawOmitsGutter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "raw.txt")
+	body := "func Max(a, b int) int {\n\tif a < b {\n\t\treturn b\n\t}\n\treturn a\n}\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ReadFile{}.Run(context.Background(), map[string]any{"path": path, "raw": true})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	// The point of raw: the result is the file's own text, so edit_file can
+	// match it directly. If a gutter survives here the whole feature is void.
+	if out != body {
+		t.Fatalf("raw read = %q, want the file's own text %q", out, body)
+	}
+	if strings.Contains(out, "     1\t") {
+		t.Fatal("raw read still carries a line-number gutter")
+	}
+}
+
+// TestReadFile_RawMatchesGutterStripped pins the two modes to one source of
+// truth: raw output must equal the default output with its gutter removed, so a
+// future change to the gutter cannot make raw and default drift apart.
+func TestReadFile_RawMatchesGutterStripped(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "paired.txt")
+	if err := os.WriteFile(path, []byte("alpha\nbeta\ngamma\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gutter, err := ReadFile{}.Run(context.Background(), map[string]any{"path": path})
+	if err != nil {
+		t.Fatalf("read default: %v", err)
+	}
+	raw, err := ReadFile{}.Run(context.Background(), map[string]any{"path": path, "raw": true})
+	if err != nil {
+		t.Fatalf("read raw: %v", err)
+	}
+	var stripped []string
+	for _, line := range strings.Split(gutter, "\n") {
+		// The file ends with a newline, so the split leaves one empty final
+		// element; it is not a numbered line and carries no tab.
+		if line == "" {
+			stripped = append(stripped, "")
+			continue
+		}
+		_, after, ok := strings.Cut(line, "\t")
+		if !ok {
+			t.Fatalf("gutter line has no tab: %q", line)
+		}
+		stripped = append(stripped, after)
+	}
+	// Joining preserves the trailing empty element, which is the file's own
+	// trailing newline: raw keeps it and the gutter form does too.
+	if want := strings.Join(stripped, "\n"); raw != want {
+		t.Fatalf("raw = %q, want gutter-stripped default %q", raw, want)
+	}
+}
+
+func TestReadFile_RawHonorsOffsetLimit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "window.txt")
+	if err := os.WriteFile(path, []byte("a\nb\nc\nd\ne"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ReadFile{}.Run(context.Background(), map[string]any{
+		"path":   path,
+		"offset": 2.0,
+		"limit":  2.0,
+		"raw":    true,
+	})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if want := "b\nc"; out != want {
+		t.Fatalf("raw windowed read = %q, want %q", out, want)
+	}
+}
+
+// TestReadFile_RawIgnoresNonBooleanFlag keeps the flag honest: a string "true"
+// from a sloppy caller must not half-enable raw and silently change the shape of
+// what edit_file will have to match.
+func TestReadFile_RawIgnoresNonBooleanFlag(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "flag.txt")
+	if err := os.WriteFile(path, []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ReadFile{}.Run(context.Background(), map[string]any{"path": path, "raw": "true"})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if want := "     1\thi\n"; out != want {
+		t.Fatalf("a string flag changed the default output: %q", out)
+	}
+}
+
+// TestReadFile_RawPreservesCRLFAndMissingNewline covers the shapes a real file
+// has that the fixture above does not: CRLF line endings and no trailing
+// newline. raw must return the file's bytes as-is or the edit_file match fails.
+func TestReadFile_RawPreservesCRLFAndMissingNewline(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "crlf.txt")
+	body := "one\r\ntwo\r\nthree"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ReadFile{}.Run(context.Background(), map[string]any{"path": path, "raw": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != body {
+		t.Fatalf("raw CRLF read = %q, want %q", out, body)
+	}
+	if strings.Contains(out, "     1\t") {
+		t.Fatal("raw read still has a gutter")
+	}
+
+	// The edit must succeed with exactly what raw returned, through the same
+	// stale-edit guard a coordinator uses.
+	e := EditFile{State: newFileState()}
+	r := ReadFile{State: e.State}
+	if _, err := r.Run(context.Background(), map[string]any{"path": path, "raw": true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Run(context.Background(), map[string]any{
+		"path": path, "old_string": "two\r\n", "new_string": "TWO\r\n",
+	}); err != nil {
+		t.Fatalf("edit with raw-derived old_string failed: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	if want := "one\r\nTWO\r\nthree"; string(got) != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+}
+
+// TestReadFile_RawAbsentKeepsTheGutter is the regression guard for the whole
+// feature: an absent flag must keep today's byte-exact output.
+func TestReadFile_RawAbsentKeepsTheGutter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "d.txt")
+	if err := os.WriteFile(path, []byte("a\nb\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ReadFile{}.Run(context.Background(), map[string]any{"path": path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "     1\ta\n     2\tb\n"; out != want {
+		t.Fatalf("default read changed: %q", out)
+	}
+}
+
 func TestReadFile_OffsetLimit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lines.txt")

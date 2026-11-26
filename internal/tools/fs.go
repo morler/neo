@@ -101,13 +101,14 @@ func (ReadFile) ParallelSafe(map[string]any) bool { return true }
 func (ReadFile) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "read_file",
-		Description: "Read a file from disk. Each line is prefixed with its 1-indexed line number and a tab, matching the line numbers grep reports. Use offset/limit to page through large files.",
+		Description: "Read a file from disk. Each line is prefixed with its 1-indexed line number and a tab, matching the line numbers grep reports; raw: true drops that prefix so the text feeds edit_file directly. Use offset/limit to page through large files.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path":   map[string]any{"type": "string", "description": "Absolute or relative path"},
 				"offset": map[string]any{"type": "integer", "description": "1-indexed starting line (optional)"},
 				"limit":  map[string]any{"type": "integer", "description": "Maximum number of lines to return (optional)"},
+				"raw":    map[string]any{"type": "boolean", "description": "Raw text without the line-number prefix (optional)"},
 			},
 			"required": []string{"path"},
 		},
@@ -119,7 +120,7 @@ func (r ReadFile) Run(ctx context.Context, input map[string]any) (string, error)
 	if err != nil {
 		return "", err
 	}
-	out, err := readFileWindow(ctx, path, optInt(input, "offset"), optInt(input, "limit"))
+	out, err := readFileWindow(ctx, path, optInt(input, "offset"), optInt(input, "limit"), optBool(input, "raw"))
 	if err != nil {
 		return "", err
 	}
@@ -136,7 +137,10 @@ func lineNumberPrefix(line int) string {
 	return fmt.Sprintf("%6d\t", line)
 }
 
-func readFileWindow(ctx context.Context, path string, offset, limit int) (string, error) {
+// readFileWindow returns the requested line window. raw omits the line-number
+// gutter, which is what edit_file matches: a script can then pass the result
+// back as old_string without stripping the prefix by hand.
+func readFileWindow(ctx context.Context, path string, offset, limit int, raw bool) (string, error) {
 	// Check before opening: a cancelled turn should report cancellation rather
 	// than a filesystem error, and opening a FIFO with no writer blocks.
 	if err := ctx.Err(); err != nil {
@@ -158,7 +162,7 @@ func readFileWindow(ctx context.Context, path string, offset, limit int) (string
 	}
 
 	var out strings.Builder
-	w := &windowScanner{out: &out, startLine: startLine, limit: limit, lineNo: 1}
+	w := &windowScanner{out: &out, startLine: startLine, limit: limit, raw: raw, lineNo: 1}
 	if err := w.scan(ctx, bufio.NewReader(f)); err != nil {
 		// A cancelled turn still returns what it read, since the caller may
 		// report it; a filesystem failure does not.
@@ -182,6 +186,9 @@ type windowScanner struct {
 	out       *strings.Builder
 	startLine int
 	limit     int
+	// raw omits the line-number gutter, so the output matches the file's own
+	// text and can be fed straight to edit_file.
+	raw bool
 
 	lineNo   int
 	selected int
@@ -239,8 +246,10 @@ func (w *windowScanner) consume(part []byte, endsLine bool) error {
 			if err := w.breakLine(); err != nil {
 				return err
 			}
-			if err := appendReadFileChunk(w.out, lineNumberPrefix(w.lineNo)); err != nil {
-				return err
+			if !w.raw {
+				if err := appendReadFileChunk(w.out, lineNumberPrefix(w.lineNo)); err != nil {
+					return err
+				}
 			}
 			w.inSelected = true
 		}

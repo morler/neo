@@ -41,6 +41,52 @@ func TestScriptReadsAFile(t *testing.T) {
 	}
 }
 
+// TestScriptRawReadFeedsEditFile is the whole point of the raw option, end to
+// end: a script reads a file and passes that text straight back as old_string,
+// with no hand-written gutter stripping in between. Before raw, this shape had
+// to map over the lines to remove the prefix, which is the step that kept
+// read-decide-write from collapsing into one call.
+func TestScriptRawReadFeedsEditFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(path, []byte("alpha\nTODO: fix me\nomega\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := tools.Script{Read: tools.ReadFile{}, Edit: tools.EditFile{}}
+	src := `const raw = tools.read_file({path: "` + path + `", raw: true});
+const line = raw.split("\n").find((l) => l.startsWith("TODO:"));
+tools.edit_file({path: "` + path + `", old_string: line, new_string: "DONE: fixed"});
+"edited"`
+	if _, err := runScript(t, s, src); err != nil {
+		t.Fatalf("raw read into edit_file failed: %v\n%s", err, src)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "alpha\nDONE: fixed\nomega\n"; string(got) != want {
+		t.Fatalf("file after edit = %q, want %q", got, want)
+	}
+}
+
+// TestScriptGutterReadStillFailsEditFile keeps the contrast on record: the
+// default read is for the model's eyes, not for edit_file, so a test that only
+// proved raw works would let the contract drift back.
+func TestScriptGutterReadStillFailsEditFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(path, []byte("alpha\nTODO: fix me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := tools.Script{Read: tools.ReadFile{}, Edit: tools.EditFile{}}
+	src := `const text = tools.read_file({path: "` + path + `"});
+tools.edit_file({path: "` + path + `", old_string: text, new_string: "x"});
+"done"`
+	if _, err := runScript(t, s, src); err == nil {
+		t.Fatal("feeding the guttered read to edit_file succeeded; the contract test is no longer measuring the gap")
+	}
+}
+
 // TestScriptLastExpressionIsTheResult pins the semantic the tool description
 // promises. Without it, a model would reasonably write `return` and get nothing.
 func TestScriptLastExpressionIsTheResult(t *testing.T) {

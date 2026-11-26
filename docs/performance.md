@@ -32,10 +32,10 @@ budgets:
   3,000 bytes for the chat prompt, which adds the workflow, delegation, goal,
   and script sections that only exist where those tools do;
 - the fixed floor — the tool schemas plus the chat system prompt with the
-  built-in skill catalog — must remain at or below 8,500 bytes. It is 8,084
-  (5,022 for nine tool definitions, 3,062 for the prompt);
+  built-in skill catalog — must remain at or below 8,500 bytes. It is 8,242
+  (5,180 for nine tool definitions, 3,062 for the prompt);
 - the same floor with the opt-in script tool enabled must remain at or below
-  10,000 bytes. It is 9,796 (5,971 and 3,825).
+  10,000 bytes. It is 9,954 (6,129 and 3,825).
 
 Re-measure the binary before adding a dependency: the ceiling is generous on
 purpose, and a second engine-sized cost would use it up.
@@ -65,12 +65,12 @@ exists:
 
 | Component | Bytes | ~Tokens |
 | --- | ---: | ---: |
-| 9 tool definitions (`chatRegistry().Specs()`, JSON) | 5,022 | 1,255 |
+| 9 tool definitions (`chatRegistry().Specs()`, JSON) | 5,180 | 1,295 |
 | System prompt with the built-in skill catalog | 3,062 | 765 |
-| **Fixed floor** | **8,084** | **~2,020** |
+| **Fixed floor** | **8,242** | **~2,060** |
 
 These are the default surface, which has no script tool. Turning the tool on
-adds 949 bytes of schema and 763 bytes of prompt, for a floor of 9,796; that is
+adds 949 bytes of schema and 763 bytes of prompt, for a floor of 9,954; that is
 `scriptFloorByteBudget` (10,000), checked separately by `TestScriptFloorBudget`.
 The prompt section grew when it was rewritten around task shapes with a worked
 example, which is what an opt-in tool has to do to be chosen at all. It grew
@@ -78,8 +78,19 @@ again by 56 bytes on 2026-11-25 when the judgement moved from file count to
 dependency (`TestScriptCapabilityNamesDependencyNotVolume`); that is the same
 section restated, not a new feature.
 
-The code-mode floor is 3,379 bytes (tools 856 + prompt 2,523) against a budget
-of 3,500. It grew by 304 bytes on 2026-11-25 when the section gained the shape
+`read_file` gained a `raw: true` option on 2026-11-26 (#110): the description
+grew by 158 bytes of schema, which is what moved the fixed floor to 8,242. The
+option exists so a script can pass a read straight into `edit_file`; the
+alternative considered and rejected was hashing every line, because the stale
+check already covers concurrent writes and a hash protocol would break the
+stable cache prefix (`docs/design/token-budget.md` rule 1).
+
+The code-mode floor is 3,421 bytes (tools 912 + prompt 2,509) against a budget
+of 3,500. The tool description gained one clause naming `raw: true`, while the
+"cut a unique window" snippet in the prompt lost the hand-written
+`.replace(/^\s*\d+\t/, "")` step: the read now asks for raw text directly, so it
+saves bytes the old snippet spent stripping what it did not need. Code mode
+needs that clause because `read_file`'s own schema is not on that surface. It grew by 304 bytes on 2026-11-25 when the section gained the shape
 for turning an "old_string found N times" refusal into one edit (#100): cut the
 window from the read_file output already in hand rather than reading again. The
 budget had 425 bytes free and #100 measured that before choosing the prompt over

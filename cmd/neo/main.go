@@ -695,7 +695,7 @@ if (hits.length === 1) {
 
 When edit_file reports that old_string matched more than once, cut a unique window
 from what read_file already returned instead of reading the file again:
-` + "`const raw = tools.read_file({path}).split(\"\\n\").find((l) => l.includes(\"marker\")).replace(/^\\s*\\d+\\t/, \"\");`" + `
+` + "`const raw = tools.read_file({path, raw: true}).split(\"\\n\").find((l) => l.includes(\"marker\"));`" + `
 then pass that raw line as old_string.
 ` + "`grep`" + ` says "no matches" instead of returning an empty string. run(["go", "test", "./..."]) returns {stdout, stderr, code}, and a non-zero code is data you can branch on.`
 
