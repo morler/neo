@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Neo install script
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/owainlewis/neo/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/morler/neo/main/install.sh | bash
 #   bash install.sh [--bin-dir <dir>] [--version <tag>] [--no-api-key-check]
 set -euo pipefail
 
@@ -21,7 +21,7 @@ die()     { printf "%s  %s%s\n" >&2    "${RED}✗${RESET}"   "$*" "${RESET}"; ex
 header()  { printf "\n%s%s%s\n\n"      "${BOLD}" "$*" "${RESET}"; }
 
 # ── Defaults ────────────────────────────────────────────────────────────────
-REPO="owainlewis/neo"
+REPO="morler/neo"
 BIN_NAME="neo"
 VERSION=""          # empty = latest release tag
 BIN_DIR=""          # empty = auto-detect

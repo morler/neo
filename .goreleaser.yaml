@@ -49,11 +49,11 @@ changelog:
 
 release:
   github:
-    owner: owainlewis
+    owner: morler
     name: neo
   footer: |
     ## Install
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/owainlewis/neo/main/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/morler/neo/main/install.sh | bash
     ```

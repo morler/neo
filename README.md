@@ -9,9 +9,9 @@
 Neo turns complex repository work into a visible workflow. Keep the plan,
 tools, tests, reviews, and delivery moving in one terminal.
 
-[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/) [![GitHub release](https://img.shields.io/github/v/release/owainlewis/neo?style=flat-square&color=0A84FF)](https://github.com/owainlewis/neo/releases/latest) [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/) [![GitHub release](https://img.shields.io/github/v/release/morler/neo?style=flat-square&color=0A84FF)](https://github.com/morler/neo/releases/latest) [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
 
-[Quick start](#quick-start) · [Documentation](website/src/content/docs/docs/quick-start.md) · [Releases](https://github.com/owainlewis/neo/releases)
+[Quick start](#quick-start) · [Documentation](website/src/content/docs/docs/quick-start.md) · [Releases](https://github.com/morler/neo/releases)
 
 </div>
 
@@ -45,7 +45,7 @@ from first inspection to tested change.
 ### 1. Install Neo
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/owainlewis/neo/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/morler/neo/main/install.sh | bash
 ```
 
 The installer downloads the matching GitHub release and verifies its SHA-256
@@ -95,7 +95,7 @@ sandboxing, tool approvals, sessions, tools, skills, and the CLI.
 ## Contributing
 
 ```bash
-git clone https://github.com/owainlewis/neo.git
+git clone https://github.com/morler/neo.git
 cd neo
 go test ./...
 go run ./cmd/neo

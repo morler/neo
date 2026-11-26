@@ -4,6 +4,8 @@ All notable changes to Neo will be documented in this file.
 
 ## Unreleased
 
+## [v0.7.0-dev.20261126] - 2026-11-26
+
 ### Added
 
 - The Chat Completions adapter now logs each request's resolved
@@ -68,6 +70,7 @@ All notable changes to Neo will be documented in this file.
   arrives, `neo run` waits for it within its deadline, and a backend that lists
   no catalogue, or answers with an unreadable shape, keeps the configured window
   with no error.
+
 - A custom provider's model can carry its own `context_window_tokens`, which
   overrides `compaction.context_window_tokens` for that model. A window belongs
   to a model, and one config serving a 40K local model and a 200K hosted one
@@ -76,36 +79,6 @@ All notable changes to Neo will be documented in this file.
   have been compacted five times sooner than needed. The window now follows a
   `/model` switch, and a subagent running on a different model resolves that
   model's window rather than inheriting the coordinator's.
-
-### Changed
-
-- An unrecognised `features.codemode` value is now an error instead of the
-  default surface. The CLI flag already refused one, but the config file did
-  not: `classic` misspelled, or `solo`, a mode removed in this release, both
-  started a code-mode session with nothing to notice, which is how one
-  measurement came to compare a surface against itself.
-- `neo run` now refuses to start when `features.script: false` is combined with
-  the default code mode. That combination left the headless session with no
-  tools at all: the run answered normally and changed nothing. The error names
-  both ways out, `features.script: true` or `features.codemode: classic`.
-  Interactive sessions keep starting, since they still have `agent`, `goal`
-  and `workflow`.
-- Code mode is now the default surface. The model acts by writing JavaScript in
-  the `script` tool, which carries `run(argv, timeoutSeconds)` for programs, a
-  `console`/`print`, and one interpreter per session, so `globalThis` state
-  survives between calls while local declarations stay per call. `agent`, `goal`
-  and `workflow` remain: they coordinate the work, and writing code does not mean
-  giving up delegation, goals or the visible checklist. Absolute paths keep
-  `grep`/`glob` output usable inside a call where there is no `cd`, and relative
-  paths resolve against the session directory so a script and `run()` agree.
-- `features.codemode: classic` or `--codemode=classic` keeps the separate `bash`,
-  `read_file`, `write_file`, `edit_file`, `grep` and `glob` tools. The fixed floor
-  is 3,379 bytes in code mode against 8,084 in classic.
-- `features.script` now defaults to `true`, since code execution is what the
-  surface is built around. `/codemode on|off` still toggles it and persists the
-  choice.
-
-### Added
 
 - Added the single-tool surface that this release then made the default. It was
   introduced as an opt-in mode under the name `solo`; that name no longer
@@ -135,12 +108,14 @@ All notable changes to Neo will be documented in this file.
   `features.script: true`, or `/codemode on` in chat. `/codemode status` reports
   how many times this session chose the tool, so the cost can be weighed against
   its use.
+
 - `/sessions` lists saved sessions inside the TUI and switches to one without
   leaving the terminal. The running session is saved first and the chosen one
   must still load, so a failed save or a deleted session reports the error in
   the picker and keeps you where you were. The switch re-enters the TUI on the
   target the same way `neo resume <id>` does, so the saved cwd, provider, and
   model rules are unchanged.
+
 - `/goal` gives a session one standing objective and keeps working toward it
   while the session is idle: `/goal <objective>` starts the first turn,
   `/goal status` shows the objective, status, attempt budget, blocked audit, and
@@ -150,17 +125,20 @@ All notable changes to Neo will be documented in this file.
   Goal state is saved with the session and restored on `neo resume`. `esc` and
   `ctrl+c` pause a running goal, `/clear` drops it, and `goals.max_attempts`
   (default 20) stops the run with a handoff that names the last recorded reason.
+
 - Declared custom OpenAI-compatible providers under a top-level `providers:`
   map and select them with `provider: <name>` or `subagents.provider`. This
   covers local runtimes (Ollama, vLLM), LiteLLM, and internal gateways without
   an adapter per vendor. Endpoints with no `api_key_env` send no authorization
   header; configured keys are validated at startup and redacted in logs.
   Custom backends appear in `/model`, `neo doctor`, and resumed sessions.
+
 - `/model` now loads the live model catalogue of a custom OpenAI-compatible
   backend from `GET <endpoint>/models` when the picker opens, instead of only
   listing `providers.<name>.models`. The static list stays as the immediate
   fallback and supplies display names; a failed or slow fetch keeps it visible
   and reports the error in the picker.
+
 - Added `/provider` to switch the running chat to another built-in or custom
   backend without restarting. Neo validates credentials first, moves the chat
   agent and any coordinator-following subagent runner to the new provider's
@@ -168,13 +146,16 @@ All notable changes to Neo will be documented in this file.
   rewrites only `provider:` and `model:` in the config file it loaded
   (`~/.neo/config.yaml` when the session runs on embedded defaults). A failed
   switch leaves the running backend and the file unchanged.
+
 - `/model` now persists the chosen model to the config file it loaded, rewriting
   only `model:` so the next launch starts on the same model. A write failure
   restores the previous model and reports the error.
+
 - `neo run --json` now reports `requests`, the provider calls the run made,
   and `usage`, the token totals broken into input, cache-write, cache-read, and
   output. Both include the compaction summary call, so a scripted consumer sees
   the full cost of a run rather than only the turns the agent loop asked for.
+
 - Added `/usage` to show what the session spent in provider tokens: the prompt
   total with its input, cache-write, and cache-read parts, the output total,
   and the share of the prompt served from the cache. The parts are the same
@@ -184,9 +165,40 @@ All notable changes to Neo will be documented in this file.
 
 ### Changed
 
+- An unrecognised `features.codemode` value is now an error instead of the
+  default surface. The CLI flag already refused one, but the config file did
+  not: `classic` misspelled, or `solo`, a mode removed in this release, both
+  started a code-mode session with nothing to notice, which is how one
+  measurement came to compare a surface against itself.
+
+- `neo run` now refuses to start when `features.script: false` is combined with
+  the default code mode. That combination left the headless session with no
+  tools at all: the run answered normally and changed nothing. The error names
+  both ways out, `features.script: true` or `features.codemode: classic`.
+  Interactive sessions keep starting, since they still have `agent`, `goal`
+  and `workflow`.
+
+- Code mode is now the default surface. The model acts by writing JavaScript in
+  the `script` tool, which carries `run(argv, timeoutSeconds)` for programs, a
+  `console`/`print`, and one interpreter per session, so `globalThis` state
+  survives between calls while local declarations stay per call. `agent`, `goal`
+  and `workflow` remain: they coordinate the work, and writing code does not mean
+  giving up delegation, goals or the visible checklist. Absolute paths keep
+  `grep`/`glob` output usable inside a call where there is no `cd`, and relative
+  paths resolve against the session directory so a script and `run()` agree.
+
+- `features.codemode: classic` or `--codemode=classic` keeps the separate `bash`,
+  `read_file`, `write_file`, `edit_file`, `grep` and `glob` tools. The fixed floor
+  is 3,379 bytes in code mode against 8,084 in classic.
+
+- `features.script` now defaults to `true`, since code execution is what the
+  surface is built around. `/codemode on|off` still toggles it and persists the
+  choice.
+
 - `docs/performance.md` now records a token baseline — the 8,084-byte fixed
   overhead and how to measure a real run from `neo run --json` — so token work
   can be compared before and after instead of argued about.
+
 - Truncated tool output now says what to do next. `read_file` reports the first
   line that did not fit and a limit that will fit (`retry with offset=N,
   limit=M`), and `bash` suggests narrowing the command itself (`| tail -n 200`,
@@ -210,13 +222,16 @@ All notable changes to Neo will be documented in this file.
   Chinese text reached it after a couple of keystrokes. Upgraded to `bubbles`
   v2.2.2, which fixes it; `TestComposerRendersEveryCharacterAfterInLineEdit`
   fails on the old version and passes on the new one.
+
 - A model stuck reissuing the same tool call with the same arguments now gets a
   short reminder on the 3rd, 5th, and 8th attempt and has that call refused on
   the 12th, ending the turn with a readable error instead of spending every
   remaining turn on identical requests. The reminder is appended at the end of
   the conversation, so the cached prefix is untouched.
+
 - Compaction no longer re-fires on the next turn right after summarizing: the
   transcript must grow by a further 20% before it is compacted again.
+
 - Context-size estimation now counts an inline image as a fixed 1,500-token
   reserve instead of its base64 payload. A single screenshot used to estimate
   as ~100k tokens of text, past the default compaction trigger, which started a
@@ -233,6 +248,7 @@ All notable changes to Neo will be documented in this file.
 - Cleared every reported dependency advisory by upgrading `golang.org/x/net`
   to v0.63.0, `golang.org/x/sys` to v0.50.0, and `golang.org/x/text` to v0.44.0,
   and by moving the module to Go 1.26.11. Building Neo now requires Go 1.26.
+
 - Hardened the workflows: every third-party action is pinned to a commit SHA,
   checkouts no longer persist credentials into the workspace, `pages: write`
   and `id-token: write` are limited to the deploy job, the nightly workflow
@@ -413,6 +429,7 @@ All notable changes to Neo will be documented in this file.
 
 - Initial public release.
 
+[v0.7.0-dev.20261126]: https://github.com/morler/neo/compare/v0.6.2...v0.7.0-dev.20261126
 [v0.6.2]: https://github.com/owainlewis/neo/compare/v0.6.1...v0.6.2
 [v0.6.1]: https://github.com/owainlewis/neo/compare/v0.6.0...v0.6.1
 [v0.6.0]: https://github.com/owainlewis/neo/compare/v0.5.1...v0.6.0

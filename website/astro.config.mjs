@@ -9,9 +9,9 @@ export default defineConfig({
       title: 'Neo',
       description: 'A fast, workflow-native coding agent built for real engineering.',
       favicon: '/favicon.svg',
-      social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/owainlewis/neo' }],
+      social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/morler/neo' }],
       editLink: {
-        baseUrl: 'https://github.com/owainlewis/neo/edit/main/website/',
+        baseUrl: 'https://github.com/morler/neo/edit/main/website/',
       },
       customCss: ['./src/styles/custom.css'],
       pagination: false,

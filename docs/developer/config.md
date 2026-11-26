@@ -76,7 +76,7 @@ at 40,192 every hosted model would be compacted at 28,134. Resolution is by
 different model gets that model's window rather than the coordinator's.
 
 The embedded source, including annotated provider examples, is
-[`internal/config/defaults/neo.yaml`](https://github.com/owainlewis/neo/blob/main/internal/config/defaults/neo.yaml).
+[`internal/config/defaults/neo.yaml`](https://github.com/morler/neo/blob/main/internal/config/defaults/neo.yaml).
 
 ## Goals
 
