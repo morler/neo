@@ -28,6 +28,11 @@ jobs:
           # push, and a cache restored in that context could be poisoned.
           cache: false
 
+      # The grep and glob tools shell out to ripgrep, and their tests call
+      # them. CI installs it; a release job that skips the step fails here.
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       - name: Test
         run: go test ./...
 
