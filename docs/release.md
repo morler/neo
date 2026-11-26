@@ -6,11 +6,35 @@ any destructive action.
 
 ## Goal
 
-Publish a new stable release through the single supported install path:
+Publish a release from this fork through the supported install path:
 
-- GitHub Releases, with Linux/macOS archives and checksums.
-- The one-line installer, which verifies and installs the latest stable GitHub
-  release.
+- GitHub Releases in `morler/neo`, with Linux/macOS archives and checksums.
+- The one-line installer in this repository, which verifies and installs the
+  latest release of `morler/neo`.
+
+## Fork releases
+
+This repository is a fork. Publishing happens here, not upstream:
+
+- `.goreleaser.yaml` publishes to `morler/neo`, and `install.sh` resolves the
+  same repository, so the binary and the release it came from cannot disagree.
+- The `upstream` remote stays configured for pulling changes from
+  `owainlewis/neo`, but nothing published here is sent upstream. The Go module
+  path is still `github.com/owainlewis/neo`; that is the module identity, not a
+  publishing target, so imports are left alone.
+
+### Dev releases
+
+A dev release is a dated test build rather than a version people should install.
+Use the tag `vX.Y.Z-dev.YYYYMMDD`:
+
+- `.goreleaser.yaml` sets `prerelease: auto`, so a `-dev.` tag publishes as a
+  prerelease and never occupies the Latest slot. `install.sh`'s latest lookup
+  therefore keeps pointing at the last real release.
+- Installing a dev build requires the tag explicitly:
+  `bash install.sh --version vX.Y.Z-dev.YYYYMMDD`.
+- If no stable release exists yet in the fork, the latest lookup fails with a
+  404 and the installer must be given `--version`.
 
 ## Important context
 
@@ -46,7 +70,8 @@ Confirm GitHub CLI access is available for this repository.
 
 ### 3. Choose the version
 
-Look at the latest stable `v*` tag and choose the next semantic version:
+Look at the latest `v*` tag and choose the next version. For a dev build use
+`vX.Y.Z-dev.YYYYMMDD`; for a stable build use a plain semantic version:
 
 - Patch for release-process fixes, documentation-only release corrections, or
   small bug fixes.
@@ -117,7 +142,8 @@ without explicit user approval.
 
 ### 9. Verify the published release
 
-Confirm the GitHub release exists for the new tag and is not a prerelease.
+Confirm the GitHub release exists for the new tag. A dev tag must report
+`prerelease: true`; a stable tag must not.
 
 Expected assets:
 

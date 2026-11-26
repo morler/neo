@@ -149,7 +149,9 @@ install_from_release() {
   # Expected GoReleaser asset name pattern: neo_<os>_<arch>.tar.gz
   local asset="neo_${platform}.tar.gz"
   local url="https://github.com/${REPO}/releases/download/${version}/${asset}"
-  local tmp_dir
+  # Deliberately not "local": the EXIT trap runs after this function returns,
+  # where a function-local name is no longer set and set -u aborts the script
+  # right after a successful install.
   tmp_dir=$(mktemp -d)
   trap 'rm -rf "$tmp_dir"' EXIT
 
