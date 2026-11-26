@@ -139,6 +139,19 @@ Hidden files are searched (`--hidden`), because `.github/workflows` and the like
 are ordinary project files; `.git/` is excluded explicitly, since
 `--no-require-git` turns off ripgrep's own handling of it.
 
+That exclusion is passed **after** `glob`'s own pattern, not before it. Ripgrep
+lets a later `--glob` override an earlier one, so with the exclusion first a
+broad pattern replaced it: `glob("*")`, `glob("**")`, `glob("**/*")`,
+`glob("*.*")` and `glob("**/**")` each listed `.git/HEAD`, `.git/config`, and
+the object files under `.git/objects`. Putting the exclusion last makes it the
+final word. `grep` passes no pattern glob and appends the same exclusion for
+symmetry.
+
+A `--glob` still overrides `.gitignore`, which is ripgrep's rule and predates
+this ordering: `glob("*")` lists a directory that `.gitignore` ignores, while
+`glob("**/*.go")` does not. `TestGlob_BroadPatternsStillListProjectFiles`
+records that difference rather than pretending it away.
+
 Output is read incrementally and ripgrep is stopped once `max_matches` lines
 have been collected. A broad pattern over a large workspace can produce far more
 than will ever be returned, and buffering it first would let a model-chosen

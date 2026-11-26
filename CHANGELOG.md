@@ -4,6 +4,20 @@ All notable changes to Neo will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- `glob` no longer lists `.git/` internals. Ripgrep lets a later `--glob`
+  override an earlier one, and the shared argument builder put `--glob "!.git/"`
+  before the user's pattern, so any pattern broad enough to match directories
+  replaced the exclusion: `glob("*")`, `glob("**")`, `glob("**/*")`,
+  `glob("*.*")` and `glob("**/**")` returned `.git/HEAD`, `.git/config`, and
+  files under `.git/objects` — including the contents of committed objects,
+  which the model could then read with `read_file`. The exclusion is now
+  appended after the pattern, and `grep` appends the same one explicitly.
+  Narrow patterns such as `**/*.go` never leaked, which is why the existing
+  recursive test did not catch it. A `--glob` still overrides `.gitignore`, as
+  it did before; `docs/developer/tools.md` now records both rules.
+
 ## [v0.7.0-dev.20261126] - 2026-11-26
 
 ### Added

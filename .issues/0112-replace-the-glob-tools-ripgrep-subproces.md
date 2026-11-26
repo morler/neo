@@ -1,7 +1,7 @@
 ---
 id: 112
 title: Replace the glob tool's ripgrep subprocess with a pure Go walker
-status: open
+status: wontfix
 priority: medium
 labels:
     - refactor
@@ -10,6 +10,7 @@ labels:
     - docs
 created: "2026-11-26"
 updated: "2026-11-26"
+closed: "2026-11-26"
 ---
 
 ## 背景
@@ -91,3 +92,29 @@ updated: "2026-11-26"
 ## 后续（另开 issue，不在本 issue 内做）
 
 `grep` 迁移到 `gocodewalker` + 标准库 `regexp`：届时才需要处理 `searchExitError` 的退出码协议与 `isNoFilesSearched` 对 rg stderr 原文的依赖，并同步修改 `TestGrepStillReportsRealErrors`。两者都完成后才能删掉 `doctorRipgrepCheck` 与 CI 的安装步骤。
+
+## 结论（2026-11-26）：不采纳纯 Go 迁移
+
+要求是与 ripgrep **完全一致、不接受两套规则**。实测表明本 issue 的原方案（只迁 `glob`，`grep` 留 rg）本身就制造两套规则，而“完全一致”在 gocodewalker 方向上不可达。逐项实验（`/tmp/t1`–`/tmp/t6`）：
+
+| # | rg 行为 | gocodewalker v1.5.1 | 可抹平 |
+| --- | --- | --- | --- |
+| 1 | 读 `.git/info/exclude` | 不读 | 否。`CustomIgnore` 按文件名匹配，而 `.git` 已被 `ExcludeDirectory` 剪枝，文件到不了匹配阶段（3 种配置均失败） |
+| 2 | 读全局 `core.excludesFile` | 不读 | 否，且需自行解析 `~/.gitconfig` |
+| 3 | **忽略父目录 `.gitignore`**：`rg logs` 只返回 `logs/b.go` | 从 `logs` 起走，返回 `a.log b.go c.go` | 否，库不向上回溯 |
+| 4 | `--glob` 覆盖 `.gitignore` | 无此语义 | 需自写匹配层 |
+
+体积也高于预估：`gocodewalker` 实测 +0.80 MiB / 3 个新模块（issue 原估 +0.55 MiB），`doublestar` 单独 +0.34 MiB。当前 stripped 二进制 24,899,744 字节，上限 28 MiB。
+
+另查明 `--glob` 覆盖语义连 rg 自身都反直觉：`-g '**'`、`-g '*'` 会覆盖内置的 `!.git/`，返回 18 个 `.git/` 条目；“完全一致”意味着把这个行为也照搬。
+
+### 实际采取的行动
+
+迁移期间发现一个真实缺陷并已修复（比照搬语义优先）：`glob("*")`、`glob("**")`、`glob("**/*")`、`glob("*.*")`、`glob("**/**")`、`glob("{.git,*}")` 会列出 `.git/HEAD`、`.git/config` 和 `.git/objects` 下的文件。原因是 `--glob "!.git/"` 排在用户 pattern 之前，被后者的覆盖规则抹掉。修复方式是把排除追加到最后；`grep` 同步显式追加。新增 `TestGlob_NeverListsGitInternals`（9 个 pattern）与 `TestGlob_BroadPatternsStillListProjectFiles`，并做过反向验证（旧代码失败、新代码通过）。
+
+`docs/developer/tools.md` 的 “There is no Go fallback” 决策**维持不变**，并补记了上述两条 glob 覆盖规则。`grep` 迁移（原“后续”一节）同样不启动：它要复刻 `context_lines` 的 `1-` 前缀、`binary file matches` 形状，以及 `\d`、`(?:...)`、`\p{...}` 等 rg 独有方言，无法保证逐字节一致。
+
+关闭理由：**完全一致不可达，部分一致更糟**。
+
+## Closed
+纯 Go 迁移无法与 ripgrep 保持完全一致（.git/info/exclude、全局 excludesFile、父目录 .gitignore、--glob 覆盖语义），部分迁移会形成两套规则。迁移期间发现的 glob 泄漏 .git/ 缺陷已另行修复。

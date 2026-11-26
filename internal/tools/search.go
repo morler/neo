@@ -45,10 +45,21 @@ func baseArgs() []string {
 		"--no-require-git",
 		// Dotfiles are ordinary project files: .github/workflows and
 		// .devcontainer are exactly the sort of thing an agent is asked about.
-		// --no-require-git disables ripgrep's own .git handling, so exclude it
-		// explicitly rather than walking the object store.
-		"--hidden", "--glob", "!.git/",
+		// --no-require-git disables ripgrep's own .git handling, so the caller
+		// excludes .git explicitly rather than walking the object store.
+		"--hidden",
 	}
+}
+
+// gitDirExclusion keeps ripgrep's object store out of search results.
+//
+// Order matters: ripgrep lets a later --glob override an earlier one, so a user
+// pattern as broad as "*" replaced this exclusion and glob("*") listed .git/HEAD
+// and the object files. Both tools therefore append this after their own globs.
+// grep passes no pattern glob, so for it this is only the exclusion it always
+// had; glob needs the ordering for the exclusion to survive.
+func gitDirExclusion() []string {
+	return []string{"--glob", "!.git/"}
 }
 
 type Grep struct {
@@ -87,6 +98,7 @@ func (g Grep) Run(ctx context.Context, input map[string]any) (string, error) {
 		return "", err
 	}
 	args := append(baseArgs(), "--line-number", "--no-heading")
+	args = append(args, gitDirExclusion()...)
 	if n := optInt(input, "context_lines"); n > 0 {
 		args = append(args, "--context", fmt.Sprint(n))
 	}
@@ -128,7 +140,11 @@ func (g Glob) Run(ctx context.Context, input map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// The user's pattern comes first and the .git exclusion last, because a
+	// later --glob overrides an earlier one: with the exclusion first, glob("*")
+	// listed .git/HEAD and the object files.
 	args := append(baseArgs(), "--files", "--glob", pattern)
+	args = append(args, gitDirExclusion()...)
 	if path := optString(input, "path"); path != "" {
 		args = append(args, path)
 	}

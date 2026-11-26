@@ -220,6 +220,88 @@ func TestSearch_RelativeOutputUnchanged(t *testing.T) {
 	}
 }
 
+// TestGlob_NeverListsGitInternals pins the ordering of ripgrep's --glob flags.
+// A later --glob overrides an earlier one, so passing "!.git/" before the user's
+// pattern let a broad pattern replace it: glob("*") returned .git/HEAD and the
+// object files. The patterns below are the ones measured to leak, plus the
+// narrow ones that never did.
+func TestGlob_NeverListsGitInternals(t *testing.T) {
+	requireRipgrep(t)
+	root := t.TempDir()
+	write := func(rel string) {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("main.go")
+	write("pkg/helper.go")
+	// A real checkout has these: a match here means the model can read the
+	// object store, including the contents of committed files.
+	write(".git/HEAD")
+	write(".git/config")
+	write(".git/objects/ab/cdef")
+	write(".git/hooks/sample.go")
+
+	for _, pattern := range []string{
+		"*", "**", "**/*", "*.*", "**/**", "{.git,*}",
+		"*.go", "**/*.go", ".git/*",
+	} {
+		out, err := Glob{Root: root}.Run(context.Background(), map[string]any{"pattern": pattern})
+		if err != nil {
+			t.Fatalf("pattern %q: %v", pattern, err)
+		}
+		for _, line := range strings.Split(out, "\n") {
+			if line == "" || strings.HasPrefix(line, "[") {
+				continue
+			}
+			if line == ".git" || strings.HasPrefix(line, ".git/") {
+				t.Fatalf("pattern %q listed git internals: %q\nfull output:\n%s", pattern, line, out)
+			}
+		}
+	}
+}
+
+// TestGlob_BroadPatternsStillListProjectFiles keeps the fix from over-reaching:
+// excluding .git must not narrow what a broad pattern returns.
+func TestGlob_BroadPatternsStillListProjectFiles(t *testing.T) {
+	requireRipgrep(t)
+	root := searchWorkspace(t)
+	if err := os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".github", "workflows", "ci.yml"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := Glob{Root: root}.Run(context.Background(), map[string]any{"pattern": "*"})
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	for _, want := range []string{"main.go", ".gitignore", filepath.Join(".github", "workflows", "ci.yml")} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("pattern %q dropped %q, which is an ordinary project file:\n%s", "*", want, out)
+		}
+	}
+	// build/ does appear here, and that is ripgrep's own rule rather than a
+	// regression: a --glob overrides .gitignore, and it did so before this fix
+	// too. The narrow pattern that .gitignore still governs is asserted below.
+	if !strings.Contains(out, "build/") {
+		t.Logf("note: ripgrep no longer lets --glob override .gitignore; revisit the comment above")
+	}
+
+	narrow, err := Glob{Root: root}.Run(context.Background(), map[string]any{"pattern": "**/*.go"})
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if strings.Contains(narrow, "build/") {
+		t.Fatalf("**/*.go listed the ignored build/ directory:\n%s", narrow)
+	}
+}
+
 func TestGlob_NoMatches(t *testing.T) {
 	requireRipgrep(t)
 
