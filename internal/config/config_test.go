@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // withTempDir runs fn from a temp working directory so project-relative
@@ -714,6 +716,97 @@ func TestContextWindowForFallsThroughToZero(t *testing.T) {
 		t.Fatalf("no override, no global = %d, want 0", got)
 	}
 }
+
+// TestContextWindowPrecedence covers #109: a window the backend reports sits
+// below an explicit setting and above the global key. It has to sit above the
+// global key because the embedded defaults set that one to 200000, so a
+// discovered window placed below it could never take effect.
+func TestContextWindowPrecedence(t *testing.T) {
+	newCfg := func() *Config {
+		return &Config{
+			Compaction: Compaction{ContextWindowTokens: 200_000},
+			Providers: map[string]CustomProvider{
+				"local": {
+					Endpoint: "http://127.0.0.1:8080/v1",
+					Models: []CustomModel{
+						{ID: "explicit", ContextWindowTokens: 65_536},
+						{ID: "discovered-only"},
+					},
+				},
+			},
+		}
+	}
+
+	// Nothing discovered yet: the global key answers.
+	cfg := newCfg()
+	if got := cfg.ContextWindowFor("local", "discovered-only"); got != 200_000 {
+		t.Fatalf("before discovery = %d, want the global 200000", got)
+	}
+
+	cfg.SetDiscoveredContextWindow("local", "discovered-only", 40_192)
+	if got := cfg.ContextWindowFor("local", "discovered-only"); got != 40_192 {
+		t.Fatalf("discovered = %d, want 40192 to beat the global key", got)
+	}
+	if got, source := cfg.ContextWindow("local", "discovered-only"); got != 40_192 || source != ContextWindowFromCatalogue {
+		t.Fatalf("ContextWindow = %d/%s, want 40192/discovered", got, source)
+	}
+
+	// An explicit setting still wins over a discovered value.
+	cfg.SetDiscoveredContextWindow("local", "explicit", 4_096)
+	if got := cfg.ContextWindowFor("local", "explicit"); got != 65_536 {
+		t.Fatalf("explicit = %d, want the configured 65536 to beat the discovered 4096", got)
+	}
+	if got, source := cfg.ContextWindow("local", "explicit"); got != 65_536 || source != ContextWindowFromModel {
+		t.Fatalf("ContextWindow = %d/%s, want 65536/config", got, source)
+	}
+
+	// A model nothing applies to falls back to the global key, then to zero.
+	if got := cfg.ContextWindowFor("local", "unknown-model"); got != 200_000 {
+		t.Fatalf("unknown model = %d, want the global key", got)
+	}
+	empty := &Config{}
+	empty.SetDiscoveredContextWindow("local", "m", 8_192)
+	if got, source := empty.ContextWindow("local", "m"); got != 8_192 || source != ContextWindowFromCatalogue {
+		t.Fatalf("no global key = %d/%s, want the discovered window", got, source)
+	}
+	if got, source := (&Config{}).ContextWindow("anthropic", "claude-opus-5"); got != 0 || source != ContextWindowFromDefault {
+		t.Fatalf("nothing configured = %d/%s, want 0/default", got, source)
+	}
+}
+
+// TestDiscoveredContextWindowRejectsUselessValues keeps the map from holding
+// entries that would answer "known" for a window nobody can compact against.
+func TestDiscoveredContextWindowRejectsUselessValues(t *testing.T) {
+	cfg := &Config{}
+	cfg.SetDiscoveredContextWindow("local", "m", 0)
+	cfg.SetDiscoveredContextWindow("local", "m", -5)
+	cfg.SetDiscoveredContextWindow("", "m", 1024)
+	cfg.SetDiscoveredContextWindow("local", "", 1024)
+	if _, ok := cfg.DiscoveredContextWindow("local", "m"); ok {
+		t.Fatal("a non-positive window must not be stored")
+	}
+	var nilCfg *Config
+	nilCfg.SetDiscoveredContextWindow("local", "m", 1024)
+	if nilCfg != nil {
+		t.Fatal("nil config should be a no-op")
+	}
+}
+
+// TestDiscoveredContextWindowIsNotPersisted guards the decision that discovery
+// stays a runtime observation: it must never be written back as if the user had
+// configured it.
+func TestDiscoveredContextWindowIsNotPersisted(t *testing.T) {
+	cfg := &Config{}
+	cfg.SetDiscoveredContextWindow("local", "m", 40_192)
+	encoded, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), "40192") {
+		t.Fatalf("discovered window leaked into YAML: %s", encoded)
+	}
+}
+
 func TestEmbeddedDefaultsParseWithAGoalBudget(t *testing.T) {
 	cfg, err := parseConfig(embeddedConfigYAML, "embedded:neo.yaml")
 	if err != nil {

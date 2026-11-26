@@ -66,8 +66,8 @@ func TestHeadlessRunRefusesSessionWithNoTools(t *testing.T) {
 			t.Fatalf("stderr = %q, want it to mention %q", errOut.String(), want)
 		}
 	}
-	if len(backend.requests) != 0 {
-		t.Fatalf("the refusal must precede the first request, got %d", len(backend.requests))
+	if got := backend.chatRequestCount(); got != 0 {
+		t.Fatalf("the refusal must precede the first chat request, got %d", got)
 	}
 }
 

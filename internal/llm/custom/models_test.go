@@ -111,3 +111,109 @@ func TestModelsFailsWhenConfiguredKeyEnvIsUnset(t *testing.T) {
 		t.Fatalf("error %q should name the missing variable", err.Error())
 	}
 }
+
+// TestModelsDiscoversTheReportedContextWindow covers #109: a backend that
+// reports its window in the catalogue must have it read, because requiring the
+// user to type a number the server already publishes is a needless step.
+// llama.cpp's shape is the one verified against a real server.
+func TestModelsDiscoversTheReportedContextWindow(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{
+			name: "llama.cpp meta.n_ctx",
+			body: `{"data":[{"id":"Bonsai2.5-27B","meta":{"n_ctx":40192,"n_ctx_train":262144,"n_params":27320697856}}]}`,
+			want: 40192,
+		},
+		{
+			name: "vllm max_model_len",
+			body: `{"data":[{"id":"qwen3-coder","max_model_len":32768}]}`,
+			want: 32768,
+		},
+		{
+			name: "openrouter context_length",
+			body: `{"data":[{"id":"anthropic/claude-sonnet-5","context_length":200000}]}`,
+			want: 200000,
+		},
+		{
+			name: "numeric string",
+			body: `{"data":[{"id":"m","context_length":"131072"}]}`,
+			want: 131072,
+		},
+		{
+			name: "bare array",
+			body: `[{"id":"m","max_model_len":8192}]`,
+			want: 8192,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			models, err := Models(context.Background(), Spec{Name: "local", Endpoint: server.URL + "/v1"}, server.Client())
+			if err != nil {
+				t.Fatalf("Models: %v", err)
+			}
+			if len(models) != 1 {
+				t.Fatalf("got %d models, want 1: %#v", len(models), models)
+			}
+			if models[0].ContextWindowTokens != tc.want {
+				t.Fatalf("window = %d, want %d", models[0].ContextWindowTokens, tc.want)
+			}
+		})
+	}
+}
+
+// TestModelsTreatsAnUnreadableWindowAsNotDiscovered covers the tolerance half of
+// #109: the catalogue shape is not a contract, so a missing field, a value of
+// the wrong type, or a shape Neo did not anticipate must leave the window
+// unknown rather than fail the fetch that also supplies the model ids.
+func TestModelsTreatsAnUnreadableWindowAsNotDiscovered(t *testing.T) {
+	cases := map[string]string{
+		"field absent":       `{"data":[{"id":"m"}]}`,
+		"wrong type":         `{"data":[{"id":"m","context_length":{"nested":1}}]}`,
+		"not numeric":        `{"data":[{"id":"m","context_length":"lots"}]}`,
+		"negative":           `{"data":[{"id":"m","max_model_len":-1}]}`,
+		"zero":               `{"data":[{"id":"m","max_model_len":0}]}`,
+		"boolean":            `{"data":[{"id":"m","context_length":true}]}`,
+		"meta not an object": `{"data":[{"id":"m","meta":40192}]}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+
+			models, err := Models(context.Background(), Spec{Name: "local", Endpoint: server.URL + "/v1"}, server.Client())
+			if err != nil {
+				t.Fatalf("Models: %v", err)
+			}
+			if len(models) != 1 || models[0].ID != "m" {
+				t.Fatalf("models = %#v, want the id to survive an unreadable window", models)
+			}
+			if models[0].ContextWindowTokens != 0 {
+				t.Fatalf("window = %d, want 0 (not discovered)", models[0].ContextWindowTokens)
+			}
+		})
+	}
+}
+
+// TestModelsKeepsNonJSONResponsesAnError records the boundary: an unreadable
+// window is tolerated, but a body that is not JSON at all still fails, because
+// the model list itself is unusable then.
+func TestModelsKeepsNonJSONResponsesAnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<!doctype html>not a catalogue"))
+	}))
+	defer server.Close()
+
+	if _, err := Models(context.Background(), Spec{Name: "local", Endpoint: server.URL + "/v1"}, server.Client()); err == nil {
+		t.Fatal("expected a non-JSON catalogue to fail")
+	}
+}

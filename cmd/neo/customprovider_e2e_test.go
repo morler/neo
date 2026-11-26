@@ -20,6 +20,11 @@ import (
 type customBackend struct {
 	mu       sync.Mutex
 	requests []recordedRequest
+	// cataloguePaths records GET catalogue fetches, with the Authorization
+	// header each carried. They are kept out of requests because respond(n) is
+	// indexed by chat request only.
+	cataloguePaths  []string
+	catalogueAuthBy map[string]string
 	// respond produces the response body for the nth request (0-based).
 	respond func(n int) (status int, body string)
 	// respondTo, when set, supersedes respond and also receives the recorded
@@ -75,6 +80,30 @@ func (b *customBackend) start(t *testing.T) *httptest.Server {
 			}
 		}
 
+		// A catalogue fetch is not a chat request: it has no body and the agent
+		// never sees it. Recording it in the same slice would shift every
+		// respond(n) index, so #109's discovery GET is kept apart and answered by
+		// the same stub with the index it would have had as the first request.
+		if r.Method == http.MethodGet {
+			b.mu.Lock()
+			b.cataloguePaths = append(b.cataloguePaths, recorded.Path)
+			if b.catalogueAuthBy == nil {
+				b.catalogueAuthBy = make(map[string]string, 1)
+			}
+			b.catalogueAuthBy[recorded.Path] = recorded.Authorization
+			b.mu.Unlock()
+			status, body := http.StatusOK, `{"data":[]}`
+			if b.respondTo != nil {
+				status, body = b.respondTo(0, recorded)
+			} else if b.respond != nil {
+				status, body = b.respond(0)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+			return
+		}
+
 		b.mu.Lock()
 		n := len(b.requests)
 		b.requests = append(b.requests, recorded)
@@ -100,6 +129,31 @@ func (b *customBackend) recorded(t *testing.T) []recordedRequest {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]recordedRequest(nil), b.requests...)
+}
+
+// chatRequestCount is the number of chat requests seen so far. Catalogue
+// fetches are excluded, so a test asserting "the refusal precedes any request"
+// does not trip over background discovery.
+func (b *customBackend) chatRequestCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.requests)
+}
+
+// catalogueAuthorization returns the Authorization header the fetch for path
+// carried.
+func (b *customBackend) catalogueAuthorization(t *testing.T, path string) string {
+	t.Helper()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.catalogueAuthBy[path]
+}
+
+// catalogues returns the catalogue paths fetched so far.
+func (b *customBackend) catalogues() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.cataloguePaths...)
 }
 
 func textResponse(text string) (int, string) {
@@ -316,16 +370,15 @@ func TestCustomProviderEndToEnd_ModelPickerFetchesCatalogue(t *testing.T) {
 		t.Fatalf("loader: %v", err)
 	}
 
-	requests := backend.recorded(t)
-	if len(requests) != 1 {
-		t.Fatalf("requests = %d, want one catalogue fetch", len(requests))
+	fetches := backend.catalogues()
+	if len(fetches) != 1 {
+		t.Fatalf("catalogue fetches = %d, want one (chat requests = %d)", len(fetches), backend.chatRequestCount())
 	}
-	got := requests[0]
-	if got.Path != "/v1/models" {
-		t.Fatalf("path = %q, want /v1/models derived from the chat endpoint", got.Path)
+	if fetches[0] != "/v1/models" {
+		t.Fatalf("path = %q, want /v1/models derived from the chat endpoint", fetches[0])
 	}
-	if got.Authorization != "Bearer secret-key" {
-		t.Fatalf("authorization = %q, want the configured key", got.Authorization)
+	if got := backend.catalogueAuthorization(t, "/v1/models"); got != "Bearer secret-key" {
+		t.Fatalf("authorization = %q, want the configured key", got)
 	}
 	if len(choices) != 2 || choices[0].ID != "llama-4" || choices[1].ID != "qwen3-coder" {
 		t.Fatalf("choices = %#v, want the sorted live catalogue", choices)

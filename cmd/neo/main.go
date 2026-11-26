@@ -17,7 +17,6 @@ import (
 
 	"github.com/owainlewis/neo/internal/agent"
 	"github.com/owainlewis/neo/internal/approval"
-	"github.com/owainlewis/neo/internal/compact"
 	"github.com/owainlewis/neo/internal/config"
 	"github.com/owainlewis/neo/internal/goal"
 	"github.com/owainlewis/neo/internal/llm"
@@ -784,6 +783,11 @@ func runHeadless(ctx context.Context, args []string, agentName string, streams s
 	// compactor's summary call are included. The agent's own events cannot
 	// answer this: EventDone fires once per finished turn, not per request.
 	counted := &countingProvider{inner: prov}
+	// A custom backend may report the model's context window in its catalogue.
+	// A headless run is a single batch, so waiting for the answer here is what
+	// makes a discovered window useful at all; the wait is bounded by
+	// discoveryTimeout and ignored if the session's own deadline is shorter.
+	waitContextWindowDiscovery(requestContextWindowDiscovery(cfg, providerName, model, nil), ctx)
 	ag, model, ok := headlessAgent(ctx, cfg, counted, model, agentName, streams)
 	if !ok {
 		return 1
@@ -1240,6 +1244,20 @@ func buildChatRuntime(ctx context.Context, cfg *config.Config, prov llm.Provider
 		Messages:         sess.Messages,
 		Usage:            sess.Usage,
 	})
+	// A custom backend can report the window in its catalogue. The fetch runs in
+	// the background so startup never waits on the network; when it answers, the
+	// summarizer is rebuilt so the trigger follows the window the server holds
+	// rather than the one the config guessed. The refresh re-reads the agent's
+	// model, so a /model switch that landed meanwhile is not overwritten.
+	requestContextWindowDiscovery(cfg, providerName, model, func() {
+		// Only the backend discovery ran for: if the session moved on, that
+		// switch already resolved its own window and this must not undo it.
+		name, current := ag.Backend()
+		if name != providerName || current == "" {
+			return
+		}
+		_ = ag.SetBackend(prov, current, chatCompactor(prov, current, cfg))
+	})
 	return chatRuntimeSetup{
 		sk: sk,
 		runtime: &chatRuntime{
@@ -1474,17 +1492,6 @@ func saveChatSession(ctx context.Context, store *session.Store, sess *session.Se
 	sess.Metadata.Provider = sessionProviderID(activeProvider)
 	sess.Metadata.OpenAIAuth = adapterOpenAIAuth(activeProvider)
 	return store.Save(ctx, sess)
-}
-
-// chatCompactor builds the summarizer for one model. It is called on every
-// /model and /provider switch, which is why the window is resolved here rather
-// than captured once: the model that arrives may need a different one.
-func chatCompactor(prov llm.Provider, model string, cfg *config.Config) compact.Compactor {
-	name := ""
-	if prov != nil {
-		name = prov.Name()
-	}
-	return compact.NewSummarizerForContextWindow(prov, model, cfg.ContextWindowFor(name, model))
 }
 
 func sessionMetadata(sess *session.Session) session.Metadata {

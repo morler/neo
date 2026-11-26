@@ -11,6 +11,7 @@ import (
 
 	"github.com/owainlewis/neo/internal/agent"
 	"github.com/owainlewis/neo/internal/auth"
+	"github.com/owainlewis/neo/internal/compact"
 	"github.com/owainlewis/neo/internal/config"
 	"github.com/owainlewis/neo/internal/llm"
 	"github.com/owainlewis/neo/internal/llm/anthropic"
@@ -19,6 +20,7 @@ import (
 	"github.com/owainlewis/neo/internal/llm/openai"
 	"github.com/owainlewis/neo/internal/llm/openrouter"
 	"github.com/owainlewis/neo/internal/llm/retry"
+	"github.com/owainlewis/neo/internal/logx"
 	"github.com/owainlewis/neo/internal/session"
 	"github.com/owainlewis/neo/internal/subagent"
 	"github.com/owainlewis/neo/internal/tui"
@@ -26,12 +28,7 @@ import (
 
 func newProvider(cfg *config.Config, name string) (llm.Provider, error) {
 	if p, ok := cfg.ProviderConfig(name); ok {
-		return custom.New(custom.Spec{
-			Name:         name,
-			Endpoint:     p.Endpoint,
-			APIKeyEnv:    p.APIKeyEnv,
-			DefaultModel: p.DefaultModel,
-		})
+		return custom.New(customSpec(name, p))
 	}
 	switch name {
 	case "openai":
@@ -357,12 +354,7 @@ func loadCustomModelChoices(cfg *config.Config, name string) func(context.Contex
 	if !ok {
 		return nil
 	}
-	spec := custom.Spec{
-		Name:         name,
-		Endpoint:     p.Endpoint,
-		APIKeyEnv:    p.APIKeyEnv,
-		DefaultModel: p.DefaultModel,
-	}
+	spec := customSpec(name, p)
 	known := make(map[string]tui.ModelChoice, len(p.Models))
 	for _, m := range customModelChoices(p) {
 		known[m.ID] = m
@@ -444,6 +436,18 @@ func providerDescription(cfg *config.Config, name string) string {
 	}
 }
 
+// chatCompactor builds the summarizer for one model, resolving the window from
+// the config. Every path that changes the model — startup, /model, /provider,
+// and a background discovery refresh — rebuilds it, because a window belongs to
+// a model and carrying the previous one over would keep the wrong trigger.
+func chatCompactor(prov llm.Provider, model string, cfg *config.Config) compact.Compactor {
+	name := ""
+	if prov != nil {
+		name = prov.Name()
+	}
+	return compact.NewSummarizerForContextWindow(prov, model, cfg.ContextWindowFor(name, model))
+}
+
 // setChatModel moves the running chat — the coordinator and a subagent runner
 // that follows it — onto model, keeping the current provider. SetBackend
 // validates before it changes anything, so a rejected model leaves the
@@ -502,5 +506,84 @@ func restoreChatBackend(cfg *config.Config, ag *agent.Agent, runner *subagent.Ag
 	_ = ag.SetBackend(prev, prevModel, chatCompactor(prev, prevModel, cfg))
 	if runner != nil && runnerFollows {
 		_ = runner.SetBackend(prev, prevModel)
+	}
+}
+
+// customSpec is the llm-layer view of a configured custom provider. Both the
+// chat client and the catalogue fetch build it, so a new field cannot be
+// forgotten on one of the two paths.
+func customSpec(name string, p config.CustomProvider) custom.Spec {
+	return custom.Spec{
+		Name:         name,
+		Endpoint:     p.Endpoint,
+		APIKeyEnv:    p.APIKeyEnv,
+		DefaultModel: p.DefaultModel,
+	}
+}
+
+// discoveryTimeout bounds the background catalogue fetch that looks for a
+// context window. It matches the picker's own budget: this is the same request
+// made without a user waiting on it.
+const discoveryTimeout = 5 * time.Second
+
+// requestContextWindowDiscovery starts a background fetch of a custom backend's
+// catalogue so the window it reports can be used without the user configuring
+// one. It returns a channel that is closed when discovery has finished, or nil
+// for providers that are not custom: a built-in backend's models are not
+// declared in the config and its catalogue is not probed.
+//
+// Discovery is asynchronous on purpose. The fetch is a network call, and both
+// startup and a /model switch have to stay responsive; a slow or offline
+// gateway must cost nothing but the window Neo would have guessed anyway.
+//
+// onDone runs in the fetching goroutine once the catalogue answers, so it may
+// touch cfg and the agent but must not block on the UI. It runs even when
+// nothing was discovered, because a caller refreshes the compactor either way.
+func requestContextWindowDiscovery(cfg *config.Config, name, model string, onDone func()) <-chan struct{} {
+	if cfg == nil || !cfg.IsCustomProvider(name) {
+		return nil
+	}
+	p, ok := cfg.ProviderConfig(name)
+	if !ok {
+		return nil
+	}
+	spec := customSpec(name, p)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ctx, cancel := context.WithTimeout(context.Background(), discoveryTimeout)
+		defer cancel()
+		models, err := custom.Models(ctx, spec, nil)
+		if err != nil {
+			// A backend that lists no catalogue, or answers with something Neo
+			// cannot read, simply has no discoverable window. Say so in the debug
+			// log and keep the configured or default window.
+			logx.Debug("context window discovery failed", "provider", name, "error", logx.SafeString(err.Error(), 200))
+		} else {
+			for _, m := range models {
+				cfg.SetDiscoveredContextWindow(name, m.ID, m.ContextWindowTokens)
+			}
+			if window, ok := cfg.DiscoveredContextWindow(name, model); ok {
+				logx.Debug("context window discovered", "provider", name, "model", model, "window", window)
+			}
+		}
+		if onDone != nil {
+			onDone()
+		}
+	}()
+	return done
+}
+
+// waitContextWindowDiscovery blocks until the background discovery finishes, or
+// until ctx ends. A caller that dropped the wait would simply start on the
+// configured window, which is the pre-#109 behaviour, so the wait never turns a
+// slow gateway into a failure.
+func waitContextWindowDiscovery(done <-chan struct{}, ctx context.Context) {
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
 	}
 }

@@ -57,6 +57,12 @@ type Config struct {
 	// source records where this config was loaded from (a file path or
 	// "embedded"); surfaced in diagnostics via Source().
 	source string
+
+	// discovered holds context windows read from a custom backend's live
+	// catalogue, keyed by provider then model. It is deliberately not a yaml
+	// field: discovery is a runtime observation, never something the user wrote,
+	// and it must lose to anything the user did write (see ContextWindowFor).
+	discovered map[string]map[string]int
 }
 
 // Backend optionally pins chat-spawned subagents to a provider and model.
@@ -123,24 +129,93 @@ type Compaction struct {
 // place -- the coordinator, the subagent runner and each worker all need it, and
 // three copies would drift the way the script console did in #92.
 //
+// Precedence is: a model's explicit context_window_tokens, then a window the
+// backend reported in its live catalogue, then compaction.context_window_tokens
+// (200,000 in the embedded defaults), then the compact package's default.
+// Discovery sits below the explicit keys because it is a guess about a server
+// Neo does not control, and above the global key because the default file sets
+// that one, so placing discovery below it would make it unreachable.
+//
 // Only custom providers can name a model's window; a built-in provider's models
-// are not declared in the config, so they fall back to the global key.
+// are not declared in the config and their catalogues are not probed, so they
+// fall back to the global key.
 func (c *Config) ContextWindowFor(provider, model string) int {
-	if c == nil {
-		return 0
+	window, _ := c.ContextWindow(provider, model)
+	return window
+}
+
+// SetDiscoveredContextWindow records a window a custom backend reported for one
+// model. Recording is best effort by design: discovery runs in the background
+// and a failure must not change how a session starts, so callers ignore the
+// error rather than reporting it.
+func (c *Config) SetDiscoveredContextWindow(provider, model string, tokens int) {
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if c == nil || provider == "" || model == "" || tokens <= 0 {
+		return
 	}
+	if c.discovered == nil {
+		c.discovered = make(map[string]map[string]int)
+	}
+	if c.discovered[provider] == nil {
+		c.discovered[provider] = make(map[string]int)
+	}
+	c.discovered[provider][model] = tokens
+}
+
+// DiscoveredContextWindow reports a window the backend listed for this model.
+// The second result separates "nothing is known" from "known", so a caller can
+// tell a discovered window apart from a fallback.
+func (c *Config) DiscoveredContextWindow(provider, model string) (int, bool) {
+	if c == nil || c.discovered == nil {
+		return 0, false
+	}
+	models, ok := c.discovered[strings.TrimSpace(provider)]
+	if !ok {
+		return 0, false
+	}
+	window, ok := models[strings.TrimSpace(model)]
+	return window, ok && window > 0
+}
+
+// ContextWindowSource names where a model's window came from, so the UI can
+// explain why compaction fires where it does.
+type ContextWindowSource string
+
+const (
+	// ContextWindowFromModel is a providers.<name>.models[].context_window_tokens
+	// entry.
+	ContextWindowFromModel ContextWindowSource = "config"
+	// ContextWindowFromCatalogue is a window the backend reported itself.
+	ContextWindowFromCatalogue ContextWindowSource = "discovered"
+	// ContextWindowFromDefault is compaction.context_window_tokens or, when even
+	// that is unset, the compact package's built-in default.
+	ContextWindowFromDefault ContextWindowSource = "default"
+)
+
+// ContextWindow returns the window for one model and where it came from.
+// ContextWindowFor answers the same question without the provenance; this adds
+// it so a session can say "discovered" rather than leaving a user to guess
+// whether a number was configured.
+func (c *Config) ContextWindow(provider, model string) (int, ContextWindowSource) {
+	if c == nil {
+		return 0, ContextWindowFromDefault
+	}
+	model = strings.TrimSpace(model)
 	if p, ok := c.ProviderConfig(provider); ok {
-		model = strings.TrimSpace(model)
 		for _, m := range p.Models {
 			if m.ID == model && m.ContextWindowTokens > 0 {
-				return m.ContextWindowTokens
+				return m.ContextWindowTokens, ContextWindowFromModel
 			}
 		}
 	}
-	if c.Compaction.ContextWindowTokens > 0 {
-		return c.Compaction.ContextWindowTokens
+	if window, ok := c.DiscoveredContextWindow(provider, model); ok {
+		return window, ContextWindowFromCatalogue
 	}
-	return 0
+	if c.Compaction.ContextWindowTokens > 0 {
+		return c.Compaction.ContextWindowTokens, ContextWindowFromDefault
+	}
+	return 0, ContextWindowFromDefault
 }
 
 // Features toggles optional, layered capabilities. The core agent loop is never

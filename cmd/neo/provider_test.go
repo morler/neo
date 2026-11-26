@@ -68,6 +68,90 @@ func TestSetChatModelSwapsTheCompactionWindow(t *testing.T) {
 	}
 }
 
+// TestRequestContextWindowDiscoveryFillsTheModelWindow covers the CLI half of
+// #109: the catalogue fetch runs in the background, records what the backend
+// reported, and the summarizer rebuilt afterwards uses it.
+func TestRequestContextWindowDiscoveryFillsTheModelWindow(t *testing.T) {
+	var sawPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"data":[{"id":"Bonsai2.5-27B","meta":{"n_ctx":40192}}]}`))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Compaction: config.Compaction{ContextWindowTokens: 200_000},
+		Providers: map[string]config.CustomProvider{
+			"local": {
+				Endpoint:     server.URL + "/v1/chat/completions",
+				DefaultModel: "Bonsai2.5-27B",
+			},
+		},
+	}
+	prov := &namedProvider{FakeProvider: &llmtest.FakeProvider{}, name: "local"}
+	ag := agent.New(agent.Config{Model: "Bonsai2.5-27B", Provider: prov})
+
+	// The callback mirrors what buildChatRuntime installs: refresh the
+	// compactor for the model the agent is still on.
+	done := requestContextWindowDiscovery(cfg, "local", "Bonsai2.5-27B", func() {
+		_, current := ag.Backend()
+		_ = ag.SetBackend(prov, current, chatCompactor(prov, current, cfg))
+	})
+	waitContextWindowDiscovery(done, t.Context())
+
+	if sawPath != "/v1/models" {
+		t.Fatalf("fetched %q, want the catalogue at /v1/models", sawPath)
+	}
+	if got, ok := cfg.DiscoveredContextWindow("local", "Bonsai2.5-27B"); !ok || got != 40_192 {
+		t.Fatalf("discovered = %d/%v, want 40192", got, ok)
+	}
+	// 40192 * 0.7 = 28134, which is the trigger the acceptance criteria name.
+	if got, want := summarizerTrigger(t, ag), compact.TriggerTokensForContextWindow(40_192); got != want {
+		t.Fatalf("trigger = %d, want %d for the discovered window", got, want)
+	}
+}
+
+// TestRequestContextWindowDiscoveryIsSkippedForBuiltins keeps the probe off
+// providers whose catalogues Neo has no reason to read.
+func TestRequestContextWindowDiscoveryIsSkippedForBuiltins(t *testing.T) {
+	if done := requestContextWindowDiscovery(&config.Config{}, "anthropic", "claude-opus-5", nil); done != nil {
+		t.Fatal("a built-in provider must not start a discovery fetch")
+	}
+	if done := requestContextWindowDiscovery(nil, "local", "m", nil); done != nil {
+		t.Fatal("a nil config must not start a discovery fetch")
+	}
+}
+
+// TestRequestContextWindowDiscoverySurvivesABadCatalogue pins the silent
+// fallback: an unreachable or unhelpful backend leaves the configured window in
+// place and the session still starts.
+func TestRequestContextWindowDiscoverySurvivesABadCatalogue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "no catalogue here", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Compaction: config.Compaction{ContextWindowTokens: 200_000},
+		Providers: map[string]config.CustomProvider{
+			"local": {Endpoint: server.URL + "/v1", DefaultModel: "m"},
+		},
+	}
+	waited := false
+	done := requestContextWindowDiscovery(cfg, "local", "m", func() { waited = true })
+	waitContextWindowDiscovery(done, t.Context())
+
+	if !waited {
+		t.Fatal("the completion callback must run even when nothing was discovered")
+	}
+	if _, ok := cfg.DiscoveredContextWindow("local", "m"); ok {
+		t.Fatal("a failed fetch must not record a window")
+	}
+	if got := cfg.ContextWindowFor("local", "m"); got != 200_000 {
+		t.Fatalf("window = %d, want the configured 200000 to survive", got)
+	}
+}
+
 // namedProvider lets a test give the fake provider the name a config uses, since
 // window resolution looks the model up under that name.
 type namedProvider struct {

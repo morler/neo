@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -145,6 +146,70 @@ func TestHeadlessJSONUsageIncludesCompaction(t *testing.T) {
 	// 11 tool responses at 3 output tokens, the summary at 3, the answer at 7.
 	if want := toolRounds*3 + 3 + 7; got.Usage.OutputTokens != want {
 		t.Fatalf("output tokens = %d, want %d", got.Usage.OutputTokens, want)
+	}
+}
+
+// TestHeadlessUsesTheDiscoveredContextWindow covers #109 end to end through the
+// CLI: with no context_window_tokens configured, compaction fires at 70% of the
+// window the backend reported rather than at 70% of the default 200,000.
+func TestHeadlessUsesTheDiscoveredContextWindow(t *testing.T) {
+	// Distinct files per call: identical arguments are refused by the repeat
+	// guard, which would end the run before compaction could be observed.
+	dir := t.TempDir()
+	const toolRounds = 11
+	var targets []string
+	for i := 0; i < toolRounds; i++ {
+		target := filepath.Join(dir, "note"+strconv.Itoa(i)+".txt")
+		if err := os.WriteFile(target, []byte("file contents"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		targets = append(targets, target)
+	}
+
+	backend := &customBackend{respondTo: func(n int, req recordedRequest) (int, string) {
+		if req.Path == "/v1/models" {
+			// An 8-token window gives a trigger of 5 tokens; the 200,000 default
+			// would give 140,000, which this stub never reports.
+			return http.StatusOK, `{"data":[{"id":"qwen3-coder","meta":{"n_ctx":8}}]}`
+		}
+		if !req.HasTools {
+			if strings.Contains(fmt.Sprint(req.Raw["messages"]), "earlier work") {
+				return usageTextResponse("summary of the earlier work", 50, 3)
+			}
+			return usageTextResponse("done", 50, 7)
+		}
+		// Report a prompt above the trigger on every tool response so the next
+		// turn is eligible; the agent decides on the previous response's size.
+		// The tool rounds are bounded so the loop ends and the summary request
+		// can be observed.
+		if n < toolRounds {
+			return usageToolCallResponse(fmt.Sprintf("call_%d", n), "read_file",
+				fmt.Sprintf(`{"path":%q}`, targets[n]), 50, 3)
+		}
+		return usageTextResponse("done", 50, 7)
+	}}
+	server := backend.start(t)
+	customProviderWorkspace(t, server.URL+"/v1", "")
+	t.Setenv("LOCAL_LLM_API_KEY", "")
+
+	streams, out, errOut := bufferedStdio()
+	if code := run([]string{"run", "--json", "--timeout", "30s", "read every note"}, streams); code != 0 {
+		t.Fatalf("run exited %d; stderr = %q; stdout = %q", code, errOut.String(), out.String())
+	}
+	if got := backend.catalogues(); len(got) != 1 || got[0] != "/v1/models" {
+		t.Fatalf("catalogue fetches = %v, want one /v1/models", got)
+	}
+
+	got := decodeHeadlessJSON(t, out.String())
+	if !got.OK {
+		t.Fatalf("ok = false; error = %q", got.Error)
+	}
+	// One summary call happens without the loop asking for it, which is the
+	// proof the discovered window reached the summarizer: the same run on the
+	// default window issues no summary request at all.
+	const wantRequests = toolRounds + 2
+	if got.Requests != wantRequests {
+		t.Fatalf("requests = %d, want %d (compaction driven by the discovered window)", got.Requests, wantRequests)
 	}
 }
 

@@ -6,6 +6,20 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
+- A custom provider's context window can be discovered from its catalogue
+  instead of being typed into the config. Neo already fetched
+  `<endpoint>/models` for the `/model` picker; it now also reads the window that
+  response carries, under `context_length`, `max_model_len`,
+  `context_window`/`max_context_length`, a numeric string, or llama.cpp's
+  `meta.n_ctx`. Since #108 a window can be set per model, but it still had to be
+  set by hand, and a local server that reports `meta.n_ctx: 40192` had its
+  compaction trigger derived from a guessed 200,000. Discovery sits below an
+  explicit `context_window_tokens` and above `compaction.context_window_tokens`,
+  because the embedded defaults set that key, and it is never persisted. The
+  fetch is asynchronous: a chat session rebuilds its summarizer when the answer
+  arrives, `neo run` waits for it within its deadline, and a backend that lists
+  no catalogue, or answers with an unreadable shape, keeps the configured window
+  with no error.
 - A custom provider's model can carry its own `context_window_tokens`, which
   overrides `compaction.context_window_tokens` for that model. A window belongs
   to a model, and one config serving a 40K local model and a 200K hosted one

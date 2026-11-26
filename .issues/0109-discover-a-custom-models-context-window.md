@@ -1,7 +1,7 @@
 ---
 id: 109
 title: Discover a custom model's context window from its catalogue instead of requiring manual config
-status: open
+status: closed
 priority: medium
 labels:
     - feature
@@ -9,7 +9,8 @@ relations:
     related-to:
         - 108
 created: "2026-11-25"
-updated: "2026-11-25"
+updated: "2026-11-26"
+closed: "2026-11-26"
 ---
 
 ## 背景

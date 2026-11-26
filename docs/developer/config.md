@@ -192,9 +192,34 @@ endpoint needs no key. Its `model` check shows the model the chat would start
 with, so a custom provider whose `model` and `default_model` are both missing is
 visible before the first turn.
 
-The compaction window still comes from `compaction.context_window_tokens`. Neo
-cannot discover a custom model's context size, so set it explicitly for models
-whose window differs from the 200,000-token default.
+The compaction window is resolved per model, in this order:
+
+1. `providers.<name>.models[].context_window_tokens`, when set for that model.
+2. A window the backend reported in its own catalogue, when it reports one.
+3. `compaction.context_window_tokens` (200,000 in the embedded defaults).
+
+Discovery is best effort and deliberately optional. Neo reads the same
+`<endpoint>/models` response the picker already fetches and looks for a window
+under the names seen in the wild: `context_length` (OpenRouter and most
+gateways), `max_model_len` (vLLM), `context_window`/`max_context_length`, a
+numeric string instead of a number, or llama.cpp's `meta.n_ctx`. Anything else —
+a missing field, a value of the wrong type, an unreadable body — means "not
+discovered", never an error.
+
+The fetch runs in the background, so startup and a `/model` switch never wait on
+it. A chat session refreshes its summarizer when the answer arrives, and
+`neo run` waits for it within its own deadline, because a headless run is a
+single batch where a later answer would be useless. When discovery fails the
+configured or default window is used unchanged.
+
+Two consequences worth knowing. Discovery never overrides a value you wrote, and
+it is never persisted: it is a runtime observation about a server Neo does not
+control, so it cannot be mistaken for configuration. OpenAI's own `/v1/models`
+reports only ids and owners, so a built-in provider keeps the global default.
+
+`ContextWindow` in `internal/config` returns the window together with its
+source (`config`, `discovered`, or `default`), so a caller can explain why
+compaction fires where it does.
 
 Note the security boundary: `endpoint` with a plain `http` scheme sends the API
 key, and every prompt, in clear text over the network. Use `https` for anything
