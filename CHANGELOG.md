@@ -12,6 +12,15 @@ All notable changes to Neo will be documented in this file.
   the shared directory, then `~/.neo/skills`, then the project, with later
   sources overriding by name. A missing directory is still skipped.
 
+### Changed
+
+- `just build` now passes `-s -w`, so a local binary has the same shape as the
+  release build: 32.98 MiB down to 23.86 MiB on linux/amd64, because the symbol
+  table and DWARF data are gone. The trade is that a panic trace from a local
+  build no longer carries file and line numbers; `just build-debug` builds an
+  unstripped `neo.debug` for that, and `just clean` removes both. `.goreleaser.yaml`
+  already built this way, so the release artifacts are unchanged.
+
 ### Fixed
 
 - `glob` no longer lists `.git/` internals. Ripgrep lets a later `--glob`

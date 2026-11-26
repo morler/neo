@@ -48,7 +48,9 @@ just build
 ```
 
 `just build` stamps the current git description into the binary as the version shown on the
-splash screen. Run `just print-version` to preview the stamped value.
+splash screen, and strips symbols and DWARF like the release build does. Run
+`just print-version` to preview the stamped value, or `just build-debug` for an unstripped
+`neo.debug` whose stack traces carry file and line numbers.
 
 ## Updating
 

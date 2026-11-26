@@ -9,9 +9,20 @@ version := `git describe --tags --always --dirty 2>/dev/null || echo dev`
 default:
     @just --list
 
-# Build the neo binary (stamps Version via -ldflags)
+# Build the neo binary (stamps Version via -ldflags).
+# -s -w drop the symbol table and DWARF data, which is ~9.6 MB on linux/amd64.
+# The release build has always done this (.goreleaser.yaml), so a local binary
+# now has the same size shape as the one users download. The cost is that a
+# local panic trace has no line numbers; use build-debug when that matters.
+[doc('build neo (stripped, release-shaped)')]
 build:
-    go build -ldflags "-X main.Version={{version}}" -o neo ./cmd/neo
+    go build -ldflags "-s -w -X main.Version={{version}}" -o neo ./cmd/neo
+
+# Unstripped build for debugging: keeps DWARF, so panics and Delve report
+# file:line. Same source, same version stamp, far larger binary.
+[doc('build neo unstripped (DWARF kept for debugging)')]
+build-debug:
+    go build -ldflags "-X main.Version={{version}}" -o neo.debug ./cmd/neo
 
 # Run neo (dev mode)
 dev *args:
@@ -83,9 +94,9 @@ install:
 check-install-script:
     bash -n install.sh && echo "install.sh syntax OK"
 
-# Remove the built binary
+# Remove the built binaries
 clean:
-    rm -f neo
+    rm -f neo neo.debug
 
 # Format all Go source files
 fmt:

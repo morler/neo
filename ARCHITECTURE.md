@@ -593,7 +593,8 @@ The runtime is one Go module and one primary binary:
 go test ./...              all Go tests
 go vet ./...               standard static checks
 go build ./cmd/neo         local build
-just build                 version-stamped ./neo binary
+just build                 version-stamped, stripped ./neo binary
+just build-debug           version-stamped, unstripped ./neo.debug for debugging
 just performance           release-shaped performance checks
 ```
 

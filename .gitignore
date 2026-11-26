@@ -3,6 +3,7 @@
 /dist/
 /.agent/
 /neo
+/neo.debug
 .DS_Store
 /.codex-worktrees/
 /.neo/events.jsonl
