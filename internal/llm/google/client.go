@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,6 +59,9 @@ func (c *Client) Complete(ctx context.Context, req llm.Request) (*llm.Response, 
 		return nil, err
 	}
 	apiReq := buildRequest(req)
+	if apiReq.buildErr != nil {
+		return nil, apiReq.buildErr
+	}
 	body, err := json.Marshal(apiReq)
 	if err != nil {
 		return nil, err
@@ -149,10 +153,67 @@ type request struct {
 	Contents          []content         `json:"contents"`
 	Tools             []tool            `json:"tools,omitempty"`
 	GenerationConfig  *generationConfig `json:"generationConfig,omitempty"`
+
+	// buildErr carries a build-time problem (an effort this backend cannot
+	// express) to Complete, where it becomes the caller's error. It is not part
+	// of the wire shape.
+	buildErr error
 }
 
 type generationConfig struct {
-	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
+	MaxOutputTokens int           `json:"maxOutputTokens,omitempty"`
+	ThinkingConfig  *thinkingConf `json:"thinkingConfig,omitempty"`
+}
+
+// thinkingConf is Gemini's thinking control. Gemini takes a token budget, not
+// an effort word, so Neo's names map onto budgets and a bare integer is taken
+// as the budget itself. A value Gemini cannot express is an error rather than
+// a silently dropped setting: the word would never reach the API, so the API
+// could never complain, and the user would believe it had taken effect.
+//
+// includeThoughts stays off: it would add thought summaries to the streamed
+// parts, and Neo has no rendering for them past the existing thinking block.
+type thinkingConf struct {
+	// ThinkingBudget has no omitempty on purpose: 0 is a meaningful value (turn
+	// thinking off) and omitting it would fall back to the model's dynamic
+	// default, silently undoing "none".
+	ThinkingBudget  int  `json:"thinkingBudget"`
+	IncludeThoughts bool `json:"includeThoughts,omitempty"`
+}
+
+// EffortBudgets maps Neo's effort names onto Gemini thinking budgets. Unlike
+// the Messages API, Gemini has a real "off" value — a budget of 0 — so "none"
+// belongs in the map here rather than being special-cased. Only a negative
+// budget is rejected.
+var EffortBudgets = map[string]int{
+	"none":   0,
+	"low":    1024,
+	"medium": 8192,
+	"high":   24576,
+	"xhigh":  32768,
+	"max":    65536,
+}
+
+// EffortNames is the vocabulary in increasing order, shared by error messages
+// and help text so the two cannot disagree about what exists. A test keeps it
+// in step with EffortBudgets.
+const EffortNames = "none, low, medium, high, xhigh, max"
+
+func thinkingFor(effort string) (*thinkingConf, error) {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		return nil, nil
+	}
+	budget, ok := EffortBudgets[effort]
+	if !ok {
+		n, err := strconv.Atoi(effort)
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("google cannot express reasoning effort %q: use %s, or a thinking budget of 0 or more",
+				effort, EffortNames)
+		}
+		budget = n
+	}
+	return &thinkingConf{ThinkingBudget: budget}, nil
 }
 
 type content struct {
@@ -250,8 +311,13 @@ func buildRequest(req llm.Request) request {
 	if system := systemText(req); system != "" {
 		out.SystemInstruction = &content{Parts: []part{{Text: system}}}
 	}
-	if req.MaxTokens > 0 {
-		out.GenerationConfig = &generationConfig{MaxOutputTokens: req.MaxTokens}
+	thinking, err := thinkingFor(req.Effort)
+	if err != nil {
+		out.buildErr = err
+		return out
+	}
+	if req.MaxTokens > 0 || thinking != nil {
+		out.GenerationConfig = &generationConfig{MaxOutputTokens: req.MaxTokens, ThinkingConfig: thinking}
 	}
 	return out
 }

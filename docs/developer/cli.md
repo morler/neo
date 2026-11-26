@@ -22,12 +22,23 @@
 | Flag | Description |
 | --- | --- |
 | `--agent <name>` | Replace the built-in system prompt with `<name>.md` from `~/.neo/agents/` or `.neo/agents/`. Accepted anywhere in the arguments, before or after a subcommand, and in `--agent=name` or `--agent name` form. |
+| `--effort <value>` | Set the reasoning effort for this process: `low`, `medium`, `high`, or a token budget where the backend takes one. Accepted in `--effort=value` or `--effort value` form, before or after a subcommand, and for both `neo` and `neo run`. |
 
 `--agent` is extracted before subcommand dispatch, so it works with `neo`,
 `neo chat`, `neo run`, and `neo resume`. An unknown name exits non-zero and
 lists what exists rather than falling back to the coding prompt. Sessions record
 the agent they were started with, so `neo resume` keeps it unless a different
 `--agent` is given.
+
+`--effort` lasts for the process only and never rewrites the config file:
+a one-off run cannot change what the next `neo` starts with. Use `/effort`
+inside a session, or `reasoning_effort` in the config, to persist a choice.
+Because the accepted vocabulary belongs to the backend, the value is passed
+through rather than checked against a list. Backends that take a token budget
+instead of a word (Anthropic, Gemini) map the names `low`/`medium`/`high` and
+accept a bare integer; a value they cannot express is reported as an error
+instead of being silently dropped. Neo does not validate the value at startup,
+so a word `neo run` cannot express is reported when the first request is built.
 
 ## Environment
 
@@ -42,7 +53,7 @@ the agent they were started with, so `neo resume` keeps it unless a different
 
 - `neo` with no subcommand defaults to chat.
 - `neo run` executes one prompt without opening the TUI, prints the final answer, and exits. It is intended for scripts and eval harnesses.
-- `neo run` applies a `10m` timeout, does not create or update sessions, and supports `--json` for a machine-readable summary containing elapsed time and tool counts. The summary also carries `requests`, the provider calls the run actually made, and `usage` with the same `input_tokens`, `cache_creation_tokens`, `cache_read_tokens`, and `output_tokens` figures a saved session records. `requests` counts what crossed the provider boundary, so a compaction summary call is included even though the agent loop never asked for it, and `usage` sums every response including that one. Both fields are always present, including on a failed run.
+- `neo run` applies a `10m` timeout, does not create or update sessions, and supports `--json` for a machine-readable summary containing elapsed time and tool counts. The summary also carries `requests`, the provider calls the run actually made, and `usage` with the same `input_tokens`, `cache_creation_tokens`, `cache_read_tokens`, and `output_tokens` figures a saved session records. `requests` counts what crossed the provider boundary, so a compaction summary call is included even though the agent loop never asked for it, and `usage` sums every response including that one. Both fields are always present, including on a failed run. The summary also carries `effort` when one was set, since the flag lasts only for the process and the summary is the only record of what the run asked for.
 - Headless runs receive the standard tool registry and do not use interactive `tool_approvals`. Run Neo inside a VM or sandbox that provides the required filesystem, process, network, and credential boundaries.
 - The removed `--permission` option returns migration guidance instead of being silently accepted.
 - `neo run` accepts prompt text as arguments. Piped stdin is the prompt when no argument is given (`cat prompt.md | neo run --json`), and is prepended to the arguments when one of them is `-` (`git diff | neo run "Review this diff" -`). stdin is not read otherwise, so a harness that holds an idle pipe open cannot block the run.

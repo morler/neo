@@ -88,11 +88,14 @@ type Config struct {
 	// System is the flattened system prompt. SystemBlocks, when set, carries the
 	// same prompt as ordered segments so the provider can place cache breakpoints;
 	// the loop passes both so providers can use whichever they support.
-	System           string
-	SystemBlocks     []llm.SystemBlock
-	Provider         llm.Provider
-	Tools            *tools.Registry
-	Compactor        compact.Compactor
+	System       string
+	SystemBlocks []llm.SystemBlock
+	Provider     llm.Provider
+	Tools        *tools.Registry
+	Compactor    compact.Compactor
+	// Effort is the reasoning effort sent with every request; empty means no
+	// reasoning field is sent at all.
+	Effort           string
 	RequiresApproval func(string, map[string]any) bool
 	Approve          func(context.Context, ApprovalRequest) (bool, error)
 	MaxTurns         int
@@ -179,8 +182,6 @@ func (a *Agent) Model() string {
 	return a.cfg.Model
 }
 
-// Backend returns a consistent provider/model pair for display and session
-// persistence.
 // Compactor returns the summarizer currently in use. It exists so a caller can
 // check that a /model switch really rebuilt the window rather than reusing the
 // previous model's setting.
@@ -189,6 +190,8 @@ func (a *Agent) Compactor() compact.Compactor {
 	return compactor
 }
 
+// Backend returns a consistent provider/model pair for display and session
+// persistence.
 func (a *Agent) Backend() (string, string) {
 	a.backendMu.RLock()
 	defer a.backendMu.RUnlock()
@@ -271,6 +274,22 @@ func (a *Agent) backend() (llm.Provider, string, compact.Compactor) {
 	a.backendMu.RLock()
 	defer a.backendMu.RUnlock()
 	return a.cfg.Provider, a.cfg.Model, a.cfg.Compactor
+}
+
+// Effort returns the reasoning effort sent with each request.
+func (a *Agent) Effort() string {
+	a.backendMu.RLock()
+	defer a.backendMu.RUnlock()
+	return a.cfg.Effort
+}
+
+// SetEffort changes the reasoning effort for subsequent turns. Like SetModel it
+// is a between-turns operation; a turn already in flight keeps the value it
+// started with.
+func (a *Agent) SetEffort(effort string) {
+	a.backendMu.Lock()
+	a.cfg.Effort = strings.TrimSpace(effort)
+	a.backendMu.Unlock()
 }
 
 func (a *Agent) Clear() {
@@ -468,6 +487,7 @@ func (a *Agent) requestTurn(ctx context.Context, turn int) (*llm.Response, llm.P
 		SystemBlocks: blocks,
 		Messages:     a.messages,
 		Tools:        a.tools().Specs(),
+		Effort:       a.Effort(),
 	})
 	if err != nil {
 		logx.Debug("agent provider error", "turn", turn+1, "error", err.Error())

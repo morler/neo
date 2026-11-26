@@ -226,6 +226,99 @@ key, and every prompt, in clear text over the network. Use `https` for anything
 beyond a loopback address. Neo's logs redact the values of every configured
 `api_key_env`, alongside the built-in provider keys.
 
+## Reasoning Effort
+
+`reasoning_effort` sets how hard a reasoning model thinks. Omit it to send no
+reasoning field at all, which is what Neo did before this key existed, so the
+backend's own default applies.
+
+```yaml
+reasoning_effort: medium   # none | low | medium | high | xhigh | max
+```
+
+| Value | Meaning |
+| --- | --- |
+| `none` | Turn extended thinking off where the backend has a real switch; where it does not, this sends no reasoning field (see the table below). |
+| `low` | Least thinking that still reasons. |
+| `medium` | Middle of the scale. |
+| `high` | More thinking for hard work. |
+| `xhigh` | Well above `high`; costs noticeably more. |
+| `max` | The most this backend will take. |
+
+These names are a starting vocabulary, not a closed set: see "What is actually
+sent" below for why a backend may accept a word Neo does not define.
+
+| Where | Scope |
+| --- | --- |
+| `reasoning_effort` in `neo.yaml` | the configured default for every session |
+| `--effort <value>` | this process only; never written back |
+| `/effort <value>` | this session, and persisted to the config file |
+| `/effort` with no argument | show what is in effect |
+
+What is actually sent depends on the backend, because the APIs disagree:
+
+| Backend | Wire field | Notes |
+| --- | --- | --- |
+| Anthropic | `thinking.budget_tokens` | Names map to budgets: low 2048, medium 8192, high 16384, xhigh 24576, max 32000. `max_tokens` is raised so the budget still leaves room to answer. A bare integer is used as the budget and must be at least 1024. `none` omits the field, because this API has no "off" value — the resulting request is identical to an unset effort. |
+| OpenAI (API key and subscription) | `reasoning.effort` | The value is sent as written, including `none`, `xhigh`, and `max`, whose support depends on the model. |
+| Google Gemini | `thinkingConfig.thinkingBudget` | Names map to budgets: none 0, low 1024, medium 8192, high 24576, xhigh 32768, max 65536. A bare non-negative integer is used as the budget. A zero budget is sent explicitly so it is not read as "dynamic". |
+| OpenRouter and custom providers | `reasoning_effort` | The value is sent as written. |
+
+The value is deliberately not checked against a fixed list. The accepted set
+differs per provider and keeps growing, so rejecting an unfamiliar word here
+would break a config the API accepts. OpenAI-compatible backends pass it
+through and their error teaches the user. Anthropic and Gemini cannot carry a
+word at all, so a value Neo cannot map to a budget fails the request with an
+error naming the accepted forms rather than silently sending nothing.
+
+Because the list is not policed, `none`, `xhigh`, and `max` mean what each
+backend says they mean. Strictly speaking only Anthropic and Gemini are
+remapped by Neo; on OpenAI-compatible backends the word travels unchanged, so a
+model without those tiers answers with its own API error.
+
+Children spawned by the `agent` tool inherit the coordinator's effort, the same
+way they inherit its provider and model. Compaction summaries are sent with no
+effort: they are mechanical rewrites, and paying a reasoning budget for them
+would cost tokens without improving the summary.
+
+### Checking whether a pass-through backend accepted the value
+
+On Anthropic and Gemini the mapping is Neo's, so the setting either works or
+fails loudly. On OpenAI-compatible backends — including every `providers:`
+entry, which covers OpenRouter-style gateways, local runtimes, and internal
+endpoints — the word is forwarded unchanged, and a server that does not know it
+may **ignore the field silently**. A run then looks exactly like a successful
+one; nothing reports that the setting did nothing.
+
+Two ways to see what actually happened:
+
+1. Read the request back from the debug log. `NEO_LOG` writes JSON lines to a
+   file, and the Chat Completions adapter logs the resolved effort on every
+   request:
+
+       NEO_LOG=/tmp/neo.log neo run "task"
+       grep reasoning_effort /tmp/neo.log
+
+   The line reports the value Neo sent, which is the value the server received.
+   Add `NEO_LOG_VERBOSE=1` to log the full request body instead of its sha256,
+   when the question is whether the field was present at all.
+
+2. Compare `output_tokens` across two runs of the same prompt with different
+   efforts. Reasoning tokens are billed as output, so a backend that honours the
+   setting shows a difference:
+
+       neo run --effort=none --json "task" | jq '.usage.output_tokens'
+       neo run --effort=max  --json "task" | jq '.usage.output_tokens'
+
+   Identical figures — not merely close ones — mean the backend ignored the
+   field for that model. That is the case this section exists for: it is also
+   the case a 400 would have reported if the server had validated the field
+   instead of discarding it.
+
+A model that rejects the value outright answers with its own API error, which
+Neo prints unchanged; that is the transparent half of the trade. The silent
+half is what these two checks cover.
+
 ## Feature Flags
 
 Each feature flag is tri-state in Go: absent means use the built-in default, while explicit `false` disables that capability.

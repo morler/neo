@@ -44,7 +44,13 @@ type Options struct {
 	// the CLI boundary, which owns tool composition and the config write.
 	ScriptSwitcher ScriptSwitcher
 	// ScriptEnabled reports the current state for `/codemode status`.
-	ScriptEnabled  func() bool
+	ScriptEnabled func() bool
+	// EffortSwitcher changes the reasoning effort for this session and persists
+	// it. The TUI does not write config itself; a failure leaves the previous
+	// setting in place and is shown to the user.
+	EffortSwitcher func(string) error
+	// Effort reports the effort currently in effect, for bare `/effort`.
+	Effort         func() string
 	SessionID      string
 	SessionLister  func(context.Context) ([]SessionChoice, error)
 	SessionOpener  func(string) error
@@ -71,6 +77,17 @@ func WithScriptSwitcher(switcher ScriptSwitcher, current func() bool) Option {
 	return func(opts *Options) {
 		opts.ScriptSwitcher = switcher
 		opts.ScriptEnabled = current
+	}
+}
+
+// WithEffortSwitcher enables /effort. fn applies the effort to the running
+// agent and persists it; current reports what is in effect. Both are optional
+// in the sense that a nil fn disables the command — a session built without
+// them says so instead of pretending the switch worked.
+func WithEffortSwitcher(fn func(string) error, current func() string) Option {
+	return func(opts *Options) {
+		opts.EffortSwitcher = fn
+		opts.Effort = current
 	}
 }
 
@@ -282,6 +299,10 @@ type model struct {
 	// pretending to work.
 	scriptSwitcher ScriptSwitcher
 	scriptEnabled  func() bool
+	// effortSwitcher and effort back /effort. Nil when the caller offered no
+	// switch, in which case the command reports that rather than no-opping.
+	effortSwitcher func(string) error
+	effort         func() string
 	// scriptCalls counts the top-level `script` calls this session asked for,
 	// so /codemode status can weigh the prompt cost against its use.
 	scriptCalls int
@@ -403,6 +424,8 @@ func newModel(ctx context.Context, ag *agent.Agent, modelTag, version, workingDi
 		providerSwitcher:   opts.ProviderSwitcher,
 		scriptSwitcher:     opts.ScriptSwitcher,
 		scriptEnabled:      opts.ScriptEnabled,
+		effortSwitcher:     opts.EffortSwitcher,
+		effort:             opts.Effort,
 		sessionID:          strings.TrimSpace(opts.SessionID),
 		sessionLister:      opts.SessionLister,
 		sessionOpener:      opts.SessionOpener,
@@ -734,6 +757,9 @@ func (m *model) handleSlashCommand(line string) tea.Cmd {
 		return m.handleGoalCommand(strings.TrimSpace(strings.TrimPrefix(line, cmd)))
 	case "/model":
 		return m.openModelBrowser()
+	case "/effort":
+		m.handleEffortCommand(strings.TrimSpace(strings.TrimPrefix(line, cmd)))
+		return nil
 	case "/provider":
 		return m.openProviderBrowser()
 	case "/sessions":
@@ -1696,6 +1722,52 @@ func (m *model) handleCodeModeCommand(rest string) tea.Cmd {
 		m.appendBlock(errorBlock{err: fmt.Errorf("unknown /codemode argument %q — use on, off, or status", arg)})
 		return nil
 	}
+}
+
+// handleEffortCommand implements /effort. Bare form reports the setting; a
+// value applies and persists it.
+//
+// The value is deliberately not checked against a list. Neo's own vocabulary is
+// low/medium/high, but the backend owns the real set and it keeps growing, so
+// an unfamiliar word is sent anyway and the API's error is what the user sees.
+// Refusing it here would break a session the server would have accepted.
+//
+// It works mid-turn: the effort for a turn already in flight is fixed, and the
+// switch applies to the next request, which is the same trade /model makes.
+func (m *model) handleEffortCommand(rest string) {
+	arg := strings.ToLower(strings.TrimSpace(rest))
+	if m.effortSwitcher == nil || m.effort == nil {
+		m.appendBlock(errorBlock{err: fmt.Errorf("/effort is unavailable in this session")})
+		return
+	}
+	if arg == "" {
+		m.appendBlock(noticeBlock{text: m.effortStatusLine()})
+		return
+	}
+	if err := m.effortSwitcher(arg); err != nil {
+		m.appendBlock(errorBlock{err: fmt.Errorf("effort: %w", err)})
+		return
+	}
+	m.appendBlock(noticeBlock{text: m.effortStatusLine()})
+}
+
+// effortStatusLine names the effort in effect and what it means for requests,
+// because "medium" alone does not say whether anything is being sent at all.
+func (m *model) effortStatusLine() string {
+	effort := ""
+	if m.effort != nil {
+		effort = strings.TrimSpace(m.effort())
+	}
+	if effort == "" {
+		return "effort unset: no reasoning field is sent; the backend's default applies (try /effort medium)"
+	}
+	if effort == "none" {
+		return "effort none: extended thinking is turned off where the backend supports it"
+	}
+	// A plain statement of what is now in effect. An earlier wording appended
+	// "the backend rejects an unsupported value", which described a design rule
+	// but read as if this very switch had just been rejected.
+	return fmt.Sprintf("effort %s: sent as the reasoning strength on every request", effort)
 }
 
 // codeModeStatusLine states the state, what it costs, and whether that cost has

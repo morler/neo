@@ -223,6 +223,7 @@ func run(args []string, streams stdio) int {
 		fmt.Fprintln(streams.err, err)
 		return 2
 	}
+	args = takeEffortFlag(args)
 
 	// `neo` with no subcommand defaults to chat — the common case.
 	if len(args) == 0 {
@@ -322,6 +323,33 @@ func takeScriptFlag(args []string) ([]string, *bool, error) {
 // codeModeOverride carries --codemode=<mode> into loadConfig, the same way
 // scriptOverride carries --script. It is written once at startup.
 var codeModeOverride string
+
+// effortOverride carries --effort=<value> into loadConfig. Like --script it
+// lasts for this process only: persisting an effort is /effort's job, so a
+// one-off invocation cannot silently rewrite the user's config.
+var effortOverride string
+
+// takeEffortFlag extracts --effort=<value> (and the space-separated form).
+// The value is not checked against a list: the accepted vocabulary belongs to
+// the backend and keeps growing, so an unknown word is passed through and the
+// API's error is what explains it.
+func takeEffortFlag(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if value, ok := strings.CutPrefix(arg, "--effort="); ok {
+			effortOverride = strings.ToLower(strings.TrimSpace(value))
+			continue
+		}
+		if arg == "--effort" && i+1 < len(args) {
+			i++
+			effortOverride = strings.ToLower(strings.TrimSpace(args[i]))
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
+}
 
 // takeCodeModeFlag extracts --codemode=<mode>. The mode decides the session's
 // whole tool surface, so an unknown value is an error rather than a silent fall
@@ -727,6 +755,9 @@ func loadConfig(errOut io.Writer) (*config.Config, bool) {
 	if codeModeOverride != "" {
 		cfg.Features.CodeMode = codeModeOverride
 	}
+	if effortOverride != "" {
+		cfg.SetEffort(effortOverride)
+	}
 	return cfg, true
 }
 
@@ -744,10 +775,14 @@ type headlessOptions struct {
 }
 
 type headlessResult struct {
-	OK         bool      `json:"ok"`
-	ElapsedMS  int64     `json:"elapsed_ms"`
-	Provider   string    `json:"provider"`
-	Model      string    `json:"model"`
+	OK        bool   `json:"ok"`
+	ElapsedMS int64  `json:"elapsed_ms"`
+	Provider  string `json:"provider"`
+	Model     string `json:"model"`
+	// Effort is the reasoning effort the run used, empty when unset. It is
+	// reported because the flag that sets it lasts only for this process, so
+	// the summary is the only record of what a run actually asked for.
+	Effort     string    `json:"effort,omitempty"`
 	Requests   int       `json:"requests"`
 	Usage      llm.Usage `json:"usage"`
 	ToolCalls  int       `json:"tool_calls"`
@@ -800,6 +835,7 @@ func runHeadless(ctx context.Context, args []string, agentName string, streams s
 		ElapsedMS: time.Since(started).Milliseconds(),
 		Provider:  prov.Name(),
 		Model:     model,
+		Effort:    cfg.Effort(),
 		Requests:  counted.calls,
 		// Usage() sums every provider response, including the compaction call,
 		// which never surfaces as an event. Counting events instead would
@@ -883,6 +919,7 @@ func headlessAgent(ctx context.Context, cfg *config.Config, prov llm.Provider, m
 		Provider:     prov,
 		Tools:        reg,
 		Compactor:    chatCompactor(prov, model, cfg),
+		Effort:       cfg.Effort(),
 	}), model, true
 }
 
@@ -1078,6 +1115,7 @@ func runOneChatSession(ctx context.Context, store *session.Store, sess *session.
 			},
 		),
 		tui.WithScriptSwitcher(rt.switchCodeMode, setup.cfg.ScriptEnabled),
+		tui.WithEffortSwitcher(rt.switchEffort, func() string { return rt.ag.Effort() }),
 		tui.WithWorkflowEvents(setup.workflowEvents),
 		tui.WithVerbose(setup.cfg.VerboseEnabled()),
 		tui.WithIO(streams.in, streams.out),
@@ -1240,6 +1278,7 @@ func buildChatRuntime(ctx context.Context, cfg *config.Config, prov llm.Provider
 		Provider:         prov,
 		Tools:            reg,
 		Compactor:        chatCompactor(prov, model, cfg),
+		Effort:           cfg.Effort(),
 		RequiresApproval: requiresApproval,
 		Messages:         sess.Messages,
 		Usage:            sess.Usage,
@@ -1431,6 +1470,37 @@ func (r *chatRuntime) switchModel(nextModel string) error {
 	r.cfg.Model = nextModel
 	r.model = nextModel
 	return nil
+}
+
+// switchEffort changes the reasoning effort for this session and persists it.
+// The agent is switched first so the next request uses the new value, then the
+// config is written; a failed write puts the previous value back on the agent,
+// exactly like switchCodeMode. So a session never claims a setting the next
+// start would not reproduce.
+func (r *chatRuntime) switchEffort(effort string) error {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if r.ag == nil {
+		return fmt.Errorf("effort is unavailable without an agent")
+	}
+	previous := r.cfg.Effort()
+	r.ag.SetEffort(effort)
+	r.setRunnerEffort(effort)
+	r.cfg.SetEffort(effort)
+	if _, err := r.cfg.WriteEffort(effort); err != nil {
+		r.ag.SetEffort(previous)
+		r.setRunnerEffort(previous)
+		r.cfg.SetEffort(previous)
+		return err
+	}
+	return nil
+}
+
+// setRunnerEffort keeps the subagent runner's inherited effort in step. A nil
+// runner means the session has no agent tool, so no child can disagree.
+func (r *chatRuntime) setRunnerEffort(effort string) {
+	if r.runner != nil {
+		r.runner.SetEffort(effort)
+	}
 }
 
 // switchProvider builds the named backend, swaps it in, and persists it. Every

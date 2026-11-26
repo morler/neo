@@ -44,6 +44,84 @@ func (c *Config) WriteModel(model string) (string, error) {
 	return c.writeScalars(scalar{"model", model})
 }
 
+// WriteEffort persists the top-level reasoning_effort value, leaving every
+// other line as it was. Setting it to the empty string removes the line
+// instead of writing an empty scalar, because an empty value and an absent key
+// both mean "unset" and the absent form is the documented default.
+//
+// It returns the path that was written.
+func (c *Config) WriteEffort(effort string) (string, error) {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		return c.removeTopLevelScalar("reasoning_effort")
+	}
+	return c.writeScalars(scalar{"reasoning_effort", effort})
+}
+
+// removeTopLevelScalar deletes a top-level key so the file falls back to the
+// documented default rather than recording an empty value.
+func (c *Config) removeTopLevelScalar(key string) (string, error) {
+	path, base, err := c.writeTarget()
+	if err != nil {
+		return "", err
+	}
+	if err := atomicfile.WritePreserveMode(path, dropTopLevelScalar(base, key), 0o644, 0o755); err != nil {
+		return "", fmt.Errorf("save %s: %w", path, err)
+	}
+	c.rememberSource(path)
+	return path, nil
+}
+
+// writeTarget resolves the file a write should edit and the bytes to base it
+// on. A running config loaded from a file is edited in place; the embedded
+// fallback is seeded from the embedded defaults in ~/.neo/config.yaml so the
+// documented examples survive.
+//
+// Resolution happens per write rather than once, because the first write from
+// the embedded fallback creates that file and every later write must edit it —
+// rebuilding from the embedded bytes again would silently drop the value the
+// previous switch just saved.
+func (c *Config) writeTarget() (string, []byte, error) {
+	if c != nil && c.source != "" && c.source != "embedded" {
+		b, err := os.ReadFile(c.source)
+		if err != nil {
+			return "", nil, fmt.Errorf("read %s: %w", c.source, err)
+		}
+		return c.source, b, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", nil, fmt.Errorf("cannot save the config: no config file and no home directory")
+	}
+	return filepath.Join(home, userConfigDir, userConfigName), embeddedConfigYAML, nil
+}
+
+// rememberSource points the running config at the file it was just written to,
+// so the next write edits that file instead of re-seeding from the fallback.
+func (c *Config) rememberSource(path string) {
+	if c != nil {
+		c.source = path
+	}
+}
+
+// dropTopLevelScalar removes the single top-level "key: ..." line, if present.
+func dropTopLevelScalar(b []byte, key string) []byte {
+	lines := strings.SplitAfter(string(b), "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		content := strings.TrimRight(line, "\r\n")
+		if content == "" || content[0] == ' ' || content[0] == '\t' || content[0] == '#' {
+			out = append(out, line)
+			continue
+		}
+		if name, _, _, ok := splitTopLevelScalar(content); ok && name == key {
+			continue
+		}
+		out = append(out, line)
+	}
+	return []byte(strings.Join(out, ""))
+}
+
 // scalar is one top-level YAML key/value pair to rewrite.
 type scalar struct{ key, value string }
 
@@ -51,23 +129,10 @@ type scalar struct{ key, value string }
 // loaded, creating ~/.neo/config.yaml from the embedded defaults when the
 // running config is the embedded fallback.
 func (c *Config) writeScalars(values ...scalar) (string, error) {
-	base := embeddedConfigYAML
-	path := ""
-	if c != nil && c.source != "" && c.source != "embedded" {
-		b, err := os.ReadFile(c.source)
-		if err != nil {
-			return "", fmt.Errorf("read %s: %w", c.source, err)
-		}
-		path = c.source
-		base = b
-	} else {
-		home, err := os.UserHomeDir()
-		if err != nil || home == "" {
-			return "", fmt.Errorf("cannot save the config: no config file and no home directory")
-		}
-		path = filepath.Join(home, userConfigDir, userConfigName)
+	path, base, err := c.writeTarget()
+	if err != nil {
+		return "", err
 	}
-
 	out := base
 	for _, v := range values {
 		out = setTopLevelScalar(out, v.key, v.value)
@@ -75,6 +140,7 @@ func (c *Config) writeScalars(values ...scalar) (string, error) {
 	if err := atomicfile.WritePreserveMode(path, out, 0o644, 0o755); err != nil {
 		return "", fmt.Errorf("save %s: %w", path, err)
 	}
+	c.rememberSource(path)
 	return path, nil
 }
 
@@ -183,27 +249,16 @@ func (c *Config) WriteFeature(name string, on bool) (string, error) {
 	if on {
 		value = "true"
 	}
-	base := embeddedConfigYAML
-	path := ""
-	if c != nil && c.source != "" && c.source != "embedded" {
-		b, err := os.ReadFile(c.source)
-		if err != nil {
-			return "", fmt.Errorf("read %s: %w", c.source, err)
-		}
-		path = c.source
-		base = b
-	} else {
-		home, err := os.UserHomeDir()
-		if err != nil || home == "" {
-			return "", fmt.Errorf("cannot save the config: no config file and no home directory")
-		}
-		path = filepath.Join(home, userConfigDir, userConfigName)
+	path, base, err := c.writeTarget()
+	if err != nil {
+		return "", err
 	}
 
 	out := setFeatureScalar(base, name, value)
 	if err := atomicfile.WritePreserveMode(path, out, 0o644, 0o755); err != nil {
 		return "", fmt.Errorf("save %s: %w", path, err)
 	}
+	c.rememberSource(path)
 	return path, nil
 }
 

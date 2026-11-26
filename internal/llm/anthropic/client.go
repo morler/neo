@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/owainlewis/neo/internal/llm"
@@ -59,6 +61,21 @@ type apiRequest struct {
 	Tools     []llm.ToolSpec `json:"tools,omitempty"`
 	MaxTokens int            `json:"max_tokens"`
 	Stream    bool           `json:"stream,omitempty"`
+	Thinking  *thinking      `json:"thinking,omitempty"`
+}
+
+// thinking is the Messages API's extended-thinking switch. The API has no
+// effort scale: it takes a token budget, and every budget below the model's
+// minimum (1024) or at/above max_tokens is rejected. It also refuses thinking
+// for models without support and for requests that force a tool choice.
+//
+// Effort values map to budgets rather than being sent verbatim because this
+// API cannot accept a word. A value that is not one of EffortBudgets therefore
+// falls through to the default budget; the user's own words cannot be honoured
+// here, and silently sending nothing would look like the setting was ignored.
+type thinking struct {
+	Type       string `json:"type"` // always "enabled"
+	BudgetToks int    `json:"budget_tokens"`
 }
 
 // wireMessage and wireBlock are the Messages API shapes. They exist so a
@@ -192,9 +209,84 @@ func cacheRequested(req llm.Request) bool {
 	return false
 }
 
+// EffortBudgets maps Neo's effort names onto the Messages API's token budgets.
+// The numbers are suggestions, not API constants: any budget the model accepts
+// works, which is why a bare integer is accepted as well. They rise with the
+// name so an unfamiliar scale still behaves monotonically.
+//
+// "none" is deliberately absent: the Messages API has no "off" value, only the
+// absence of the field, so "none" is handled before this map is consulted.
+var EffortBudgets = map[string]int{
+	"low":    2048,
+	"medium": 8192,
+	"high":   16384,
+	"xhigh":  24576,
+	"max":    32000,
+}
+
+// EffortNone turns extended thinking off. It is the only name that removes the
+// field rather than filling it in.
+const EffortNone = "none"
+
+// EffortNames is the vocabulary in increasing order, shared by error messages
+// and help text so the two cannot disagree about what exists. A test keeps it
+// in step with EffortBudgets.
+const EffortNames = "none, low, medium, high, xhigh, max"
+
+// minThinkingBudget is the smallest budget the API accepts for any model.
+const minThinkingBudget = 1024
+
+// thinkingFor turns the request's effort into a thinking switch, raising
+// maxTokens when the budget would otherwise not leave room for an answer.
+//
+// This API has no effort scale — it takes a token budget — so an effort name
+// cannot be forwarded as written. A name Neo knows is mapped; a bare integer is
+// taken as the budget itself; anything else is an error naming what this
+// backend can express. Returning an error rather than silently dropping the
+// setting is the point: the API could never reject the word, because the word
+// is never sent, so this is the only place the user can learn it did nothing.
+//
+// The API also requires budget_tokens < max_tokens. Simply honouring that would
+// leave a thinking request with no room to reply, so the budget sets the floor
+// instead: max_tokens grows to budget + defaultMaxTokens. An unset effort
+// returns nil, and the request stays exactly as it was before this feature.
+// "none" also returns nil: this API disables thinking by omitting the field, so
+// the request it produces is identical to an unset one — which is the honest
+// representation of "off" here.
+func thinkingFor(effort string, maxTokens *int) (*thinking, error) {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" || effort == EffortNone {
+		return nil, nil
+	}
+	budget, ok := EffortBudgets[effort]
+	if !ok {
+		n, err := strconv.Atoi(effort)
+		if err != nil || n < minThinkingBudget {
+			return nil, fmt.Errorf("anthropic cannot express reasoning effort %q: use %s, or a token budget of at least %d",
+				effort, effortNames(), minThinkingBudget)
+		}
+		budget = n
+	}
+	if *maxTokens < budget+defaultMaxTokens {
+		*maxTokens = budget + defaultMaxTokens
+	}
+	return &thinking{Type: "enabled", BudgetToks: budget}, nil
+}
+
+// effortNames renders the vocabulary for error messages.
+func effortNames() string {
+	return EffortNames
+}
+
 func (c *Client) Complete(ctx context.Context, req llm.Request) (*llm.Response, error) {
 	if req.MaxTokens == 0 {
 		req.MaxTokens = defaultMaxTokens
+	}
+	// Resolve thinking before the literal: thinkingFor may raise req.MaxTokens,
+	// and the field's value must be read after that, not before.
+	thinking, err := thinkingFor(req.Effort, &req.MaxTokens)
+	if err != nil {
+		return nil, err
 	}
 	body, err := json.Marshal(apiRequest{
 		Model:     req.Model,
@@ -203,6 +295,7 @@ func (c *Client) Complete(ctx context.Context, req llm.Request) (*llm.Response, 
 		Tools:     req.Tools,
 		MaxTokens: req.MaxTokens,
 		Stream:    true,
+		Thinking:  thinking,
 	})
 	if err != nil {
 		return nil, err

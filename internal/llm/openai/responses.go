@@ -40,6 +40,27 @@ type apiRequest struct {
 	Include         []string    `json:"include,omitempty"`
 	Store           bool        `json:"store"`
 	Stream          bool        `json:"stream,omitempty"`
+	// Reasoning carries the requested effort. It is omitted entirely when no
+	// effort was set, so a request without the setting is byte-identical to
+	// what this package sent before.
+	Reasoning *apiReasoning `json:"reasoning,omitempty"`
+}
+
+// apiReasoning is the Responses API's reasoning control. Effort is passed
+// through as the user wrote it (lowercased): the API's accepted set has grown
+// past low/medium/high, and a value the model rejects comes back as a normal
+// API error rather than being second-guessed here.
+type apiReasoning struct {
+	Effort string `json:"effort,omitempty"`
+}
+
+// reasoningFor resolves the effort into the wire object, or nil when unset.
+func reasoningFor(effort string) *apiReasoning {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		return nil
+	}
+	return &apiReasoning{Effort: effort}
 }
 
 func buildAPIRequest(req llm.Request, model string, stream bool, toolChoice string, requireInstructions bool) apiRequest {
@@ -57,6 +78,7 @@ func buildAPIRequest(req llm.Request, model string, stream bool, toolChoice stri
 		Include:         []string{"reasoning.encrypted_content"},
 		Store:           false,
 		Stream:          stream,
+		Reasoning:       reasoningFor(req.Effort),
 	}
 }
 

@@ -40,6 +40,14 @@ func (p unavailableProvider) Complete(context.Context, llm.Request) (*llm.Respon
 	return nil, p.err
 }
 
+// cfgEffort reads the effort from a possibly nil config.
+func cfgEffort(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.Effort()
+}
+
 // chatAgentTool builds the agent tool for an interactive chat session.
 func chatAgentTool(prov llm.Provider, model, cwd, root string, cfg *config.Config) (subagent.AgentTool, <-chan subagent.Event, *subagent.AgentRunner) {
 	runner := &subagent.AgentRunner{
@@ -58,6 +66,10 @@ func chatAgentTool(prov llm.Provider, model, cwd, root string, cfg *config.Confi
 		// cannot use it.
 		Script:   cfg != nil && cfg.ScriptEnabled(),
 		CodeMode: cfg == nil || !cfg.ClassicCodeMode(),
+		// Children inherit the coordinator's thinking strength: a child that
+		// reasons differently from its parent would make delegated work
+		// unpredictable without the user asking for that split.
+		Effort: cfgEffort(cfg),
 	}
 	sup := subagent.NewSupervisor(runner, subagent.DefaultBudget())
 	return subagent.AgentTool{Sup: sup, Dir: cwd}, sup.Events, runner

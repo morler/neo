@@ -42,6 +42,11 @@ type AgentRunner struct {
 	// CodeMode gives children the same code-first surface the coordinator has:
 	// one code tool with run() instead of bash and the per-action file tools.
 	CodeMode bool
+	// Effort is the reasoning effort inherited by each worker. It follows the
+	// coordinator's setting, like the provider and model do, so a high-effort
+	// session does not silently spawn low-effort children. The runner copies it
+	// at build time; a /effort switch updates it alongside the agent.
+	Effort string
 }
 
 // SetBackend updates the default provider and model used by future workers.
@@ -61,6 +66,15 @@ func (r *AgentRunner) SetBackend(provider llm.Provider, model string) error {
 	return nil
 }
 
+// SetEffort keeps a child's inherited effort in step with the coordinator.
+// A nil-safe no-op is not possible here (the caller checks the runner), and the
+// lock mirrors the one SetBackend takes.
+func (r *AgentRunner) SetEffort(effort string) {
+	r.backendMu.Lock()
+	r.Effort = strings.TrimSpace(effort)
+	r.backendMu.Unlock()
+}
+
 // ScriptEnabled answers the supervisor's question about the script tool.
 func (r *AgentRunner) ScriptEnabled() bool { return r.Script }
 
@@ -78,12 +92,17 @@ func (r *AgentRunner) backend() (llm.Provider, string) {
 func (r *AgentRunner) RunAgentWithOptions(ctx context.Context, dir, input string, events chan<- AgentEvent, opts RunOptions) (string, error) {
 	provider, model := r.backend()
 
+	r.backendMu.RLock()
+	effort := r.Effort
+	r.backendMu.RUnlock()
+
 	ag := agent.New(agent.Config{
 		Model:     model,
 		System:    dynamicAgentSystemPrompt,
 		Provider:  provider,
 		Tools:     r.registryWithOptions(dir, opts),
 		Compactor: r.compactor(provider, model),
+		Effort:    effort,
 		MaxTurns:  agent.DefaultMaxTurns,
 		OnEvent: func(e agent.Event) {
 			if ev, ok := translate(e); ok {

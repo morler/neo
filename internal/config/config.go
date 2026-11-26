@@ -53,6 +53,12 @@ type Config struct {
 	// ToolApprovals lists optional interactive tool names and Bash prefixes.
 	ToolApprovals []string `yaml:"tool_approvals"`
 	Output        Output   `yaml:"output"`
+	// ReasoningEffort is the requested thinking strength ("low", "medium",
+	// "high", or anything a backend accepts). Empty means unset: no reasoning
+	// field is sent, which is the historical behaviour. The value is not
+	// validated against a list — the accepted set differs per provider and
+	// keeps changing, so a bad value is reported by the API, not by Neo.
+	ReasoningEffort string `yaml:"reasoning_effort"`
 
 	// source records where this config was loaded from (a file path or
 	// "embedded"); surfaced in diagnostics via Source().
@@ -88,6 +94,28 @@ type Output struct {
 
 // VerboseEnabled reports whether full tool output rendering is on (default: false).
 func (c *Config) VerboseEnabled() bool { return featureEnabled(c.Output.Verbose, false) }
+
+// Effort returns the configured reasoning effort, normalized for the wire.
+// An empty result means "unset" and must stay distinguishable from a set
+// value, because the two produce different requests: unset sends no reasoning
+// field at all.
+//
+// Normalization is limited to case and surrounding whitespace. The accepted
+// vocabulary belongs to the backend (low/medium/high today, more tomorrow), so
+// rejecting an unknown word here would break a working config the day a
+// provider adds one — the backend's own error is the honest answer.
+func (c *Config) Effort() string {
+	if c == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(c.ReasoningEffort))
+}
+
+// SetEffort records the reasoning effort in memory, so a switch made in the TUI
+// is reflected by the running session before it is persisted.
+func (c *Config) SetEffort(effort string) {
+	c.ReasoningEffort = strings.ToLower(strings.TrimSpace(effort))
+}
 
 // DefaultGoalMaxAttempts bounds how many automatic continuation turns one goal
 // may start when goals.max_attempts is not set. The turn started by

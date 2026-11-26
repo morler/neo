@@ -73,6 +73,13 @@ type Request struct {
 	// flattened text of SystemBlocks should match System.
 	SystemBlocks []SystemBlock
 	MaxTokens    int
+	// Effort is the requested reasoning effort ("low", "medium", "high", and
+	// whatever else a backend accepts). It is deliberately not a closed enum:
+	// the sets differ per provider and keep changing, so a value Neo does not
+	// recognise is passed through and the backend's error is what tells the
+	// user. Empty means "unset" — the request then carries no reasoning field
+	// at all, which is the behaviour every backend had before this existed.
+	Effort string
 }
 
 // Usage reports token accounting for a single completion. Cache fields are

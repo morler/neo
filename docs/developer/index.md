@@ -6,7 +6,8 @@ Start here when changing Neo:
 
 - [Architecture](architecture.md) explains the module boundaries.
 - [CLI](cli.md) documents commands and startup flow.
-- [Configuration](config.md) documents config loading and feature flags.
+- [Configuration](config.md) documents config loading, feature flags, and
+  reasoning effort.
 - [Sessions](sessions.md) documents persisted conversations.
 - [Goals](goals.md) documents `/goal`, continuation turns, and the attempt budget.
 - [Tools](tools.md) documents the built-in tool surface.

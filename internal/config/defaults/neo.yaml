@@ -68,6 +68,15 @@ compaction:
 
 # Optional, layered capabilities. Each defaults to on when omitted; set a flag
 # to false to disable it. The core agent loop is never affected by these.
+# Thinking strength for reasoning models: none, low, medium, high, xhigh, or
+# max. Omit it to send no reasoning field at all, which is what every backend
+# did before this existed. The value is passed through, not validated: a
+# provider that accepts a different word will say so in its API error, and that
+# message is what you see. Anthropic and Gemini take a token budget, so the
+# names map to budgets there; OpenAI and OpenAI-compatible backends take the
+# word itself. "none" turns thinking off where the API has a real switch.
+# reasoning_effort: medium
+
 features:
   agents_file: true # load AGENTS.md (project tree + ~/.neo) into the system prompt
   skills: true      # discover .neo/skills, advertise them, expand $name and /name references

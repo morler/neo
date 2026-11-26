@@ -13,6 +13,7 @@ import (
 
 	"github.com/owainlewis/neo/internal/llm"
 	"github.com/owainlewis/neo/internal/llm/retry"
+	"github.com/owainlewis/neo/internal/logx"
 )
 
 // Client talks to an OpenAI-compatible Chat Completions endpoint.
@@ -45,6 +46,19 @@ func (c *Client) Complete(ctx context.Context, req llm.Request) (*llm.Response, 
 	if err != nil {
 		return nil, err
 	}
+	// Log the body before sending. Every other adapter already does, and it is
+	// the only way to answer "did this backend actually receive reasoning_effort
+	// and what did it do with it" — an unknown value is passed through by
+	// design, so the server's silence looks the same as acceptance. The payload
+	// is reduced to a sha256 unless NEO_LOG_VERBOSE is set.
+	logx.Debug("provider request",
+		"provider", c.Name(),
+		"model", model,
+		"messages", len(apiReq.Messages),
+		"tools", len(apiReq.Tools),
+		"reasoning_effort", apiReq.ReasoningEffort,
+		"payload", logx.PayloadValue(string(body)),
+	)
 
 	result, err := retry.Do(ctx, retry.Options{
 		Provider:       c.Name(),
@@ -105,6 +119,15 @@ type Request struct {
 	Tools      []Tool    `json:"tools,omitempty"`
 	ToolChoice string    `json:"tool_choice,omitempty"`
 	MaxTokens  int       `json:"max_tokens,omitempty"`
+	// ReasoningEffort is passed through as given (lowercased). Servers disagree
+	// on the accepted set — some take low/medium/high, others add minimal or
+	// reject the field entirely — so an unknown value is sent anyway and the
+	// server's error is what surfaces to the user.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+}
+
+func reasoningEffort(effort string) string {
+	return strings.ToLower(strings.TrimSpace(effort))
 }
 
 type Message struct {
@@ -174,7 +197,8 @@ func BuildRequest(req llm.Request, model string) Request {
 	for _, m := range req.Messages {
 		messages = append(messages, toMessages(m)...)
 	}
-	out := Request{Model: model, Messages: messages, Tools: toTools(req.Tools), MaxTokens: req.MaxTokens}
+	out := Request{Model: model, Messages: messages, Tools: toTools(req.Tools), MaxTokens: req.MaxTokens,
+		ReasoningEffort: reasoningEffort(req.Effort)}
 	if len(out.Tools) > 0 {
 		out.ToolChoice = "auto"
 	}

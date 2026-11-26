@@ -6,6 +6,41 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
+- The Chat Completions adapter now logs each request's resolved
+  `reasoning_effort` alongside the body hash, so a pass-through backend that
+  silently ignores the field can be told apart from one that honours it. Every
+  other adapter already logged its request; this one did not, which left the
+  provider family most likely to ignore an unknown effort as the only one with
+  no way to check.
+
+- The effort scale gained `none`, `xhigh`, and `max` alongside low/medium/
+  high. `none` turns thinking off: Gemini gets an explicit `thinkingBudget: 0`
+  (sent even though it is the zero value, since omitting it would restore the
+  model's dynamic default), and Anthropic drops the `thinking` field, which is
+  the only "off" that API has. `xhigh` and `max` extend the budget tables
+  (Anthropic 24576/32000, Gemini 32768/65536). On OpenAI-compatible backends all
+  three names travel unchanged, so a model without those tiers answers with its
+  own API error rather than Neo guessing.
+
+- Reasoning effort can be set for the whole session with `reasoning_effort` in
+  `neo.yaml`, per invocation with `--effort <value>`, or mid-session with
+  `/effort <value>` (`/effort` alone reports the current value). Before this,
+  Neo sent no reasoning field at all and the strength was whatever each backend
+  defaulted to, so there was no way to spend less thinking or ask for more.
+  Leaving the key unset keeps the request byte-identical to before. What is sent
+  depends on the backend, because the APIs disagree: Anthropic maps names onto
+  `thinking.budget_tokens` (raising `max_tokens` so a budget still leaves room
+  to answer), Gemini onto `thinkingConfig.thinkingBudget`, and OpenAI/OpenRouter/
+  custom providers take `reasoning.effort` or `reasoning_effort` as written. The
+  value is not checked against a list — the accepted vocabulary belongs to the
+  backend and keeps growing — so an unfamiliar word is passed through and the
+  API's error explains it. Anthropic and Gemini cannot carry a word at all, so a
+  value that cannot be mapped to a budget fails the request with guidance
+  instead of being silently dropped. `--effort` never writes the config, so a
+  one-off run cannot change the saved default; `/effort` persists. Children
+  spawned by the `agent` tool inherit the coordinator's effort, and compaction
+  summaries are sent without one.
+
 - `read_file` takes `raw: true`, which returns the file's own text without the
   `%6d\t` line-number gutter. The gutter is for the model's eyes — it matches
   what `grep` reports — but `edit_file` matches the file's raw text, so a script

@@ -28,6 +28,10 @@ compaction:
 # goals:
 #   max_attempts: 20
 
+# Thinking strength: none, low, medium, high, xhigh, or max. Omit to send no
+# reasoning field.
+# reasoning_effort: medium
+
 features:
   agents_file: true
   skills: true
