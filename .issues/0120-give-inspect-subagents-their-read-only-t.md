@@ -1,13 +1,14 @@
 ---
 id: 120
 title: Give inspect subagents their read-only tools under code mode, where they currently receive none
-status: in-progress
+status: closed
 priority: high
 labels:
     - bug
     - tools
 created: "2026-11-26"
 updated: "2026-11-26"
+closed: "2026-11-26"
 ---
 
 Inspect-mode subagents receive an **empty tool registry** under the default code-mode surface, so they cannot read, search, or inspect anything. They still answer, which is what makes the failure silent.
