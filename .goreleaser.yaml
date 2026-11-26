@@ -51,6 +51,11 @@ release:
   github:
     owner: morler
     name: neo
+  # A dev tag is a test build, not the version people should install. Without
+  # this, GoReleaser publishes it as the latest release and the installer's
+  # "latest" lookup starts handing out a dev binary. The tag convention is
+  # vX.Y.Z-dev.YYYYMMDD; stable releases carry no suffix and stay latest.
+  prerelease: auto
   footer: |
     ## Install
 
