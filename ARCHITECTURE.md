@@ -451,6 +451,7 @@ Neo stores user state below `~/.neo/`. There is no database.
 | `~/.neo/sessions/<id>.json` | `internal/session` | full transcript, backend metadata, cwd, and usage |
 | `~/.neo/AGENTS.md` | `internal/projectctx` | optional global project instructions |
 | `~/.neo/skills/<name>/SKILL.md` | `internal/skills` | user-global reusable skills |
+| `~/.agents/skills/<name>/SKILL.md` | `internal/skills` | shared cross-tool skills, below `~/.neo/skills` |
 
 Session and auth writes use `internal/atomicfile`: write a sibling temporary
 file, set permissions, and rename it into place. Credential and transcript files
@@ -492,11 +493,13 @@ Discovery failures warn and allow chat startup to continue.
 `internal/skills` discovers:
 
 ```text
+~/.agents/skills/<name>/SKILL.md   (shared cross-tool, lowest priority)
 ~/.neo/skills/<name>/SKILL.md
 <workspace>/.neo/skills/<name>/SKILL.md
 ```
 
-Project skills override global skills of the same name. Only each skill's name
+Later entries override earlier ones of the same name: the project beats both
+global directories, and Neo's global directory beats the shared one. Only each skill's name
 and description are advertised in the stable system prompt. The full body is
 expanded into a user turn when the user references `$name` or invokes
 `/name`. This avoids placing every skill body in every provider request.

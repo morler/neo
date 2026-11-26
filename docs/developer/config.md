@@ -348,8 +348,9 @@ resume` starts it again with a fresh attempt budget.
 
 Skills are files, not config. Neo always provides `/design`, `/plan`,
 `/build`, and `/review`; add or replace one with
-`.neo/skills/<name>/SKILL.md` in the project or `~/.neo/skills/<name>/SKILL.md`
-globally. The `features.skills` flag controls discovery of those files; the
+`.neo/skills/<name>/SKILL.md` in the project, `~/.neo/skills/<name>/SKILL.md`
+globally, or `~/.agents/skills/<name>/SKILL.md` from the shared cross-tool
+directory (lowest priority of the three). The `features.skills` flag controls discovery of those files; the
 built-ins stay available either way. A `phases` key in `neo.yaml` is rejected
 with a message pointing at the skill layout. See [Skills](skills.md).
 

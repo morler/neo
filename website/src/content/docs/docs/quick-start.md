@@ -111,7 +111,9 @@ Skills activate only through these slash commands or a `$name` mention.
 Ordinary prose containing a skill name is sent unchanged.
 
 Add a skill, or replace a built-in one, with `.neo/skills/<name>/SKILL.md` in
-the project or `~/.neo/skills/<name>/SKILL.md` globally.
+the project or `~/.neo/skills/<name>/SKILL.md` globally. Neo also reads
+`~/.agents/skills/<name>/SKILL.md`, the shared directory other agent tools use;
+Neo's own global directory wins when both define the same name.
 
 ## Common commands
 

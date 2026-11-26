@@ -79,7 +79,7 @@ compaction:
 
 features:
   agents_file: true # load AGENTS.md (project tree + ~/.neo) into the system prompt
-  skills: true      # discover .neo/skills, advertise them, expand $name and /name references
+  skills: true      # discover .neo/skills and ~/.agents/skills, advertise them, expand $name and /name references
   prompt_caching: true # cache_control the static system prompt prefix to cut input cost
   script: false     # register the JavaScript `script` tool; costs ~1.1 KB of prompt per request
 
@@ -96,9 +96,11 @@ output:
 # or .neo/agents/<name>.md and run `neo --agent=<name>` to replace the built-in
 # system prompt. `neo agents` lists them.
 
-# Skills are files too: ~/.neo/skills/<name>/SKILL.md or
-# .neo/skills/<name>/SKILL.md, invoked as /name args or $name. Neo ships with
-# design, plan, build, and review; a skill with one of those names replaces it.
+# Skills are files too: ~/.agents/skills/<name>/SKILL.md (shared with other
+# agent tools), ~/.neo/skills/<name>/SKILL.md, or .neo/skills/<name>/SKILL.md,
+# invoked as /name args or $name. Later directories win: ~/.neo/skills beats
+# ~/.agents/skills, and the project beats both. Neo ships with design, plan,
+# build, and review; a skill with one of those names replaces it.
 
 # ----------------------------------------------------------------------------
 # Example provider configurations

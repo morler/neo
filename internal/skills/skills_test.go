@@ -25,7 +25,14 @@ func repo(t *testing.T) (root, cwd, home string) {
 
 func writeSkill(t *testing.T, base, name, body string) {
 	t.Helper()
-	dir := filepath.Join(base, ".neo", "skills", name)
+	writeSkillAt(t, filepath.Join(base, ".neo", "skills"), name, body)
+}
+
+// writeSkillAt writes one skill under an explicit skills directory, which lets
+// a test target the shared ~/.agents/skills tree as well as a Neo one.
+func writeSkillAt(t *testing.T, skillsDir, name, body string) {
+	t.Helper()
+	dir := filepath.Join(skillsDir, name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -126,6 +133,100 @@ func TestLoad_ProjectOverridesGlobal(t *testing.T) {
 	}
 	if found[0].Body != "project body" {
 		t.Fatalf("project skill should win, got %q", found[0].Body)
+	}
+}
+
+// Skills written for other agent tools are found in ~/.agents/skills.
+func TestLoad_SharedAgentsSkillsDiscovered(t *testing.T) {
+	_, cwd, home := repo(t)
+	writeSkillAt(t, filepath.Join(home, ".agents", "skills"), "triage",
+		"---\ndescription: shared triage\n---\nTriage the failure.")
+
+	got, err := Load(cwd)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	found := discovered(got)
+	if len(found) != 1 {
+		t.Fatalf("expected 1 shared skill, got %d: %+v", len(found), found)
+	}
+	if found[0].Name != "triage" || found[0].Body != "Triage the failure." {
+		t.Fatalf("unexpected shared skill: %+v", found[0])
+	}
+	if want := filepath.Join(home, ".agents", "skills", "triage", "SKILL.md"); found[0].Path != want {
+		t.Fatalf("path = %q, want %q", found[0].Path, want)
+	}
+}
+
+// The Neo global directory outranks the shared one, and the project outranks
+// both, so a Neo-specific skill is never shadowed by a shared file of the same
+// name.
+func TestLoad_NeoGlobalBeatsSharedAndProjectBeatsBoth(t *testing.T) {
+	root, cwd, home := repo(t)
+	shared := filepath.Join(home, ".agents", "skills")
+
+	t.Run("neo global wins over shared", func(t *testing.T) {
+		writeSkillAt(t, shared, "audit", "---\ndescription: shared\n---\nshared body")
+		writeSkill(t, home, "audit", "---\ndescription: neo global\n---\nneo body")
+
+		got, err := Load(cwd)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		found := discovered(got)
+		if len(found) != 1 {
+			t.Fatalf("expected 1 merged skill, got %d", len(found))
+		}
+		if found[0].Body != "neo body" {
+			t.Fatalf("~/.neo/skills should win over ~/.agents/skills, got %q", found[0].Body)
+		}
+	})
+
+	t.Run("project wins over both", func(t *testing.T) {
+		writeSkill(t, root, "audit", "---\ndescription: project\n---\nproject body")
+
+		got, err := Load(cwd)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		found := discovered(got)
+		if len(found) != 1 {
+			t.Fatalf("expected 1 merged skill, got %d", len(found))
+		}
+		if found[0].Body != "project body" {
+			t.Fatalf("project skill should win, got %q", found[0].Body)
+		}
+	})
+}
+
+// A shared skill replaces a built-in of the same name, like any other source.
+func TestLoad_SharedSkillReplacesBuiltin(t *testing.T) {
+	_, cwd, home := repo(t)
+	writeSkillAt(t, filepath.Join(home, ".agents", "skills"), "review",
+		"---\ndescription: shared review\n---\nShared review policy.")
+
+	got, err := Load(cwd)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got) != len(builtinNames) {
+		t.Fatalf("skills = %d, want the built-in count with review replaced", len(got))
+	}
+	review, ok := Find(got, "review")
+	if !ok || review.Body != "Shared review policy." {
+		t.Fatalf("review = %+v, want the shared override", review)
+	}
+}
+
+// A missing ~/.agents/skills must not fail the load and must not add entries.
+func TestLoad_MissingSharedDirIsSkipped(t *testing.T) {
+	_, cwd, _ := repo(t)
+	got, err := Load(cwd)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if found := discovered(got); len(found) != 0 {
+		t.Fatalf("expected no discovered skills, got %+v", found)
 	}
 }
 

@@ -4,6 +4,14 @@ All notable changes to Neo will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Skills are now discovered from `~/.agents/skills/<name>/SKILL.md` as well as
+  Neo's own directories, so a skill written for another agent tool is usable
+  without copying it. Priority is unchanged elsewhere: built-ins first, then
+  the shared directory, then `~/.neo/skills`, then the project, with later
+  sources overriding by name. A missing directory is still skipped.
+
 ### Fixed
 
 - `glob` no longer lists `.git/` internals. Ripgrep lets a later `--glob`

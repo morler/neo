@@ -66,15 +66,19 @@ type Skill struct {
 }
 
 // Load returns the built-in skills plus those discovered for a session rooted
-// at cwd. Discovery looks in:
+// at cwd. Discovery looks in, lowest priority first:
 //
-//   - ~/.neo/skills/<name>/SKILL.md            user-global
-//   - <repo-or-cwd>/.neo/skills/<name>/SKILL.md   project (overrides global)
+//   - ~/.agents/skills/<name>/SKILL.md            shared user-global
+//   - ~/.neo/skills/<name>/SKILL.md               Neo user-global
+//   - <repo-or-cwd>/.neo/skills/<name>/SKILL.md   project
 //
-// A skill's invocation name is its frontmatter `name`, falling back to the
-// directory name. Later sources override earlier ones of the same name, so a
-// project skill beats a global one and both beat a built-in. Missing
-// directories are skipped; only a genuine read/parse error is returned.
+// The shared directory holds skills written for other agent tools; Neo's own
+// global directory sits above it so a Neo-specific file still wins, and the
+// project directory beats both. A skill's invocation name is its frontmatter
+// `name`, falling back to the directory name. Later sources override earlier
+// ones of the same name, so a project skill beats a global one and every
+// discovered skill beats a built-in. Missing directories are skipped; only a
+// genuine read/parse error is returned.
 //
 // Built-ins keep their product order at the front of the result; discovered
 // skills follow sorted by name.
@@ -85,13 +89,16 @@ func Load(cwd string) ([]Skill, error) {
 		byName[s.Name] = s
 	}
 
+	// Later directories override earlier ones: built-ins, then the shared
+	// cross-tool directory, then Neo's own global directory, then the project.
 	var dirs []string
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		dirs = append(dirs, filepath.Join(home, ".neo", "skills"))
+		dirs = append(dirs,
+			filepath.Join(home, ".agents", "skills"),
+			filepath.Join(home, ".neo", "skills"),
+		)
 	}
 	dirs = append(dirs, filepath.Join(workspace.Root(cwd), ".neo", "skills"))
-
-	// Later directories override earlier ones (project beats global).
 	for _, dir := range dirs {
 		found, err := loadDir(dir)
 		if err != nil {

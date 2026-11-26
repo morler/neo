@@ -27,12 +27,15 @@ always available, even when `features.skills` is off.
 ## Discovery and override
 
 ```text
-~/.neo/skills/<name>/SKILL.md            user-global
+~/.agents/skills/<name>/SKILL.md            shared user-global
+~/.neo/skills/<name>/SKILL.md               Neo user-global
 <repo-or-cwd>/.neo/skills/<name>/SKILL.md   project
 ```
 
-Later sources win by name: a project skill replaces a global one, and either
-replaces a built-in of the same name. To change how `/review` behaves in one
+`~/.agents/skills` is the tool-agnostic location: skills written for another
+agent tool work in Neo without copying them. Later sources win by name, so
+`~/.neo/skills` beats the shared directory, a project skill beats both, and
+either replaces a built-in of the same name. To change how `/review` behaves in one
 repository, create `.neo/skills/review/SKILL.md`. Built-ins keep their order
 at the front of the slash picker; discovered skills follow, sorted by name.
 

@@ -81,7 +81,7 @@ relevant checks, and review the final diff.
 ## Make the workflow yours
 
 Neo follows repository instructions from `AGENTS.md` and reusable skills from
-`.neo/skills/`. Define how your team plans, tests, reviews, and ships once, then
+`.neo/skills/` (or the shared `~/.agents/skills/`). Define how your team plans, tests, reviews, and ships once, then
 let every task follow the same process.
 
 Neo also ships with focused `/design`, `/plan`, `/build`, and `/review`
