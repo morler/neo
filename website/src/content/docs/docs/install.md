@@ -52,6 +52,8 @@ splash screen, and strips symbols and DWARF like the release build does. Run
 `just print-version` to preview the stamped value, or `just build-debug` for an unstripped
 `neo.debug` whose stack traces carry file and line numbers.
 
+`just install` puts the same stripped binary on your `PATH`.
+
 ## Updating
 
 Rerun the one-line installer. It resolves the latest stable GitHub release and

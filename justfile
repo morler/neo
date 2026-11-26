@@ -44,7 +44,9 @@ performance:
 sandbox *args:
     ./scripts/sandbox.sh {{ args }}
 
-# Install neo into a runnable bin directory (stamps Version)
+# Install neo into a runnable bin directory (stamps Version).
+# Strips symbols like build and the release artefacts do, so the installed
+# binary is the release shape rather than 9.6 MB larger.
 install:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -83,7 +85,7 @@ install:
       exit 1
     fi
 
-    GOBIN="$bin_dir" go install -ldflags "-X main.Version={{version}}" ./cmd/neo
+    GOBIN="$bin_dir" go install -ldflags "-s -w -X main.Version={{version}}" ./cmd/neo
     echo "installed neo to $bin_dir/neo"
     if ! on_path "$bin_dir"; then
       echo "warning: $bin_dir is not on your PATH" >&2
