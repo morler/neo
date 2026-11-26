@@ -5,8 +5,11 @@ status: wontfix
 priority: high
 labels:
     - feature
+relations:
+    related-to:
+        - 121
 created: "2026-11-24"
-updated: "2026-11-24"
+updated: "2026-11-26"
 closed: "2026-11-24"
 ---
 
