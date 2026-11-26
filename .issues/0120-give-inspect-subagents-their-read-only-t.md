@@ -1,7 +1,7 @@
 ---
 id: 120
 title: Give inspect subagents their read-only tools under code mode, where they currently receive none
-status: open
+status: in-progress
 priority: high
 labels:
     - bug

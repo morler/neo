@@ -198,16 +198,156 @@ func TestScriptToolFollowsTheRunnerSetting(t *testing.T) {
 // TestInspectModeNeverGetsScript pins the deliberate exclusion. The inspect
 // whitelist is read-only by construction, and a script reaches write_file
 // through the same globals, so enabling the tool must not widen that mode.
-func TestInspectModeNeverGetsScript(t *testing.T) {
-	dir := t.TempDir()
-	r := &AgentRunner{Root: dir, Script: true}
-	sup := NewSupervisor(r, DefaultBudget())
-	names := r.registryWithOptions(dir, RunOptions{Tools: sup.toolsFor(AgentModeInspect)}).Names()
-	if slices.Contains(names, "script") {
-		t.Fatalf("inspect registry has script: %v", names)
+// TestChildSurfacesDeliverTheToolsTheyAskFor is the guard #120 was missing: it
+// asserts on the registry a child actually receives, for every mode on every
+// surface. The requested names alone are not evidence — Filter silently drops a
+// name the registry does not hold, so an inspect child under code mode used to
+// end up with nothing to call while still returning a report.
+func TestChildSurfacesDeliverTheToolsTheyAskFor(t *testing.T) {
+	for _, codeMode := range []bool{false, true} {
+		for _, mode := range []AgentMode{AgentModeInspect, AgentModeWork} {
+			t.Run(fmt.Sprintf("codeMode=%t/mode=%s", codeMode, mode), func(t *testing.T) {
+				dir := t.TempDir()
+				r := &AgentRunner{Root: dir, Script: true, CodeMode: codeMode}
+				sup := NewSupervisor(r, DefaultBudget())
+				asked := sup.toolsFor(mode)
+				got := r.registryWithOptions(dir, RunOptions{Tools: asked}).Names()
+				if len(got) == 0 {
+					t.Fatalf("child got no tools after asking for %v", asked)
+				}
+				for _, name := range asked {
+					if !slices.Contains(got, name) {
+						t.Errorf("child asked for %q and did not get it; got %v", name, got)
+					}
+				}
+				if mode == AgentModeInspect {
+					for _, forbidden := range []string{"script", "bash", "write_file", "edit_file", "agent"} {
+						if slices.Contains(got, forbidden) {
+							t.Errorf("inspect child got %q, which breaks its read-only whitelist; got %v", forbidden, got)
+						}
+					}
+					for _, want := range []string{"read_file", "grep", "glob"} {
+						if !slices.Contains(got, want) {
+							t.Errorf("inspect child missing %q; got %v", want, got)
+						}
+					}
+				}
+			})
+		}
 	}
-	if !slices.Equal(names, []string{"glob", "grep", "read_file"}) {
-		t.Fatalf("inspect registry=%v", names)
+}
+
+// TestEmptyChildRegistryIsAnError pins the refusal: a child with no tools still
+// answers, and its answer reads like a report on a repository nothing was read
+// from. Returning an error keeps the coordinator able to tell the difference.
+// TestCodeModeChildSharesReadStateBetweenScriptAndEdit pins the guarantee the
+// classic branch already had: building the code-mode registry must not give the
+// script one set of file tools and the registry another, or a read inside a
+// script would not count as the read a later edit consults and the stale-edit
+// guard would protect nothing across the script boundary.
+func TestCodeModeChildSharesReadStateBetweenScriptAndEdit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "target.txt")
+	if err := os.WriteFile(path, []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &AgentRunner{Root: dir, Script: true, CodeMode: true}
+	// Before Filter: the child's full surface, where both paths are reachable.
+	reg := r.registryWithOptions(dir, RunOptions{})
+
+	scripted, ok := reg.Get("script")
+	if !ok {
+		t.Fatal("script not registered")
+	}
+	if _, err := scripted.Run(context.Background(), map[string]any{
+		"source": "tools.read_file({path: \"" + path + "\"})",
+	}); err != nil {
+		t.Fatalf("scripted read: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := os.WriteFile(path, []byte("alpha\nbeta\ngamma\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	editor, ok := reg.Get("edit_file")
+	if !ok {
+		t.Fatal("edit_file not registered")
+	}
+	_, err := editor.Run(context.Background(), map[string]any{
+		"path": path, "old_string": "alpha", "new_string": "ALPHA",
+	})
+	if err == nil || !strings.Contains(err.Error(), "changed since you read it") {
+		t.Fatalf("edit error = %v, want the stale-read refusal", err)
+	}
+}
+
+// TestInspectChildAdvertisesReadToolsUnderCodeMode goes one level deeper than
+// the registry assertion: it checks the request the child actually sends to the
+// provider. A registry that holds the tools but never advertises them would
+// still leave the model with nothing to call.
+func TestInspectChildAdvertisesReadToolsUnderCodeMode(t *testing.T) {
+	prov := &llmtest.FakeProvider{Responses: []llm.Response{llmtest.Text("done")}}
+	r := &AgentRunner{
+		Provider:     prov,
+		DefaultModel: "model",
+		Root:         t.TempDir(),
+		CodeMode:     true,
+		Script:       true,
+	}
+	sup := NewSupervisor(r, DefaultBudget())
+	_, err := r.RunAgentWithOptions(
+		context.Background(),
+		t.TempDir(),
+		"read the mission",
+		make(chan AgentEvent, 16),
+		RunOptions{Tools: sup.toolsFor(AgentModeInspect)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prov.Calls) == 0 {
+		t.Fatal("no request reached the provider")
+	}
+	var advertised []string
+	for _, spec := range prov.Calls[0].Tools {
+		advertised = append(advertised, spec.Name)
+	}
+	slices.Sort(advertised)
+	if !slices.Equal(advertised, []string{"glob", "grep", "read_file"}) {
+		t.Fatalf("inspect child advertised %v, want the read-only trio", advertised)
+	}
+}
+
+func TestEmptyChildRegistryIsAnError(t *testing.T) {
+	r := &AgentRunner{
+		Provider:     &llmtest.FakeProvider{},
+		DefaultModel: "model",
+		Root:         t.TempDir(),
+	}
+	// A name the registry cannot hold, which is what a surface mismatch looked
+	// like before the registry carried the read-only tools in code mode.
+	opts := RunOptions{Tools: []string{"not_a_tool"}}
+	_, err := r.RunAgentWithOptions(context.Background(), t.TempDir(), "task", make(chan AgentEvent, 16), opts)
+	if err == nil {
+		t.Fatal("expected an error for a child with no tools")
+	}
+	if !strings.Contains(err.Error(), "no tools") || !strings.Contains(err.Error(), "not_a_tool") {
+		t.Fatalf("error = %q, want it to name the missing tools", err)
+	}
+}
+
+func TestInspectModeNeverGetsScript(t *testing.T) {
+	for _, codeMode := range []bool{false, true} {
+		dir := t.TempDir()
+		r := &AgentRunner{Root: dir, Script: true, CodeMode: codeMode}
+		sup := NewSupervisor(r, DefaultBudget())
+		names := r.registryWithOptions(dir, RunOptions{Tools: sup.toolsFor(AgentModeInspect)}).Names()
+		if slices.Contains(names, "script") {
+			t.Fatalf("codeMode=%t: inspect registry has script: %v", codeMode, names)
+		}
+		if !slices.Equal(names, []string{"glob", "grep", "read_file"}) {
+			t.Fatalf("codeMode=%t: inspect registry=%v", codeMode, names)
+		}
 	}
 }
 

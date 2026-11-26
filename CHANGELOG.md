@@ -25,6 +25,15 @@ All notable changes to Neo will be documented in this file.
 
 ### Fixed
 
+- Inspect subagents now actually receive `read_file`, `grep`, and `glob` under
+  the default code-mode surface. `toolsFor` asked for those three names while
+  the code-mode registry held only `script`, and `Registry.Filter` silently
+  drops a requested name the registry does not have, so the child got an empty
+  tool list — and still answered, which made it read like a report produced by
+  inspecting the repository. Work-mode children are unchanged: they ask for
+  `script` alone and the same filter still leaves them with just that. A child
+  that ends up with no tools is now an error naming the tools it asked for and
+  the surface, matching the refusal the headless path already had.
 - A skill directory that is a symlink is now discovered. `loadDir` skipped any
   entry whose `DirEntry.IsDir()` was false, and that check uses lstat
   semantics, so an entry symlinked into `~/.agents/skills` from another

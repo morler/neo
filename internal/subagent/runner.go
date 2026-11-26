@@ -75,6 +75,15 @@ func (r *AgentRunner) SetEffort(effort string) {
 	r.backendMu.Unlock()
 }
 
+// surfaceName names the surface a child runs on, so a no-tools error tells the
+// reader which setting to change rather than only that something is missing.
+func (r *AgentRunner) surfaceName() string {
+	if r.CodeMode {
+		return "code mode"
+	}
+	return "classic"
+}
+
 // ScriptEnabled answers the supervisor's question about the script tool.
 func (r *AgentRunner) ScriptEnabled() bool { return r.Script }
 
@@ -96,11 +105,22 @@ func (r *AgentRunner) RunAgentWithOptions(ctx context.Context, dir, input string
 	effort := r.Effort
 	r.backendMu.RUnlock()
 
+	// A child with no tools still answers, and its answer reads like a report
+	// that was produced by inspecting the repository. That is the failure mode
+	// the headless path already refuses (cmd/neo/main.go refuses to start with
+	// an empty registry); refusing here keeps the delegation honest instead of
+	// returning ok=true for work nothing was done on.
+	registry := r.registryWithOptions(dir, opts)
+	if len(registry.Names()) == 0 {
+		return "", fmt.Errorf("subagent has no tools: the session's surface (%s) does not provide %s; this is a configuration defect, not a task failure",
+			r.surfaceName(), strings.Join(opts.Tools, ", "))
+	}
+
 	ag := agent.New(agent.Config{
 		Model:     model,
 		System:    dynamicAgentSystemPrompt,
 		Provider:  provider,
-		Tools:     r.registryWithOptions(dir, opts),
+		Tools:     registry,
 		Compactor: r.compactor(provider, model),
 		Effort:    effort,
 		MaxTurns:  agent.DefaultMaxTurns,
@@ -150,15 +170,23 @@ func (r *AgentRunner) registryWithOptions(dir string, opts RunOptions) *tools.Re
 	if r.CodeMode {
 		// A child in code mode acts the way the coordinator does. Absolute paths
 		// are what make grep's output usable inside one call, where there is no cd.
+		// The file tools are the same instances each branch already built, so a
+		// read through the script counts as the read a later edit consults.
 		codeFiles := append([]tools.Tool{
 			tools.Grep{Root: r.Root, Absolute: true},
 			tools.Glob{Root: r.Root, Absolute: true},
-		}, tools.NewFileTools()...)
+		}, files[2:]...)
 		code := tools.NewScript(codeFiles)
 		code.CodeMode = true
 		code.CWD = dir
 		code.Session = &tools.ScriptSession{}
-		base = []tools.Tool{code}
+		// The file tools sit beside script rather than only behind it, because
+		// Filter can keep only what the registry holds. An inspect child asks for
+		// read_file/grep/glob and never for script, so a code-mode registry built
+		// from script alone left it with nothing to call while still reporting
+		// success. Work-mode children ask for script alone and lose these again in
+		// the same filter, so their surface is unchanged.
+		base = append([]tools.Tool{code}, files...)
 	} else {
 		base = append([]tools.Tool{tools.Bash{Timeout: bashTimeout, CWD: dir, ScriptAvailable: r.Script}}, files...)
 		if r.Script {
