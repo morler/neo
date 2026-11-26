@@ -1,13 +1,14 @@
 ---
 id: 117
 title: Fix the data race on Config.discovered between background catalogue discovery and subagent construction
-status: open
+status: closed
 priority: high
 labels:
     - bug
     - config
 created: "2026-11-26"
 updated: "2026-11-26"
+closed: "2026-11-26"
 ---
 
 `internal/config` has no synchronisation at all (`grep -n 'sync\.|Mutex|RWMutex' internal/config/*.go` returns nothing), yet `Config.discovered` is written from a background goroutine and read from the subagent path on the main goroutine.

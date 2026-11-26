@@ -25,6 +25,12 @@ All notable changes to Neo will be documented in this file.
 
 ### Fixed
 
+- Building a subagent while a custom provider's catalogue fetch was in flight
+  could abort the process with `fatal error: concurrent map read and map write`.
+  Discovery writes `Config.discovered` from a background goroutine, and the
+  subagent path read it through `ContextWindowFor` on the main goroutine, with
+  no synchronisation on either side. The table now has its own `sync.RWMutex`;
+  every other config field is still set once at load time and remains lock-free.
 - Inspect subagents now actually receive `read_file`, `grep`, and `glob` under
   the default code-mode surface. `toolsFor` asked for those three names while
   the code-mode registry held only `script`, and `Registry.Filter` silently

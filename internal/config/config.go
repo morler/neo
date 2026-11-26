@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -68,7 +69,17 @@ type Config struct {
 	// catalogue, keyed by provider then model. It is deliberately not a yaml
 	// field: discovery is a runtime observation, never something the user wrote,
 	// and it must lose to anything the user did write (see ContextWindowFor).
-	discovered map[string]map[string]int
+	//
+	// It is the one field in Config that is written after construction, and it
+	// is written from a goroutine: catalogue discovery runs in the background so
+	// startup and a /model switch stay responsive. A reader (the subagent path
+	// asks for a window every time it builds a child) therefore has to take
+	// discoveredMu, or the runtime aborts the process with "concurrent map read
+	// and map write" the moment a child is built during a fetch. Everything else
+	// here is set once by parseConfig before the Config is shared, so it needs no
+	// lock; keep it that way rather than widening this one.
+	discovered   map[string]map[string]int
+	discoveredMu sync.RWMutex
 }
 
 // Backend optionally pins chat-spawned subagents to a provider and model.
@@ -182,6 +193,8 @@ func (c *Config) SetDiscoveredContextWindow(provider, model string, tokens int) 
 	if c == nil || provider == "" || model == "" || tokens <= 0 {
 		return
 	}
+	c.discoveredMu.Lock()
+	defer c.discoveredMu.Unlock()
 	if c.discovered == nil {
 		c.discovered = make(map[string]map[string]int)
 	}
@@ -195,7 +208,12 @@ func (c *Config) SetDiscoveredContextWindow(provider, model string, tokens int) 
 // The second result separates "nothing is known" from "known", so a caller can
 // tell a discovered window apart from a fallback.
 func (c *Config) DiscoveredContextWindow(provider, model string) (int, bool) {
-	if c == nil || c.discovered == nil {
+	if c == nil {
+		return 0, false
+	}
+	c.discoveredMu.RLock()
+	defer c.discoveredMu.RUnlock()
+	if c.discovered == nil {
 		return 0, false
 	}
 	models, ok := c.discovered[strings.TrimSpace(provider)]

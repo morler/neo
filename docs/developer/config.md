@@ -221,6 +221,15 @@ reports only ids and owners, so a built-in provider keeps the global default.
 source (`config`, `discovered`, or `default`), so a caller can explain why
 compaction fires where it does.
 
+Because the fetch runs in the background, the discovered table is the one part
+of `Config` that is written after construction: `SetDiscoveredContextWindow`
+takes `discoveredMu` and `DiscoveredContextWindow` takes it for reading.
+Building a subagent during a fetch reads that table on the main goroutine, so
+reading it without the lock is a fatal `concurrent map read and map write`, not
+only a `-race` warning. Every other field is set once by `parseConfig` before
+the config is shared, and stays lock-free; add a lock only for a field that is
+genuinely written later.
+
 Note the security boundary: `endpoint` with a plain `http` scheme sends the API
 key, and every prompt, in clear text over the network. Use `https` for anything
 beyond a loopback address. Neo's logs redact the values of every configured
