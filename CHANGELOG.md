@@ -25,6 +25,15 @@ All notable changes to Neo will be documented in this file.
 
 ### Fixed
 
+- A skill directory that is a symlink is now discovered. `loadDir` skipped any
+  entry whose `DirEntry.IsDir()` was false, and that check uses lstat
+  semantics, so an entry symlinked into `~/.agents/skills` from another
+  checkout was dropped even though `<name>/SKILL.md` resolved fine. Skills are
+  commonly shared this way, so real ones never reached the catalog or the slash
+  picker. Links that dangle or point at a non-directory are still skipped
+  without failing the load, and precedence is unchanged. Note that one link
+  must point at a single skill directory: a link to a directory that merely
+  contains several skills has no `SKILL.md` of its own and is not a skill.
 - `glob` no longer lists `.git/` internals. Ripgrep lets a later `--glob`
   override an earlier one, and the shared argument builder put `--glob "!.git/"`
   before the user's pattern, so any pattern broad enough to match directories

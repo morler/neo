@@ -72,9 +72,11 @@ type Skill struct {
 //   - ~/.neo/skills/<name>/SKILL.md               Neo user-global
 //   - <repo-or-cwd>/.neo/skills/<name>/SKILL.md   project
 //
-// The shared directory holds skills written for other agent tools; Neo's own
-// global directory sits above it so a Neo-specific file still wins, and the
-// project directory beats both. A skill's invocation name is its frontmatter
+// The shared directory holds skills written for other agent tools, often as
+// symlinks into another checkout; a skill entry is followed whether it is a
+// real directory or a symlink to one. Neo's own global directory sits above the
+// shared one so a Neo-specific file still wins, and the project directory beats
+// both. A skill's invocation name is its frontmatter
 // `name`, falling back to the directory name. Later sources override earlier
 // ones of the same name, so a project skill beats a global one and every
 // discovered skill beats a built-in. Missing directories are skipped; only a
@@ -163,7 +165,10 @@ func loadDir(dir string) ([]Skill, error) {
 	}
 	var out []Skill
 	for _, e := range entries {
-		if !e.IsDir() {
+		// A skill directory may be a symlink to a checkout elsewhere, which is
+		// the common way to share one skill between agent tools. DirEntry.IsDir
+		// reports the link itself, so stat the entry to resolve the target.
+		if !isDirFollow(dir, e) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name(), fileName)
@@ -184,6 +189,21 @@ func loadDir(dir string) ([]Skill, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// isDirFollow reports whether an entry is a directory once symlinks are
+// followed. Links that dangle or point at a non-directory are not directories,
+// and a stat failure other than a broken link is treated the same way so one
+// bad entry never fails the whole load.
+func isDirFollow(dir string, e os.DirEntry) bool {
+	if e.IsDir() {
+		return true
+	}
+	if e.Type()&os.ModeSymlink == 0 {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(dir, e.Name()))
+	return err == nil && info.IsDir()
 }
 
 func parseSkill(dirName string, content []byte, path string) (Skill, error) {

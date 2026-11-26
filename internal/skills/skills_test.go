@@ -252,6 +252,104 @@ func TestLoad_UserSkillReplacesBuiltin(t *testing.T) {
 	}
 }
 
+// A skill directory is often a symlink into another checkout, which is how a
+// shared skill reaches ~/.agents/skills. Discovery must follow the link.
+func TestLoad_DiscoversSymlinkedSkillDirectory(t *testing.T) {
+	_, cwd, home := repo(t)
+	base := t.TempDir()
+	target := filepath.Join(base, "checkout", "improve")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\ndescription: survey a codebase\n---\nWrite plans, do not edit code."
+	if err := os.WriteFile(filepath.Join(target, "SKILL.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(home, ".agents", "skills")
+	if err := os.MkdirAll(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(shared, "improve")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	got, err := Load(cwd)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	found := discovered(got)
+	if len(found) != 1 {
+		t.Fatalf("expected 1 discovered skill, got %d: %+v", len(found), found)
+	}
+	if found[0].Name != "improve" || found[0].Description != "survey a codebase" {
+		t.Fatalf("unexpected symlinked skill: %+v", found[0])
+	}
+	// Paths stay under the skills directory the user configured, not the link target.
+	if want := filepath.Join(shared, "improve", "SKILL.md"); found[0].Path != want {
+		t.Fatalf("path = %q, want %q", found[0].Path, want)
+	}
+}
+
+// Broken or irrelevant links are not skills: skip them without failing the load.
+func TestLoad_SkipsBrokenAndNonDirectorySymlinks(t *testing.T) {
+	_, cwd, home := repo(t)
+	shared := filepath.Join(home, ".agents", "skills")
+	if err := os.MkdirAll(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plain := filepath.Join(shared, "README.md")
+	if err := os.WriteFile(plain, []byte("not a skill"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(shared, "missing"), filepath.Join(shared, "dangling")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink(plain, filepath.Join(shared, "file-link")); err != nil {
+		t.Fatal(err)
+	}
+	writeSkillAt(t, shared, "real", "---\ndescription: real\n---\nReal body.")
+
+	got, err := Load(cwd)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	found := discovered(got)
+	if len(found) != 1 || found[0].Name != "real" {
+		t.Fatalf("expected only the real skill, got %+v", found)
+	}
+}
+
+// Following a link must not change precedence: a project skill still beats a
+// symlinked shared one of the same name.
+func TestLoad_SymlinkedSkillKeepsOverrideOrder(t *testing.T) {
+	root, cwd, home := repo(t)
+	target := filepath.Join(t.TempDir(), "shared-audit")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "SKILL.md"),
+		[]byte("---\ndescription: shared\n---\nshared body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(home, ".agents", "skills")
+	if err := os.MkdirAll(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(shared, "audit")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	writeSkill(t, root, "audit", "---\ndescription: project\n---\nproject body")
+
+	got, err := Load(cwd)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	found := discovered(got)
+	if len(found) != 1 || found[0].Body != "project body" {
+		t.Fatalf("project skill should still win over a symlinked shared one, got %+v", found)
+	}
+}
+
 func TestLoad_SkipsBodylessSkill(t *testing.T) {
 	root, cwd, _ := repo(t)
 	writeSkill(t, root, "empty", "---\ndescription: nothing\n---\n")

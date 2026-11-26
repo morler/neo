@@ -33,7 +33,11 @@ always available, even when `features.skills` is off.
 ```
 
 `~/.agents/skills` is the tool-agnostic location: skills written for another
-agent tool work in Neo without copying them. Later sources win by name, so
+agent tool work in Neo without copying them. A skill directory may be a symlink
+to a checkout elsewhere, so one skill can be shared between tools without being
+copied; discovery follows the link and reports the path under the skills
+directory. Links that dangle or point at something that is not a directory are
+skipped, never fatal. Later sources win by name, so
 `~/.neo/skills` beats the shared directory, a project skill beats both, and
 either replaces a built-in of the same name. To change how `/review` behaves in one
 repository, create `.neo/skills/review/SKILL.md`. Built-ins keep their order
