@@ -83,6 +83,21 @@ input, and a goal they could not continue would only be dead state.
  "next": "Keep working. Report the same blocker again only if it still applies after another real attempt."}
 ```
 
+## A panicking tool call
+
+A tool's `Run` is called in one place, `runToolSafely`, which recovers a panic
+and turns it into a failed call: the result is `isError: true`, names the tool
+and the panic value, and says the fault is Neo's rather than the model's. The
+stack goes to `NEO_LOG` (`"msg":"tool panic"`) and never into the tool result,
+where it would spend context and show local paths the model cannot use.
+
+The boundary matters most on the parallel path: `runGroup` runs each call in its
+own goroutine, and an unrecovered panic there ends the process without unwinding
+anything else, so an unsaved session and a running subagent would go with it. The
+serial path has the same defect with a shorter fuse: the panic reaches the TUI
+event loop or the headless loop. Tools therefore do not each write their own
+`recover`; one tool's bug fails that one call, and the turn continues.
+
 ## Output size
 
 `tools.MaxOutputBytes` (64 KiB, roughly 16k tokens) is the single limit on what

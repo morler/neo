@@ -1111,7 +1111,7 @@ func (a *Agent) runPreparedTool(ctx context.Context, call preparedToolCall) tool
 		}
 		logx.Debug("tool approved", "name", name)
 	}
-	out, err := call.tool.Run(ctx, input)
+	out, err := runToolSafely(ctx, call.tool, name, input)
 	if err != nil {
 		logx.Debug("tool error",
 			"name", name,

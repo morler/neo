@@ -1,13 +1,14 @@
 ---
 id: 129
 title: Contain a panicking tool call so one bad call cannot end the process
-status: open
+status: closed
 priority: high
 labels:
     - bug
     - tools
 created: "2026-11-27"
 updated: "2026-11-27"
+closed: "2026-11-27"
 ---
 
 ## 问题
@@ -88,3 +89,12 @@ value.go:22     ToGo
 ## Notes
 
 与"用 wago/wazy 替换 moejs"的评估无关。那次评估的结论是保留 moejs；本 issue 是它顺带暴露出来的独立缺陷。
+
+## 完成记录（2026-11-27）
+
+- 新增 `internal/agent/tool_panic.go`：`runToolSafely` 是 `tool.Run` 的唯一调用点，用 `recover()` 把 panic 转成 `isError: true` 的工具结果（文本含工具名、panic 值、"internal Neo error" 说明），完整 stack 只写 `NEO_LOG`（`"msg":"tool panic"`），不进 transcript。用 `panicked` 标志而非 `recover()` 的返回值判断，兼容 `GODEBUG=panicnil=1` 下的 `panic(nil)`。
+- `agent.go:1114` 的 `call.tool.Run` 改为 `runToolSafely`，串行与并行两条路径共用同一边界。
+- 测试 `internal/agent/tool_panic_test.go`：串行路径断言 turn 继续、结果为 isError、文本含 panic 值且不含 stack、日志含 stack；并行路径用子进程（`NEO_PANIC_CHILD=1` 重跑自身）断言进程存活、同组健康调用正常返回 `ok`。
+- 反证：把 `runToolSafely` 换回 `call.tool.Run` 后两条测试都失败（串行 panic 冒泡、并行子进程 `exit status 2`），证明测试确实覆盖原缺陷。
+- 文档：`docs/developer/tools.md` 新增 "A panicking tool call" 一节。
+- 验证：`go test ./... -count=1`、`go vet ./...`、`qlty check` 均通过。`qlty check --all` 剩 1 条 `cmd/neo/main.go:150` 的 ripgrep TODO 提示，属既有示例文本，与本改动无关。
