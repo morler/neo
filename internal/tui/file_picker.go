@@ -58,23 +58,30 @@ func (m *model) updateFilePicker() {
 		m.files.dismissedFor = ""
 	}
 
-	if err := m.ensureFilePickerFiles(); err != nil {
-		m.files.visible = false
-		m.files.matches = nil
-		m.files.err = err
-		if wasVisible {
-			m.layout()
+	// A token that starts at the filesystem root or walks up with ".." can never
+	// match a path relative to the workspace root, so it is completed from disk
+	// instead of from the index.
+	var matches []string
+	if filePickerPathQuery(token.query) {
+		matches = filePickerDiskMatches(m.files.root, token.query)
+	} else {
+		if err := m.ensureFilePickerFiles(); err != nil {
+			m.files.visible = false
+			m.files.matches = nil
+			m.files.err = err
+			if wasVisible {
+				m.layout()
+			}
+			return
 		}
-		return
-	}
-
-	query := strings.ToLower(token.query)
-	matches := make([]string, 0, filePickerMaxMatches)
-	for _, path := range m.files.files {
-		if query == "" || strings.Contains(strings.ToLower(path), query) {
-			matches = append(matches, path)
-			if len(matches) >= filePickerMaxMatches {
-				break
+		query := strings.ToLower(token.query)
+		matches = make([]string, 0, filePickerMaxMatches)
+		for _, path := range m.files.files {
+			if query == "" || strings.Contains(strings.ToLower(path), query) {
+				matches = append(matches, path)
+				if len(matches) >= filePickerMaxMatches {
+					break
+				}
 			}
 		}
 	}
@@ -129,6 +136,73 @@ func filePickerTokenAt(input string, row, col int) (filePickerToken, bool) {
 		query: query,
 		raw:   string(line[start:col]),
 	}, true
+}
+
+// filePickerPathQuery reports whether the token names a path the workspace index
+// cannot describe. Indexed paths are relative to the workspace root, so a token
+// that starts at the filesystem root or walks up with ".." never matches one.
+// Such a token is completed from disk one segment at a time instead, which is
+// what makes a multi-hop "@../../" work.
+func filePickerPathQuery(query string) bool {
+	return strings.HasPrefix(query, "/") || query == ".." || strings.HasPrefix(query, "../")
+}
+
+// filePickerDiskMatches lists the directory a path query names and offers its
+// children that extend the last segment. The accepted text keeps the separator,
+// so it is already a prefix of the next query and typing "/" descends one level:
+// "@../" lists the parent of the working directory, "@../../" lists one level
+// above that, and "@../../src/" lists inside it.
+//
+// The query ".." is the exception: appending a child name to the dots would
+// name a sibling of the wrong directory, so the dots list the directory they
+// point at instead.
+func filePickerDiskMatches(root, query string) []string {
+	// Split, unlike Clean, keeps a trailing separator on dir. That state is what
+	// distinguishes "showing the children of ../x" from "still typing ../x".
+	sep := string(os.PathSeparator)
+	dir, base := filepath.Split(query)
+	if base == ".." {
+		dir, base = filepath.Clean(query)+sep, ""
+	}
+	// A relative query is read from the workspace root, because that is what the
+	// inserted path is relative to. Reading it from the process directory would
+	// list the right place only when the two happen to agree.
+	listDir := dir
+	if !filepath.IsAbs(listDir) {
+		listDir = filepath.Join(root, listDir)
+	}
+	entries, err := os.ReadDir(listDir)
+	if err != nil {
+		return nil
+	}
+	type candidate struct {
+		name  string
+		isDir bool
+	}
+	candidates := make([]candidate, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type().IsRegular() {
+			candidates = append(candidates, candidate{name: entry.Name(), isDir: entry.IsDir()})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].name < candidates[j].name })
+	matches := make([]string, 0, filePickerMaxMatches)
+	for _, c := range candidates {
+		if !strings.HasPrefix(c.name, base) {
+			continue
+		}
+		// A directory keeps its separator so the accepted text is already a
+		// prefix of the next listing; typing on from there descends one level.
+		name := c.name
+		if c.isDir {
+			name += sep
+		}
+		matches = append(matches, dir+name)
+		if len(matches) >= filePickerMaxMatches {
+			break
+		}
+	}
+	return matches
 }
 
 func (m *model) ensureFilePickerFiles() error {

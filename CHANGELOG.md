@@ -6,6 +6,13 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
+- The interactive `@` file picker completes paths that leave the workspace. It
+  used to match only against paths relative to the working directory, so
+  `@../`, `@../../` and `@/etc/` could never match anything and the picker
+  stayed hidden. Such a token is now completed from disk one segment per `/`,
+  listing directories before files, and the inserted text stays relative to the
+  working directory so the tool call resolves it.
+
 - Subagent progress now reaches the visible workflow checklist. The coordinator
   was already told not to mirror child calls because Neo attaches them
   automatically, but the supervisor's event stream was built and then discarded

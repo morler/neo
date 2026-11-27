@@ -170,6 +170,141 @@ func TestFilePicker_RenderFitsNarrowWidth(t *testing.T) {
 	}
 }
 
+// TestFilePicker_MultiHopParentCompletesFromDisk covers the complaint: "@../../"
+// used to match nothing because the index only holds paths relative to the
+// workspace root. A path-shaped token is now completed from disk, one segment at
+// a time, so each "/" descends another level.
+func TestFilePicker_MultiHopParentCompletesFromDisk(t *testing.T) {
+	root, parent := makeParentedFilePickerTree(t, map[string][]string{
+		"docs": {"guide.md"},
+	})
+	m := makeTestModel()
+	m.files = newFilePicker(root)
+
+	m.input.SetValue("@../")
+	m.updateFilePicker()
+	if !m.files.visible {
+		t.Fatal("expected the parent directory listing to open")
+	}
+	if !containsString(m.files.matches, "../docs/") {
+		t.Fatalf("expected the sibling directory of the workspace, got %v in %s", m.files.matches, parent)
+	}
+	if !containsString(m.files.matches, "../work/") {
+		t.Fatalf("expected the workspace beside its sibling, got %v", m.files.matches)
+	}
+
+	m.input.SetValue("@../../")
+	m.updateFilePicker()
+	if !m.files.visible {
+		t.Fatal("expected a two-hop listing to open")
+	}
+
+	m.input.SetValue("@../docs/")
+	m.updateFilePicker()
+	if len(m.files.matches) != 1 || m.files.matches[0] != "../docs/guide.md" {
+		t.Fatalf("expected ../docs/guide.md, got %v", m.files.matches)
+	}
+}
+
+func TestFilePicker_TabAcceptsAParentPath(t *testing.T) {
+	root, _ := makeParentedFilePickerTree(t, map[string][]string{"docs": nil})
+	m := makeTestModel()
+	m.files = newFilePicker(root)
+
+	m.input.SetValue("read @../doc")
+	m.updateFilePicker()
+	m.Update(keyPress(tea.KeyTab))
+
+	if got := m.input.Value(); got != "read @../docs/" {
+		t.Fatalf("expected the parent path in input, got %q", got)
+	}
+	if m.files.visible {
+		t.Fatalf("expected the picker to hide after accepting, matches %v", m.files.matches)
+	}
+}
+
+// TestFilePicker_TypingDotsListsTheirDirectory pins the ".." case: appending a
+// name to dots would name a sibling of the wrong directory, so the dots list the
+// directory they name instead of acting as a parent to descend into.
+func TestFilePicker_TypingDotsListsTheirDirectory(t *testing.T) {
+	root, parent := makeParentedFilePickerTree(t, map[string][]string{"docs": nil})
+	m := makeTestModel()
+	m.files = newFilePicker(root)
+
+	m.input.SetValue("@..")
+	m.updateFilePicker()
+
+	if !containsString(m.files.matches, "../work/") {
+		t.Fatalf("expected the workspace to be listed under its own name, got %v in %s", m.files.matches, parent)
+	}
+}
+
+// TestFilePicker_AbsoluteQueryListsThatDirectory keeps an absolute token usable
+// when the file sits outside the workspace.
+func TestFilePicker_AbsoluteQueryListsThatDirectory(t *testing.T) {
+	root := makeFilePickerTree(t, []string{"README.md"})
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "outside.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := makeTestModel()
+	m.files = newFilePicker(root)
+
+	m.input.SetValue("@" + outside + "/")
+	m.updateFilePicker()
+
+	if len(m.files.matches) != 1 || m.files.matches[0] != outside+"/outside.md" {
+		t.Fatalf("expected the absolute listing, got %v", m.files.matches)
+	}
+}
+
+// TestFilePicker_WorkspaceMatchesStaySuffixIndependent guards the indexed
+// branch: a workspace-relative query must still match anywhere in the path.
+func TestFilePicker_WorkspaceMatchesStaySuffixIndependent(t *testing.T) {
+	root := makeFilePickerTree(t, []string{"internal/tui/model.go"})
+	m := makeTestModel()
+	m.files = newFilePicker(root)
+
+	m.input.SetValue("@tui/mod")
+	m.updateFilePicker()
+
+	if len(m.files.matches) != 1 || m.files.matches[0] != "internal/tui/model.go" {
+		t.Fatalf("expected the workspace match, got %v", m.files.matches)
+	}
+}
+
+// makeParentedFilePickerTree builds <base>/work plus <base> children, so a test
+// can walk one ("..") or two ("../..") hops away from the workspace root.
+func makeParentedFilePickerTree(t *testing.T, parentFiles map[string][]string) (root, parent string) {
+	t.Helper()
+	parent = t.TempDir()
+	root = filepath.Join(parent, "work")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for dir, files := range parentFiles {
+		dir = filepath.Join(parent, dir)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range files {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return root, parent
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func makeFilePickerTree(t *testing.T, paths []string) string {
 	t.Helper()
 	root := t.TempDir()
