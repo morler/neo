@@ -19,6 +19,23 @@ func stringArg(args map[string]any, key string) string {
 	return ""
 }
 
+// argvArg reads run()'s argv array from a tool-input map. The host call hands it
+// over as []string and a JSON round-trip leaves []any, so both shapes are read;
+// this only feeds a label, so an unexpected element is dropped.
+func argvArg(args map[string]any, key string) []string {
+	if argv, ok := args[key].([]string); ok {
+		return argv
+	}
+	values, _ := args[key].([]any)
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if text, ok := value.(string); ok {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
 // oneLine collapses a multi-line string to a single line, replacing newlines
 // with " ⏎ " so the content stays readable in status bars and log entries.
 func oneLine(s string) string {

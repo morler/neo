@@ -22,6 +22,11 @@ func toolVerb(name string, args map[string]any) string {
 	case "bash":
 		cmd := strings.TrimSpace(stringArg(args, "command"))
 		return "running " + truncate(oneLine(cmd), 60)
+	case "run":
+		cmd := strings.TrimSpace(strings.Join(argvArg(args, "argv"), " "))
+		return "running " + truncate(oneLine(cmd), 60)
+	case "script":
+		return "script " + truncate(oneLine(stringArg(args, "source")), 60)
 	case "read_file":
 		return "reading " + shortPath(stringArg(args, "path"))
 	case "write_file":

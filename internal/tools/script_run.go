@@ -126,6 +126,13 @@ func (s Script) runTool(ctx context.Context, calls *subCallCounter) moejs.Native
 	return func(r *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
 		argv, timeout, err := runArgs(r, args)
 		id := calls.next(parent.ToolUseID)
+		// The start is reported before the program runs, because a command can
+		// take minutes: a UI that only hears the end cannot show it as running,
+		// and in code mode run() is how every test, build and git command
+		// happens. The file tools report the same pair through hostTool.
+		ReportSubCall(ctx, SubCall{
+			ID: id, Name: "run", Args: map[string]any{"argv": argv},
+		})
 		report := func(text string, isErr bool) {
 			ReportSubCall(ctx, SubCall{
 				ID: id, Name: "run", Args: map[string]any{"argv": argv}, Text: text, IsError: isErr, Done: true,

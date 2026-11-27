@@ -190,6 +190,10 @@ func toolReceiptLine(name string, args map[string]any) string {
 	switch name {
 	case "bash":
 		return "Ran " + truncate(oneLine(stringArg(args, "command")), 80)
+	case "run":
+		return "Ran " + truncate(oneLine(strings.Join(argvArg(args, "argv"), " ")), 80)
+	case "script":
+		return "Ran script " + truncate(oneLine(stringArg(args, "source")), 60)
 	case "read_file":
 		return "Read " + shortPath(stringArg(args, "path"))
 	case "write_file":

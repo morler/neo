@@ -89,8 +89,19 @@ A script runs other tools, and those calls are shown as rows under the script's 
 · Ran script                                3s
   ├ Read internal/agent/agent.go           <1s
   ├ Read internal/tui/model.go              1s
+  ├ $ go test ./...                          1s
   └ Read internal/tools/tool.go            <1s
 ```
+
+On the code-mode surface `run()` is how a script starts a program, so it reports
+the same start/completion pair as the file tools and renders the same kind of
+row. A command that cannot start is a failed row, while a non-zero exit is data
+the script branched on and settles as a success.
+
+Sub-call IDs are unique across the whole script: `tools.*` and `run()` draw from
+one counter, because a row is found by its ID. Two counters would both produce
+`#1`, and a `run()` result would settle onto a file tool's row — marking a
+successful read as failed when the program failed.
 
 Rows are appended as the calls happen and settled in place: a finished call changes its glyph and elapsed time, never its position or line count.
 

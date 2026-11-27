@@ -219,8 +219,19 @@ func translate(e agent.Event) (AgentEvent, bool) {
 		}
 		return ev, true
 	case agent.EventToolResult:
+		// A sub-call inside a tool is reported as a start and a completion, and
+		// both matter: the start is what the activity line shows while it runs,
+		// and the completion is what tells the reader it stopped. run() is how a
+		// code-mode child does every test, build and git command, so dropping a
+		// successful one left the step frozen on "Subagent · script" for the
+		// whole command. A top-level tool result is still omitted: the
+		// coordinator's own receipt already reports it.
+		sub := e.GroupSize == 0 && e.GroupID != ""
 		if e.IsError {
 			return AgentEvent{Kind: "tool", Body: e.Name + " error: " + e.Text}, true
+		}
+		if sub {
+			return AgentEvent{Kind: "tool", Body: summarize(e.Name, e.Args), CallID: e.ToolUseID, GroupPos: e.GroupPos}, true
 		}
 		return AgentEvent{}, false
 	case agent.EventError, agent.EventMaxTurnsReached:
@@ -239,6 +250,12 @@ func summarize(name string, args map[string]any) string {
 	switch name {
 	case "bash":
 		return "$ " + arg("command")
+	case "run":
+		// run() takes an argv array. Rendering it as a command line is the shape a
+		// reader already knows from bash, without a shell having parsed anything.
+		return "$ " + strings.Join(argvArg(args), " ")
+	case "script":
+		return "script " + firstLine(arg("source"))
 	case "read_file":
 		return "read " + arg("path")
 	case "write_file":
@@ -251,4 +268,31 @@ func summarize(name string, args map[string]any) string {
 		return "glob " + arg("pattern")
 	}
 	return name
+}
+
+// argvArg reads run()'s argv array. It arrives as []string from the host call
+// and as []any when it came through JSON, and either shape has to render: this
+// line is a label, so an unrecognised element is dropped rather than printed as
+// a Go format error.
+func argvArg(args map[string]any) []string {
+	if argv, ok := args["argv"].([]string); ok {
+		return argv
+	}
+	values, _ := args["argv"].([]any)
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if text, ok := value.(string); ok {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+// firstLine keeps a script's activity line to the first line of its source. A
+// multi-line script in the status row would push everything else out.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
 }

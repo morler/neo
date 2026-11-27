@@ -416,3 +416,60 @@ func TestBashHintFollowsTheChildsScriptTool(t *testing.T) {
 		t.Fatalf("hinted child has no script tool: %v", scripted.Names())
 	}
 }
+
+// A code-mode child acts through run(), so a successful program must reach the
+// coordinator's event stream. translate used to drop every successful tool
+// result, which left the workflow step showing "script" for the whole command.
+func TestCodeModeChildReportsRunSubCall(t *testing.T) {
+	dir := t.TempDir()
+	prov := &llmtest.FakeProvider{Responses: []llm.Response{
+		llmtest.ToolUse("call_script", "script", map[string]any{
+			"source": "run(['sh', '-c', 'echo hi'])",
+		}),
+		llmtest.Text("done"),
+	}}
+	runner := &AgentRunner{Provider: prov, DefaultModel: "m", Root: dir, Script: true, CodeMode: true}
+	ch := make(chan AgentEvent, 64)
+	done := make(chan struct{})
+	var events []AgentEvent
+	go func() {
+		defer close(done)
+		for ev := range ch {
+			events = append(events, ev)
+		}
+	}()
+	if _, err := runner.RunAgentWithOptions(context.Background(), dir, "go", ch, RunOptions{Tools: []string{"script"}}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	close(ch)
+	<-done
+
+	var labelled, total int
+	for _, ev := range events {
+		if ev.Kind != "tool" || ev.CallID != "call_script#1" {
+			continue
+		}
+		total++
+		if strings.HasPrefix(ev.Body, "$ sh") {
+			labelled++
+		}
+	}
+	if labelled == 0 {
+		t.Fatalf("the run() sub-call never reached the stream: %+v", events)
+	}
+	if total < 2 {
+		t.Fatalf("run() reported %d events, want a start and a completion: %+v", total, events)
+	}
+}
+
+// translate must keep summarising what the child is doing for the tool names
+// code mode actually uses. Before this, the activity line said only "script".
+func TestSummarizeNamesCodeModeActions(t *testing.T) {
+	if got := summarize("script", map[string]any{"source": "const a = 1;\nconst b = 2;"}); got != "script const a = 1;" {
+		t.Fatalf("script summary = %q", got)
+	}
+	got := summarize("run", map[string]any{"argv": []any{"go", "test", "./..."}})
+	if got != "$ go test ./..." {
+		t.Fatalf("run summary = %q", got)
+	}
+}

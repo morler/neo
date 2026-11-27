@@ -1,12 +1,13 @@
 ---
 id: 125
 title: Make run() visible in the workflow while a script runs
-status: open
+status: closed
 priority: high
 labels:
     - bug
 created: "2026-11-27"
 updated: "2026-11-27"
+closed: "2026-11-27"
 ---
 
 ## 问题

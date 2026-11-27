@@ -34,6 +34,12 @@ is read-only by construction and a script reaches `write_file` through the same
 globals. A child's script shares the file tools a later edit consults, so a read
 inside a script counts as the child having seen the file.
 
+Both sides of a script are observable. Every file-tool call and every `run()` call
+reports a start before it executes and a completion after, keyed by
+`<parent>#<n>` with one counter per script, so the coordinator's receipt rows and
+a delegated child's workflow detail both show what is running rather than only
+that the script was called.
+
 ## Goal ownership
 
 The `goal` tool is always registered in interactive chat, even in a session with

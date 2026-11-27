@@ -1,12 +1,13 @@
 ---
 id: 126
 title: Stop code-mode script from reusing sub-call IDs across run() and tools.*
-status: open
+status: closed
 priority: medium
 labels:
     - bug
 created: "2026-11-27"
 updated: "2026-11-27"
+closed: "2026-11-27"
 ---
 
 ## 问题

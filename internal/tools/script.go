@@ -268,10 +268,12 @@ func trimToBytes(s string, limit int) string {
 }
 
 // globals builds the tool namespace. Every entry is an explicit edit here.
-func (s Script) globals(ctx context.Context) map[string]any {
-	// The counter numbers sub-calls within this one script execution, so the
-	// agent can tell two read_file calls apart even when the arguments match.
-	calls := &subCallCounter{}
+//
+// The caller passes the counter, because tools.* and run() must number their
+// sub-calls from one shared sequence. Two counters would both start at #1, and
+// the UI keys its rows by that ID: a run() result would then settle onto a
+// read_file row and could mark a successful read as failed.
+func (s Script) globals(ctx context.Context, calls *subCallCounter) map[string]any {
 	globals := map[string]any{
 		"read_file":  s.hostTool(ctx, s.Read, calls, hostCall{required: "path", path: "path"}),
 		"grep":       s.hostTool(ctx, s.Grep, calls, hostCall{required: "pattern"}),
@@ -307,9 +309,12 @@ func (s Script) consoleGlobals(console *consoleLog) map[string]any {
 // codeModeExtras are the globals a code-mode session has beyond the tools. The
 // console is not here: it belongs to every script, so splitting it out is what
 // keeps the two modes from drifting.
-func (s Script) codeModeExtras(ctx context.Context) map[string]any {
-	globals := s.globals(ctx)
-	return map[string]any{"run": globals["run"]}
+//
+// It reuses the counter globals was built with. Rebuilding the namespace here
+// gave run() a second counter, which is exactly the ID collision the counter is
+// supposed to prevent.
+func (s Script) codeModeExtras(ctx context.Context, calls *subCallCounter) map[string]any {
+	return map[string]any{"run": s.runTool(ctx, calls)}
 }
 
 // subCallCounter numbers the calls one script makes. It is not shared and not
@@ -603,7 +608,10 @@ Assign to globalThis (globalThis.cwd = ...) for state a later call needs; each c
 // bindGlobals installs this call's namespace. The console is bound in both
 // modes; run() only in code mode, because the classic surface has bash.
 func (s Script) bindGlobals(rt *moejs.Runtime, ctx context.Context, console *consoleLog) error {
-	if err := rt.SetGlobal("tools", s.globals(ctx)); err != nil {
+	// One counter for the whole call. tools.* and run() share it so their
+	// sub-call IDs are unique together, not within each namespace.
+	calls := &subCallCounter{}
+	if err := rt.SetGlobal("tools", s.globals(ctx, calls)); err != nil {
 		return err
 	}
 	for name, value := range s.consoleGlobals(console) {
@@ -614,7 +622,7 @@ func (s Script) bindGlobals(rt *moejs.Runtime, ctx context.Context, console *con
 	if !s.CodeMode {
 		return nil
 	}
-	for name, value := range s.codeModeExtras(ctx) {
+	for name, value := range s.codeModeExtras(ctx, calls) {
 		if err := rt.SetGlobal(name, value); err != nil {
 			return err
 		}

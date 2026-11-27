@@ -36,6 +36,21 @@ All notable changes to Neo will be documented in this file.
 
 ### Fixed
 
+- A script's `run()` calls are now visible while they happen. The host function
+  reported only on completion and always as finished, so the TUI had no start to
+  append a row against, and `translate` dropped the completion of any successful
+  sub-call before it reached the coordinator. On the code-mode surface `run()` is
+  how every test, build and git command happens, so a delegated turn sat on
+  `Subagent · script` for the whole command. Both sides now see a start and a
+  completion, and the activity line names the command (`$ go test ./...`) and the
+  script's first line instead of the bare tool name.
+
+- Sub-call IDs no longer collide between `tools.*` and `run()` in code mode.
+  `globals` built a fresh counter for the tool namespace and `codeModeExtras`
+  built a second one for `run`, so both started at `#1`. The TUI finds a row by
+  that ID, so a failed program settled onto a `read_file` row and marked a
+  successful read as failed. One counter now serves the whole script.
+
 - Building a subagent while a custom provider's catalogue fetch was in flight
   could abort the process with `fatal error: concurrent map read and map write`.
   Discovery writes `Config.discovered` from a background goroutine, and the

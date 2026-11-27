@@ -191,3 +191,39 @@ func TestDirectApprovalHasNoRequester(t *testing.T) {
 		t.Fatalf("card = %q, want no requester for a top-level call", out)
 	}
 }
+
+// run() is how a code-mode script does every test, build and git command, so it
+// has to render a row like the file tools do. It used to report only on
+// completion, which left the TUI nothing to append.
+func TestRunSubCallRendersAndSettlesInPlace(t *testing.T) {
+	m := makeTestModel()
+	m.busy = true
+	m.handleEvent(scriptCall("call_script"))
+	m.handleEvent(scriptSub(agent.EventToolCall, "call_script#1", "call_script", "run",
+		map[string]any{"argv": []any{"go", "test", "./..."}}, "", false))
+
+	if len(m.blocks) != 1 {
+		t.Fatalf("blocks = %d, want one row for the running command", len(m.blocks))
+	}
+	row, ok := m.blocks[0].(subCallBlock)
+	if !ok {
+		t.Fatalf("block 0 = %T, want a sub-call row", m.blocks[0])
+	}
+	if got := plain(row.render(100, nil)); !strings.Contains(got, "go test") {
+		t.Fatalf("row = %q, want it to name the command", got)
+	}
+	before := len(m.blocks)
+	m.handleEvent(scriptSub(agent.EventToolResult, "call_script#1", "call_script", "run",
+		map[string]any{"argv": []any{"go", "test", "./..."}}, "exit 0", false))
+
+	if len(m.blocks) != before {
+		t.Fatalf("blocks went from %d to %d; a settle must not append", before, len(m.blocks))
+	}
+	settled, ok := m.blocks[0].(subCallBlock)
+	if !ok || !settled.done {
+		t.Fatalf("row did not settle: %+v", m.blocks[0])
+	}
+	if settled.isError {
+		t.Fatal("a command that succeeded was marked as failed")
+	}
+}
