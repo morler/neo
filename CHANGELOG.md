@@ -44,6 +44,15 @@ All notable changes to Neo will be documented in this file.
   same mistake. The object can only mean the timeout, so it is read. When it holds
   no usable `timeout`, the error now names both accepted spellings.
 
+- `grep` and `glob` no longer report a truncated search as a complete one. One
+  output line longer than 64 KiB made `bufio.Scanner` stop permanently, and
+  `readLines` never checked its error, so every line after the long one was
+  dropped and the survivors were returned as the answer — `no matches` when the
+  long line held the only match. A minified bundle, a lock file, or bundled JSON
+  has exactly that shape. Both tools now fail with `grep: a result line exceeded
+  the 64 KiB limit; narrow the pattern`, and the reader reports the scan error
+  instead of a partial result.
+
 - A script's `run()` calls are now visible while they happen. The host function
   reported only on completion and always as finished, so the TUI had no start to
   append a row against, and `translate` dropped the completion of any successful

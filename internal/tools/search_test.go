@@ -373,6 +373,65 @@ func TestSearch_IncludesHiddenFilesButNotGitInternals(t *testing.T) {
 	}
 }
 
+// TestGrep_LongResultLineIsAnError covers a silent false negative. ripgrep
+// prints a match whatever its length, but bufio.Scanner stops permanently at
+// MaxOutputBytes, so before the fix everything after an over-long line was
+// dropped and the survivors were reported as a complete result: "no matches"
+// when the long line was the only match. A minified bundle or a lock file
+// produces exactly this shape.
+func TestGrep_LongResultLineIsAnError(t *testing.T) {
+	requireRipgrep(t)
+	root := t.TempDir()
+	long := "needle" + strings.Repeat("x", MaxOutputBytes)
+	body := "needle before\n" + long + "\nneedle after\n"
+	if err := os.WriteFile(filepath.Join(root, "bundle.min.js"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := Grep{Root: root}.Run(context.Background(), map[string]any{"pattern": "needle"})
+	if err == nil {
+		t.Fatalf("a line over the scanner limit must be an error, not a partial result:\n%.200s", out)
+	}
+	for _, want := range []string{"grep:", "limit", "narrow the pattern"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// TestReadLines_ReportsATooLongLine pins the reader on its own, so the branch
+// is covered on a machine without ripgrep too.
+func TestReadLines_ReportsATooLongLine(t *testing.T) {
+	input := "short line before\n" + strings.Repeat("x", MaxOutputBytes+1) + "\nshort line after\n"
+	_, _, err := readLines(strings.NewReader(input), defaultSearchMax)
+	if err == nil {
+		t.Fatal("a line longer than the buffer must be an error")
+	}
+	if !strings.Contains(err.Error(), "64 KiB") {
+		t.Fatalf("error does not name the limit: %v", err)
+	}
+
+	// A long line past the requested limit is not an error: those lines were
+	// going to be discarded, and the caller already has what it asked for.
+	input = "first\n" + strings.Repeat("x", MaxOutputBytes+1) + "\n"
+	lines, total, err := readLines(strings.NewReader(input), 1)
+	if err != nil {
+		t.Fatalf("a long line beyond the limit must not fail the read: %v", err)
+	}
+	if total != 1 || len(lines) != 1 {
+		t.Fatalf("readLines = %d lines of %d seen, want 1 of 1", len(lines), total)
+	}
+
+	// Ordinary input still reads cleanly and reports its lines.
+	lines, total, err = readLines(strings.NewReader("a\nb\nc\n"), 2)
+	if err != nil {
+		t.Fatalf("ordinary input reported an error: %v", err)
+	}
+	if total != 3 || len(lines) != 2 {
+		t.Fatalf("readLines = %d lines of %d seen, want 2 of 3", len(lines), total)
+	}
+}
+
 // A huge result set must not be buffered in full before the limit applies.
 func TestGrep_DoesNotBufferBeyondTheLimit(t *testing.T) {
 	requireRipgrep(t)

@@ -167,7 +167,10 @@ func runSearch(ctx context.Context, root string, args []string, maxMatches int, 
 	if maxMatches <= 0 {
 		maxMatches = defaultSearchMax
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	// parent outlives the derived context below, so a read that failed because
+	// the search was cancelled can still tell a cancellation from a real error.
+	parent := ctx
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, SearchBinary, args...)
@@ -185,18 +188,32 @@ func runSearch(ctx context.Context, root string, args []string, maxMatches int, 
 		return "", err
 	}
 
-	lines, total := readLines(stdout, maxMatches)
+	lines, total, readErr := readLines(stdout, maxMatches)
+	if readErr != nil || total > maxMatches {
+		// Stop ripgrep rather than draining output we have already decided to
+		// discard. This also matters when the reader gave up: with nobody
+		// reading, a still-running rg blocks on a full pipe and Wait would never
+		// return. The wait below then reports a signal, which is expected.
+		cancel()
+	}
+	waitErr := cmd.Wait()
+
+	// A read failure is reported as itself, not as a short result: the lines
+	// after the one that stopped the scan were never seen, so whatever came back
+	// is not the answer to the caller's question.
+	if readErr != nil {
+		// A cancelled search is reported as the cancellation, not as whatever
+		// the pipe said while the process was being killed.
+		if ctxErr := parent.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
+		return "", fmt.Errorf("%s: %w", shape.toolName(), readErr)
+	}
 	if absolute && root != "" {
 		for i, line := range lines {
 			lines[i] = rebaseSearchPath(line, root, shape)
 		}
 	}
-	if total > maxMatches {
-		// Stop ripgrep rather than draining output we have already decided to
-		// discard. The wait below then reports a signal, which is expected.
-		cancel()
-	}
-	waitErr := cmd.Wait()
 
 	if total <= maxMatches {
 		if err := searchExitError(ctx, waitErr, stderr.String()); err != nil {
@@ -214,8 +231,16 @@ func runSearch(ctx context.Context, root string, args []string, maxMatches int, 
 }
 
 // readLines reads up to limit lines, plus one more to detect that there were
-// others. It returns the kept lines and how many were seen.
-func readLines(r io.Reader, limit int) ([]string, int) {
+// others. It returns the kept lines, how many were seen, and the error that
+// stopped the scan.
+//
+// The error is not decoration. A bufio.Scanner stops permanently at its maximum
+// token size, so one output line longer than MaxOutputBytes would end the scan
+// mid-stream and drop every line after it — minified JavaScript, bundled JSON
+// and lock files all produce such lines. Without this check the caller would
+// report the surviving lines as a complete result, and a pattern whose only
+// match was the long line or a later one would come back as "no matches".
+func readLines(r io.Reader, limit int) ([]string, int, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), MaxOutputBytes)
 	var lines []string
@@ -227,7 +252,24 @@ func readLines(r io.Reader, limit int) ([]string, int) {
 		}
 		lines = append(lines, scanner.Text())
 	}
-	return lines, total
+	// A scan error only matters when it stopped the reader short of the caller's
+	// limit. Once limit lines are in hand the rest of the stream was going to be
+	// discarded anyway, so a long line after that point must not turn a complete
+	// answer into a failure.
+	if len(lines) >= limit {
+		return lines, total, nil
+	}
+	if err := scanner.Err(); err != nil {
+		// A token too long is our own limit, not a broken stream, so name it and
+		// say what to change. "bufio.Scanner: token too long" tells the model
+		// nothing it can act on.
+		if errors.Is(err, bufio.ErrTooLong) {
+			return lines, total, fmt.Errorf(
+				"a result line exceeded the %d KiB limit; narrow the pattern", MaxOutputBytes/1024)
+		}
+		return lines, total, err
+	}
+	return lines, total, nil
 }
 
 // searchExitError maps ripgrep's exit status. Status 1 means no matches, which
@@ -273,6 +315,16 @@ const (
 	// path is rewritten, so line numbers and match text stay untouched.
 	searchLinesLabelled
 )
+
+// toolName is the tool that produces this shape. Only the two search tools
+// share runSearch, and each output shape belongs to exactly one of them, so an
+// error raised while reading that output can name the tool the model called.
+func (s searchLineShape) toolName() string {
+	if s == searchLinesLabelled {
+		return "grep"
+	}
+	return "glob"
+}
 
 // rebaseSearchPath makes one search result path absolute. The shape decides
 // where the path ends: for paths the whole line is the path, for labelled

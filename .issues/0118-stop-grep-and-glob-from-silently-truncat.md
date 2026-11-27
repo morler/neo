@@ -1,13 +1,14 @@
 ---
 id: 118
 title: Stop grep and glob from silently truncating when one result line exceeds 64 KiB
-status: open
+status: closed
 priority: high
 labels:
     - bug
     - tools
 created: "2026-11-26"
-updated: "2026-11-26"
+updated: "2026-11-27"
+closed: "2026-11-27"
 ---
 
 `readLines` in `internal/tools/search.go` never checks `scanner.Err()`. When ripgrep emits a single line longer than the scanner's buffer cap, `bufio.Scanner` stops permanently and every line after it is dropped — and the tool reports success.
