@@ -10,7 +10,7 @@ Neo exposes a small built-in tool surface to the model.
 | `glob` | Chat and headless | List workspace files matching a glob pattern, honouring `.gitignore`. Supports `**` for recursive matches. Returns one path per line. |
 | `goal` | Interactive chat | Read or finish the session's standing goal. `action: "get"` reports the goal id, objective, status, attempt budget, and stopping rules; `complete` and `blocked` need that goal id plus a reason. The tool cannot pause, resume, clear, or change the budget. |
 | `grep` | Chat and headless | Search the workspace with a regular expression, honouring `.gitignore`. Returns matching lines as `path:line:text`. |
-| `read_file` | Chat and headless | Read a file from disk, prefixing each line with its 1-indexed number and a tab so the numbers match what `grep` reports. Returns up to `tools.MaxOutputBytes` (64 KiB); use `offset` and `limit` to page through larger files. Pass `raw: true` to omit the gutter and get the file's own text, which is what `edit_file` matches, so a script can read and edit in one call without stripping line numbers by hand. |
+| `read_file` | Chat and headless | Read a file from disk, prefixing each line with its 1-indexed number and a tab so the numbers match what `grep` reports. Returns up to `tools.MaxOutputBytes` (64 KiB); use `offset` and `limit` to page through larger files. A larger window returns its first page plus a `retry with offset=N, limit=M` marker naming the line that did not fit. Pass `raw: true` to omit the gutter and get the file's own text, which is what `edit_file` matches, so a script can read and edit in one call without stripping line numbers by hand. |
 | `script` | Default surface | Run JavaScript that can call a whitelisted tool set, returning its last expression's value. On the code-mode surface (the default) it is how every file and command action happens: globals include `run(argv, timeoutSeconds)` for programs, `console`/`print`, and one interpreter kept for the session so `globalThis.x = …` survives between calls, while local declarations stay per call. `run` returns `{stdout, stderr, code}` and a non-zero code is data, not an error. On the classic surface it is the opt-in batch tool with only the file globals. Either way the whitelist is `read_file`, `grep`, `glob`, `write_file`, `edit_file`; `bash` is never included and there is no `import`. A bare string argument binds to the tool's one required field, so `glob(\"*\")` works as well as `glob({pattern: \"*\"})`. Each scripted call passes the same approval matcher a top-level call would. |
 | `workflow` | Interactive chat | Create or update the visible workflow checklist. Neo attaches the coordinator's tool activity, and the activity of any child whose parent `agent` call is still running, to the active item automatically. A child that finishes or fails replaces that detail with `Subagent finished` or `Subagent failed`. |
 | `write_file` | Chat and headless | Write content to a file, creating parent directories. Overwrites the file if it exists. |
@@ -111,7 +111,7 @@ event loop or the headless loop. Tools therefore do not each write their own
 `tools.MaxOutputBytes` (64 KiB, roughly 16k tokens) is the single limit on what
 one tool call contributes to the transcript. `bash` truncates its own output
 head-and-tail at that size so a failing command's trailing error survives;
-`read_file` refuses above it and asks the model to page; the agent applies the
+`read_file` returns the first page that fits and names where to resume, refusing only when no complete line fits; the agent applies the
 same cap as a backstop for any tool that does not bound itself. A single line
 longer than the limit cannot be read by `read_file`, since pagination cuts on
 line boundaries; use `bash` for that.
@@ -284,12 +284,17 @@ Every tool result is bounded by `MaxOutputBytes` (64 KiB, roughly 16k tokens).
 Two tools say what to do when a result hits the cap, and the wording matters
 because a model will copy it:
 
-- `read_file` fails with `read_file: selection exceeds the byte cap; retry with
-  offset=N, limit=M`. `N` is the first line that did not fit, so the retry
-  resumes rather than restarting; `M` is the caller's own limit when it set one,
-  or half the number of lines that overflowed. The advice is derived from the
-  real truncation point, not from a second byte budget, so a suggested call is
-  known to fit.
+- `read_file`, reading with the line-number gutter, returns the page that fit
+  and appends `[read_file: first page only; retry with offset=N, limit=M]`. The
+  page holds only complete lines, so the buffered evidence is usable immediately
+  and no line is skipped: `N` is the first line that did not fit. `M` is the
+  caller's own limit when it set one, or half the number of lines that overflowed,
+  so a suggested call is known to fit. The marker is charged to the same 64 KiB
+  budget as the page. When not even one complete line fits — a single line longer
+  than the cap — the call fails instead, with `read_file: selection exceeds the
+  byte cap; retry with offset=N, limit=M`; retrying at that offset cannot help,
+  so `bash` is the way to read such a line. `raw: true` keeps the failing form
+  unchanged, because a partial raw page would break the `edit_file` match.
 - `bash` keeps its head-and-tail marker (`omitted N bytes; showing first A and
   last B bytes`) and adds what to change in the command: `| tail -n 200` or
   `| grep pattern`. It cannot suggest a different call because the output is

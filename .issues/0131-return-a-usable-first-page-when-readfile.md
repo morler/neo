@@ -1,13 +1,14 @@
 ---
 id: 131
 title: Return a usable first page when read_file exceeds the byte cap
-status: open
+status: closed
 priority: high
 labels:
     - bug
     - tools
 created: "2026-11-27"
 updated: "2026-11-27"
+closed: "2026-11-27"
 ---
 
 ## 背景

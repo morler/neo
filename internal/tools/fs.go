@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/owainlewis/neo/internal/atomicfile"
 	"github.com/owainlewis/neo/internal/llm"
@@ -120,13 +121,26 @@ func (r ReadFile) Run(ctx context.Context, input map[string]any) (string, error)
 	if err != nil {
 		return "", err
 	}
-	out, err := readFileWindow(ctx, path, optInt(input, "offset"), optInt(input, "limit"), optBool(input, "raw"))
+	raw := optBool(input, "raw")
+	// The continuation marker is charged to the same byte budget as the page.
+	// Reserve its widest plausible shape while scanning, then append the exact
+	// marker once the first line that did not fit is known.
+	reserve := ""
+	if !raw {
+		reserve = firstPageMarker(MaxReadBytes, MaxReadBytes)
+	}
+	out, nextOffset, nextLimit, err := readFileWindow(ctx, path, optInt(input, "offset"), optInt(input, "limit"), raw, reserve)
 	if err != nil {
 		return "", err
 	}
 	// A partial read still counts: the stamp records that the agent looked at
 	// this file, not that it saw all of it.
 	r.State.record(path)
+	if nextOffset > 0 {
+		// The marker supplies its own leading newline, so a page that ends
+		// right after a line break does not need to keep it.
+		out = strings.TrimSuffix(out, "\n") + firstPageMarker(nextOffset, nextLimit)
+	}
 	return out, nil
 }
 
@@ -139,16 +153,17 @@ func lineNumberPrefix(line int) string {
 
 // readFileWindow returns the requested line window. raw omits the line-number
 // gutter, which is what edit_file matches: a script can then pass the result
-// back as old_string without stripping the prefix by hand.
-func readFileWindow(ctx context.Context, path string, offset, limit int, raw bool) (string, error) {
+// back as old_string without stripping the prefix by hand. A non-empty reserve
+// is held back from the byte cap for a continuation marker.
+func readFileWindow(ctx context.Context, path string, offset, limit int, raw bool, markerReserve string) (page string, nextOffset, nextLimit int, err error) {
 	// Check before opening: a cancelled turn should report cancellation rather
 	// than a filesystem error, and opening a FIFO with no writer blocks.
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	defer f.Close()
 
@@ -162,22 +177,42 @@ func readFileWindow(ctx context.Context, path string, offset, limit int, raw boo
 	}
 
 	var out strings.Builder
-	w := &windowScanner{out: &out, startLine: startLine, limit: limit, raw: raw, lineNo: 1}
+	w := &windowScanner{out: &out, startLine: startLine, limit: limit, raw: raw, lineNo: 1, reserve: markerReserve}
 	if err := w.scan(ctx, bufio.NewReader(f)); err != nil {
 		// A cancelled turn still returns what it read, since the caller may
 		// report it; a filesystem failure does not.
 		if w.canceled {
-			return out.String(), err
+			return out.String(), 0, 0, err
 		}
 		if errors.Is(err, errReadSelectionTooLarge) {
-			return "", tooLargeAdvice(startLine, limit, w.lineNo, w.selected)
+			page := out.String()
+			// A line that did not fit may have left a fragment in the builder.
+			// Drop it so the page holds only complete lines: a half line, or a
+			// split UTF-8 sequence, must never be delivered as content.
+			if !w.lastEndedWithNewline {
+				if i := strings.LastIndexByte(page, '\n'); i >= 0 {
+					page = page[:i]
+				} else {
+					page = ""
+				}
+			}
+			// With no complete line to deliver the marker alone cannot help, so
+			// fail instead. raw keeps its original error contract.
+			if raw || page == "" || !utf8.ValidString(page) {
+				return "", 0, 0, tooLargeAdvice(startLine, limit, w.lineNo, w.selected)
+			}
+			// The buffered lines are usable evidence: hand them back with an
+			// inline marker naming the first line that did not fit. A plain
+			// error would discard them and let the model page past content it
+			// never saw.
+			return page, nextPageOffset(startLine, w.lineNo), nextPageLimit(limit, w.selected), nil
 		}
-		return "", err
+		return "", 0, 0, err
 	}
 	if offset > 0 && !w.wroteLine && (!fileEmpty || offset != 1) {
-		return "", fmt.Errorf("read_file: offset %d is past end of file", offset)
+		return "", 0, 0, fmt.Errorf("read_file: offset %d is past end of file", offset)
 	}
-	return out.String(), nil
+	return out.String(), 0, 0, nil
 }
 
 // windowScanner tracks the line window one read_file call asked for while the
@@ -189,6 +224,9 @@ type windowScanner struct {
 	// raw omits the line-number gutter, so the output matches the file's own
 	// text and can be fed straight to edit_file.
 	raw bool
+
+	// reserve is held back from the byte cap for an inline continuation marker.
+	reserve string
 
 	lineNo   int
 	selected int
@@ -247,13 +285,13 @@ func (w *windowScanner) consume(part []byte, endsLine bool) error {
 				return err
 			}
 			if !w.raw {
-				if err := appendReadFileChunk(w.out, lineNumberPrefix(w.lineNo)); err != nil {
+				if err := appendReadFileChunk(w.out, lineNumberPrefix(w.lineNo), w.reserve); err != nil {
 					return err
 				}
 			}
 			w.inSelected = true
 		}
-		if err := appendReadFileChunk(w.out, string(part)); err != nil {
+		if err := appendReadFileChunk(w.out, string(part), w.reserve); err != nil {
 			return err
 		}
 	}
@@ -274,11 +312,11 @@ func (w *windowScanner) breakLine() error {
 		w.wroteLine = true
 		return nil
 	}
-	return appendReadFileChunk(w.out, "\n")
+	return appendReadFileChunk(w.out, "\n", w.reserve)
 }
 
-func appendReadFileChunk(out *strings.Builder, chunk string) error {
-	if out.Len()+len(chunk) > MaxReadBytes {
+func appendReadFileChunk(out *strings.Builder, chunk string, reserve string) error {
+	if out.Len()+len(chunk)+len(reserve) > MaxReadBytes {
 		return errReadSelectionTooLarge
 	}
 	_, _ = out.WriteString(chunk)
@@ -291,6 +329,13 @@ func appendReadFileChunk(out *strings.Builder, chunk string) error {
 // "narrow with offset/limit" without saying how.
 var errReadSelectionTooLarge = errors.New("read_file: selection exceeds the byte cap")
 
+// firstPageMarker is appended inside the result so the model can continue
+// reading from the first line that did not fit. It is deliberately terse: the
+// marker is charged against the same byte cap as the page itself.
+func firstPageMarker(offset, limit int) string {
+	return fmt.Sprintf("\n[read_file: first page only; retry with offset=%d, limit=%d]", offset, limit)
+}
+
 // tooLargeAdvice turns a failed window into the next call the model can make:
 // resume at the first line that did not fit. When the call set a limit, that
 // limit is reused unchanged, because it was the caller's own choice and the
@@ -298,14 +343,23 @@ var errReadSelectionTooLarge = errors.New("read_file: selection exceeds the byte
 // lines that overflowed, which fits by construction for lines of similar length
 // and needs no second copy of the byte budget.
 func tooLargeAdvice(startLine, limit, stoppedAt, lines int) error {
-	next := max(stoppedAt, startLine)
+	return fmt.Errorf("%w; retry with offset=%d, limit=%d", errReadSelectionTooLarge,
+		nextPageOffset(startLine, stoppedAt), nextPageLimit(limit, lines))
+}
+
+// nextPageOffset is the first line whose text was not delivered. A line that
+// does not fit on a page has no visible text at all, so it belongs to the next
+// page rather than being skipped.
+func nextPageOffset(startLine, stoppedAt int) int { return max(stoppedAt, startLine) }
+
+// nextPageLimit reuses an explicit caller limit; without one it halves the
+// lines that already overflowed, which leaves headroom for the same average
+// line length and needs no second copy of the byte budget.
+func nextPageLimit(limit, lines int) int {
 	if limit > 0 {
-		return fmt.Errorf("%w; retry with offset=%d, limit=%d", errReadSelectionTooLarge, next, limit)
+		return limit
 	}
-	// Halving the number of lines that already overflowed leaves headroom for
-	// the same average line length without recomputing the byte budget.
-	maxLines := max(lines/2, 1)
-	return fmt.Errorf("%w; retry with offset=%d, limit=%d", errReadSelectionTooLarge, next, maxLines)
+	return max(lines/2, 1)
 }
 
 type WriteFile struct {

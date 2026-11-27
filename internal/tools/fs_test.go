@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestReadFile_Basic(t *testing.T) {
@@ -265,42 +266,235 @@ func TestReadFile_EmptyFileOffsetOne(t *testing.T) {
 	}
 }
 
-func TestReadFile_OversizedNeedsPagination(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "big.bin")
-	big := make([]byte, MaxReadBytes+1024)
-	for i := range big {
-		big[i] = 'x'
+// utf8Lines writes n lines of valid multibyte text, enough to overflow the
+// byte cap, and returns the file path plus the expected gutter-prefixed lines.
+func utf8Lines(t *testing.T, n int) (string, []string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "utf8.txt")
+	var body strings.Builder
+	lines := make([]string, n)
+	for i := 1; i <= n; i++ {
+		text := fmt.Sprintf("line-%05d-%s", i, strings.Repeat("世", 40))
+		body.WriteString(text + "\n")
+		lines[i-1] = lineNumberPrefix(i) + text
 	}
-	if err := os.WriteFile(path, big, 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := ReadFile{}.Run(context.Background(), map[string]any{"path": path})
-	if err == nil {
-		t.Fatal("expected error for oversized read without pagination")
+	return path, lines
+}
+
+// readPage calls read_file and splits the inline continuation marker from the
+// delivered page, if any.
+func readPage(t *testing.T, input map[string]any) (page string, offset, limit int) {
+	t.Helper()
+	out, err := ReadFile{}.Run(context.Background(), input)
+	if err != nil {
+		t.Fatalf("read: %v", err)
 	}
-	if !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("unexpected error: %v", err)
+	if len(out) > MaxReadBytes {
+		t.Fatalf("result = %d bytes, cap = %d", len(out), MaxReadBytes)
+	}
+	return splitMarker(t, out)
+}
+
+// pageLineNumbers extracts gutter-prefixed content lines from a delivered page.
+func pageLineNumbers(t *testing.T, page string) []string {
+	t.Helper()
+	if page == "" {
+		return nil
+	}
+	var lines []string
+	for _, line := range strings.Split(page, "\n") {
+		if line == "" {
+			continue // page ends with a newline
+		}
+		if !strings.Contains(line, "\t") {
+			t.Fatalf("page line has no gutter: %q", line)
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// collectReadPages follows the marker, one page at a time, until the window
+// starts past the last line. A page that stops at the caller's limit carries no
+// marker: limit is the caller's own request, not truncation.
+func collectReadPages(t *testing.T, path string, offset, limit, totalLines int) []string {
+	t.Helper()
+	var got []string
+	for offset <= totalLines {
+		call := map[string]any{"path": path, "offset": offset}
+		if limit > 0 {
+			call["limit"] = limit
+		}
+		out, err := ReadFile{}.Run(context.Background(), call)
+		if err != nil {
+			if strings.Contains(err.Error(), "past end of file") {
+				return got
+			}
+			t.Fatalf("read at offset %d: %v", offset, err)
+		}
+		if len(out) > MaxReadBytes {
+			t.Fatalf("result = %d bytes, cap = %d", len(out), MaxReadBytes)
+		}
+		page, nextOffset, nextLimit := splitMarker(t, out)
+		got = append(got, pageLineNumbers(t, page)...)
+		if nextOffset == 0 {
+			nextOffset = offset + countLines(page)
+		}
+		if nextOffset <= offset {
+			t.Fatalf("paging from %d did not advance", offset)
+		}
+		offset, limit = nextOffset, nextLimit
+	}
+	return got
+}
+
+// splitMarker separates an inline continuation marker from the delivered page.
+func splitMarker(t *testing.T, out string) (page string, offset, limit int) {
+	t.Helper()
+	match := readAdvice.FindStringSubmatch(out)
+	if match == nil {
+		return out, 0, 0
+	}
+	offset, err := strconv.Atoi(match[1])
+	if err != nil {
+		t.Fatalf("bad marker offset %q: %v", match[1], err)
+	}
+	limit, err = strconv.Atoi(match[2])
+	if err != nil {
+		t.Fatalf("bad marker limit %q: %v", match[2], err)
+	}
+	return strings.TrimSuffix(out, firstPageMarker(offset, limit)), offset, limit
+}
+
+func countLines(page string) int {
+	if page == "" {
+		return 0
+	}
+	return strings.Count(page, "\n") + 1
+}
+
+func TestReadFile_OversizedNeedsPagination(t *testing.T) {
+	path, lines := utf8Lines(t, 5_000)
+
+	page, offset, _ := readPage(t, map[string]any{"path": path})
+	if offset <= 1 {
+		t.Fatalf("first page offset = %d, want the line after what fit", offset)
+	}
+	got := append(pageLineNumbers(t, page), collectReadPages(t, path, offset, 0, len(lines))...)
+	if len(got) != len(lines) {
+		t.Fatalf("paged read produced %d lines, want %d", len(got), len(lines))
+	}
+	for i := range lines {
+		if got[i] != lines[i] {
+			t.Fatalf("line %d = %q, want %q", i+1, got[i], lines[i])
+		}
+	}
+}
+
+func TestReadFile_OverLimitWithExplicitLimitKeepsIt(t *testing.T) {
+	path, _ := utf8Lines(t, 5_000)
+
+	_, _, limit := readPage(t, map[string]any{"path": path, "limit": 3_000})
+	if limit != 3_000 {
+		t.Fatalf("marker limit = %d, want the caller's 3000", limit)
+	}
+}
+
+func TestReadFile_OverLimitWithOffsetKeepsLineNumbers(t *testing.T) {
+	path, lines := utf8Lines(t, 5_000)
+
+	page, offset, _ := readPage(t, map[string]any{"path": path, "offset": 2_000})
+	if offset <= 2_000 {
+		t.Fatalf("continuation offset = %d, want after 2000", offset)
+	}
+	got := append(pageLineNumbers(t, page), collectReadPages(t, path, offset, 0, len(lines))...)
+	if len(got) != len(lines)-1_999 {
+		t.Fatalf("paged read produced %d lines, want %d", len(got), len(lines)-1_999)
+	}
+	for i, want := range lines[1_999:] {
+		if got[i] != want {
+			t.Fatalf("line %d = %q, want %q", i+2_000, got[i], want)
+		}
 	}
 }
 
 func TestReadFile_PaginatedSelectionExceedsCap(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "long-line.txt")
-	if err := os.WriteFile(path, []byte(strings.Repeat("x", MaxReadBytes+1)), 0o644); err != nil {
+	// A valid multibyte line that is too large for the cap must fail with a
+	// distinguishable error, never a half line or split UTF-8 as content.
+	body := strings.Repeat("世", MaxReadBytes/3+1)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := ReadFile{}.Run(context.Background(), map[string]any{
+	out, err := ReadFile{}.Run(context.Background(), map[string]any{
 		"path":   path,
 		"offset": 1,
 		"limit":  1,
 	})
 	if err == nil {
-		t.Fatal("expected error for oversized paginated selection")
+		t.Fatalf("expected error for oversized paginated selection, got %d bytes", len(out))
 	}
 	if !strings.Contains(err.Error(), "selection exceeds") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "retry with offset=1, limit=1") {
+		t.Fatalf("error does not give a usable next call: %v", err)
+	}
+	if out != "" {
+		t.Fatalf("a failed page returned content: %q", out)
+	}
+}
+
+// TestReadFile_FirstPageSurvivesAnOversizedLaterLine pins the page contract
+// when one line cannot fit at all: the complete lines before it are still
+// delivered, and the marker resumes on the oversized line rather than past it.
+func TestReadFile_FirstPageSurvivesAnOversizedLaterLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mixed.txt")
+	body := "short first line\nshort second line\n" + strings.Repeat("世", MaxReadBytes/3+1) + "\ntail\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	page, offset, _ := readPage(t, map[string]any{"path": path})
+	want := "     1\tshort first line\n     2\tshort second line"
+	if page != want {
+		t.Fatalf("first page = %q, want %q", page, want)
+	}
+	if offset != 3 {
+		t.Fatalf("continuation offset = %d, want 3 (the line that did not fit)", offset)
+	}
+	if !utf8.ValidString(page) {
+		t.Fatal("first page is not valid UTF-8")
+	}
+
+	// The marker stands on its own line after the last delivered line, so a
+	// reader sees where the page ended rather than a blank or glued-on row.
+	full, err := ReadFile{}.Run(context.Background(), map[string]any{"path": path})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.HasPrefix(full, want+"\n[read_file: first page only;") {
+		t.Fatalf("page/marker boundary changed: %q", full[max(0, len(full)-160):])
+	}
+}
+
+func TestReadFile_RawOverLimitStillErrors(t *testing.T) {
+	path, _ := utf8Lines(t, 5_000)
+
+	out, err := ReadFile{}.Run(context.Background(), map[string]any{"path": path, "raw": true})
+	if err == nil {
+		t.Fatal("raw read over cap should still fail")
+	}
+	if out != "" {
+		t.Fatalf("raw failure returned partial content: %q", out)
+	}
+	if !strings.Contains(err.Error(), "selection exceeds") || !strings.Contains(err.Error(), "retry with offset=") {
+		t.Fatalf("raw error contract changed: %v", err)
 	}
 }
 

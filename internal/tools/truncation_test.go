@@ -30,18 +30,19 @@ func writeLongLines(t *testing.T, n int) string {
 }
 
 // TestReadFile_OverLimitSuggestsTheNextCall is the end-to-end check for the
-// advice: parse the suggested offset/limit and use them to read the content that
-// did not fit. A string assertion alone would pass on advice that does not work.
+// inline marker: parse the suggested offset/limit from the returned page and
+// read the content that did not fit. Asserting only the text would pass on a
+// marker whose offset does not work.
 func TestReadFile_OverLimitSuggestsTheNextCall(t *testing.T) {
 	path := writeLongLines(t, 5_000)
 
-	_, err := ReadFile{}.Run(context.Background(), map[string]any{"path": path})
-	if err == nil {
-		t.Fatal("a full read of a file this size should exceed the cap")
+	page, err := ReadFile{}.Run(context.Background(), map[string]any{"path": path})
+	if err != nil {
+		t.Fatalf("read: %v", err)
 	}
-	match := readAdvice.FindStringSubmatch(err.Error())
+	match := readAdvice.FindStringSubmatch(page)
 	if match == nil {
-		t.Fatalf("error does not suggest a concrete next call: %v", err)
+		t.Fatalf("page has no continuation marker: %v", err)
 	}
 	offset, convErr := strconv.Atoi(match[1])
 	if convErr != nil {
@@ -69,33 +70,9 @@ func TestReadFile_OverLimitSuggestsTheNextCall(t *testing.T) {
 	if out == "" {
 		t.Fatal("the suggested call returned nothing")
 	}
-	// The suggestion must resume where the failed read stopped, not restart or
-	// skip past content.
 	wantPrefix := fmt.Sprintf(" %5d\tline-%05d-", offset, offset)
 	if !strings.HasPrefix(out, wantPrefix) {
 		t.Fatalf("retry starts with %q, want %q", strings.SplitN(out, "\n", 2)[0], wantPrefix)
-	}
-}
-
-// TestReadFile_OverLimitWithExplicitLimitKeepsIt checks the advice reuses a
-// caller-supplied limit: the lines after the cut are still unread, so shrinking
-// it would silently drop content.
-func TestReadFile_OverLimitWithExplicitLimitKeepsIt(t *testing.T) {
-	path := writeLongLines(t, 5_000)
-
-	_, err := ReadFile{}.Run(context.Background(), map[string]any{
-		"path":  path,
-		"limit": 3_000,
-	})
-	if err == nil {
-		t.Fatal("3,000 long lines should exceed the cap")
-	}
-	match := readAdvice.FindStringSubmatch(err.Error())
-	if match == nil {
-		t.Fatalf("error does not suggest a concrete next call: %v", err)
-	}
-	if got := match[2]; got != "3000" {
-		t.Fatalf("suggested limit = %s, want the caller's 3000", got)
 	}
 }
 
