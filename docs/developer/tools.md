@@ -104,6 +104,14 @@ raise it for a cold build or a full test suite — up to `tools.MaxBashTimeout`
 (10 minutes), or the host default if that is longer, so asking for more time
 never yields less than saying nothing.
 
+`run()` on the code-mode surface takes its timeout the same way and with the
+same limits. Its second argument is a number of seconds, but the object spelling
+`run(["prog", "arg"], {timeout: 10})` is accepted too: every other global in a
+script takes a named-argument object, so it is the shape a model writes first,
+and it can only mean the timeout. An object without a usable `timeout` is an
+error that names both accepted spellings rather than only reporting the type it
+received, because the convention was the thing the caller got wrong.
+
 A request above the ceiling is clamped rather than rejected, so an over-eager
 number still runs the command instead of wasting a turn. A value that is not a
 positive number is an error, as is one too small to survive the conversion to a
@@ -166,6 +174,16 @@ reported without a total: counting the rest means reading it.
 
 `max_matches` bounds output lines, not matches. With `context_lines` set, the
 context counts toward it.
+
+A single output line longer than `MaxOutputBytes` is an error, not a short
+result. `bufio.Scanner` stops permanently at its buffer cap, so a minified
+bundle, a lock file, or any generated file with one very long line would end
+the scan mid-stream; the lines after it were never read, and reporting the
+survivors would let a match on or after that line come back as `no matches`.
+Both tools therefore fail with `grep: a result line exceeded the 64 KiB limit;
+narrow the pattern` (or the same message naming `glob`). The scan error is
+returned rather than the partial output because a truncated answer to a search
+looks exactly like a complete one.
 
 If `rg` is not on `PATH`, both tools return an error naming the missing
 dependency. It deliberately does not tell the model to use `bash`: the

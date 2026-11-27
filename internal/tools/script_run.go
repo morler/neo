@@ -191,7 +191,19 @@ func runArgs(r *engine.Realm, args []engine.Value) ([]string, time.Duration, err
 		argv = append(argv, text)
 	}
 	if len(args) > 1 {
-		seconds, err := runSeconds(r.ToGo(args[1]))
+		raw := r.ToGo(args[1])
+		// Every other global in a script takes a named-argument object, so the
+		// obvious mistake is run([...], {timeout: 10}) even though run()'s second
+		// argument is a number. The object can only mean the timeout, so it is
+		// read rather than rejected: #130.
+		if options, ok := raw.(map[string]any); ok {
+			named, present := options["timeout"]
+			if !present || named == nil {
+				return nil, timeout, errors.New(runTimeoutShapeHint)
+			}
+			raw = named
+		}
+		seconds, err := runSeconds(raw)
 		if err != nil {
 			return nil, timeout, err
 		}
@@ -199,6 +211,11 @@ func runArgs(r *engine.Realm, args []engine.Value) ([]string, time.Duration, err
 	}
 	return argv, timeout, nil
 }
+
+// runTimeoutShapeHint names both accepted spellings. An error that only says
+// "got map[string]interface {}" leaves the script to guess the convention, and
+// the guess is what cost the calls in the first place.
+const runTimeoutShapeHint = `run's timeout must be a number of seconds: write run(["prog", "arg"], 10) or run(["prog", "arg"], {timeout: 10})`
 
 // runSeconds reads run()'s timeout without demanding one Go type. A script that
 // writes 10 and one that writes 10.5 mean the same thing; rejecting the integer
@@ -219,11 +236,11 @@ func runSeconds(v any) (time.Duration, error) {
 	case string:
 		parsed, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
 		if err != nil {
-			return 0, fmt.Errorf("run's timeout must be a number of seconds, got %q", n)
+			return 0, fmt.Errorf("%s, got %q", runTimeoutShapeHint, n)
 		}
 		seconds = parsed
 	default:
-		return 0, fmt.Errorf("run's timeout must be a number of seconds, got %T", v)
+		return 0, fmt.Errorf("%s, got %T", runTimeoutShapeHint, v)
 	}
 	if math.IsNaN(seconds) || seconds <= 0 {
 		return 0, fmt.Errorf("run's timeout must be a positive number of seconds, got %v", v)

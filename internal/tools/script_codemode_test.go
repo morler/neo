@@ -197,6 +197,43 @@ func TestSoloRunAcceptsEveryNumericTimeout(t *testing.T) {
 	}
 }
 
+// TestSoloRunAcceptsAnOptionsObject covers the shape the model writes first:
+// every other global takes a named-argument object, so run([...], {timeout: 10})
+// was the obvious spelling and each attempt died on
+// "run's timeout must be a number of seconds, got map[string]interface {}".
+// The object has only one meaning here, so it is read instead of rejected (#130).
+func TestSoloRunAcceptsAnOptionsObject(t *testing.T) {
+	s := codeModeScript(t, t.TempDir())
+	out, err := s.Run(context.Background(), map[string]any{
+		"source": `run(["echo", "hi"], {timeout: 5}).code`,
+	})
+	if err != nil {
+		t.Fatalf("an options object was rejected: %v", err)
+	}
+	if out != "0" {
+		t.Fatalf("code = %q, want 0", out)
+	}
+}
+
+// TestSoloRunTeachesTheTimeoutShape pins the other half: when the object has no
+// usable timeout, the error has to name a spelling that works. "got
+// map[string]interface {}" alone leaves the script to guess the convention that
+// it just got wrong.
+func TestSoloRunTeachesTheTimeoutShape(t *testing.T) {
+	s := codeModeScript(t, t.TempDir())
+	_, err := s.Run(context.Background(), map[string]any{
+		"source": `run(["echo", "hi"], {cwd: "."})`,
+	})
+	if err == nil {
+		t.Fatal("an object without a timeout was accepted")
+	}
+	for _, want := range []string{"{timeout: 10}", `run(["prog", "arg"], 10)`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not offer %q", err, want)
+		}
+	}
+}
+
 // TestSoloToolArgumentShapeIsTaught is the other measured failure, after #94
 // changed the answer. tools.glob("*") used to report "missing required input:
 // pattern", which sent the model to the arguments when the call shape was wrong;

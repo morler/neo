@@ -36,6 +36,14 @@ All notable changes to Neo will be documented in this file.
 
 ### Fixed
 
+- `run()` now accepts the object spelling for its timeout. Every other global in
+  a script takes a named-argument object, so `run(["prog", "arg"], {timeout: 10})`
+  was the shape a model wrote first, and each attempt died on `run's timeout must
+  be a number of seconds, got map[string]interface {}` — an error that named the
+  type it received and not the convention it wanted, so the next attempt made the
+  same mistake. The object can only mean the timeout, so it is read. When it holds
+  no usable `timeout`, the error now names both accepted spellings.
+
 - A script's `run()` calls are now visible while they happen. The host function
   reported only on completion and always as finished, so the TUI had no start to
   append a row against, and `translate` dropped the completion of any successful
