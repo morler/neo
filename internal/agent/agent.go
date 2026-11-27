@@ -100,9 +100,13 @@ type Config struct {
 	Approve          func(context.Context, ApprovalRequest) (bool, error)
 	MaxTurns         int
 	MaxParallelTools int
-	OnEvent          func(Event)
-	Messages         []llm.Message
-	Usage            llm.Usage
+	// UnknownToolNote is appended to an unknown-tool error. The loop cannot know
+	// why a tool is missing, but the composition that built the registry can: an
+	// inspect child, for example, has no shell. Empty means no note.
+	UnknownToolNote string
+	OnEvent         func(Event)
+	Messages        []llm.Message
+	Usage           llm.Usage
 }
 
 type Agent struct {
@@ -994,7 +998,7 @@ func (a *Agent) prepareToolWithRepeatGuard(block llm.ContentBlock, guard *repeat
 	call := preparedToolCall{block: block}
 	t, ok := a.tools().Get(block.Name)
 	if !ok {
-		call.lookupErr = fmt.Sprintf("unknown tool: %s", block.Name)
+		call.lookupErr = a.unknownToolError(block.Name)
 		return call
 	}
 	call.tool = t
@@ -1015,6 +1019,23 @@ func (a *Agent) prepareToolWithRepeatGuard(block llm.ContentBlock, guard *repeat
 		a.repeatReminders = append(a.repeatReminders, repeatReminder(block.Name, count))
 	}
 	return call
+}
+
+// unknownToolError names what the session does have. "unknown tool: bash" left
+// the model guessing, and a wrong guess is cheap to retry: a child with no
+// shell spent a whole turn on one. The note is the composition's explanation of
+// the boundary, which the loop cannot infer from a registry.
+func (a *Agent) unknownToolError(name string) string {
+	msg := fmt.Sprintf("unknown tool: %s", name)
+	if names := a.tools().Names(); len(names) > 0 {
+		// The session's own list, not the full built-in set: a filtered registry
+		// is exactly the case where the difference matters.
+		msg += "; this session has: " + strings.Join(names, ", ")
+	}
+	if note := strings.TrimSpace(a.cfg.UnknownToolNote); note != "" {
+		msg += "\n" + note
+	}
+	return msg
 }
 
 func (a *Agent) runPreparedTool(ctx context.Context, call preparedToolCall) toolOutcome {

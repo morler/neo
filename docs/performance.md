@@ -65,12 +65,12 @@ exists:
 
 | Component | Bytes | ~Tokens |
 | --- | ---: | ---: |
-| 9 tool definitions (`chatRegistry().Specs()`, JSON) | 5,180 | 1,295 |
+| 9 tool definitions (`chatRegistry().Specs()`, JSON) | 5,197 | 1,299 |
 | System prompt with the built-in skill catalog | 3,062 | 765 |
-| **Fixed floor** | **8,242** | **~2,060** |
+| **Fixed floor** | **8,259** | **~2,065** |
 
 These are the default surface, which has no script tool. Turning the tool on
-adds 949 bytes of schema and 763 bytes of prompt, for a floor of 9,954; that is
+adds 949 bytes of schema and 763 bytes of prompt, for a floor of 9,971; that is
 `scriptFloorByteBudget` (10,000), checked separately by `TestScriptFloorBudget`.
 The prompt section grew when it was rewritten around task shapes with a worked
 example, which is what an opt-in tool has to do to be chosen at all. It grew
@@ -79,7 +79,14 @@ dependency (`TestScriptCapabilityNamesDependencyNotVolume`); that is the same
 section restated, not a new feature.
 
 `read_file` gained a `raw: true` option on 2026-11-26 (#110): the description
-grew by 158 bytes of schema, which is what moved the fixed floor to 8,242. The
+grew by 158 bytes of schema, which is what moved the fixed floor to 8,242.
+
+The `agent` tool's `mode` description gained 17 bytes on 2026-11-27 (#127) so the
+coordinator can see that `inspect` has no shell; that is what moved the fixed
+floor to 8,259 and the scripted floor to 9,971. The wording went into the schema
+rather than the delegation prompt section: the scripted floor had 46 bytes left
+before the change, and the same sentence in the tool description cost 144,
+which took that floor to 10,098 against its 10,000 budget. The
 option exists so a script can pass a read straight into `edit_file`; the
 alternative considered and rejected was hashing every line, because the stale
 check already covers concurrent writes and a hash protocol would break the

@@ -33,9 +33,9 @@ estimate `compact.EstimateTokens` uses.
 
 | Component | Bytes | ~Tokens |
 | --- | ---: | ---: |
-| 9 tool definitions (chat registry) | 5,180 | 1,295 |
+| 9 tool definitions (chat registry) | 5,197 | 1,299 |
 | System prompt with built-in skill catalog | 3,062 | 765 |
-| **Fixed floor** | **8,242** | **~2,060** |
+| **Fixed floor** | **8,259** | **~2,065** |
 
 The opt-in script tool adds 1,712 bytes when enabled (949 schema, 763 prompt).
 `read_file`'s description accounts for the rise from 5,022 to 5,180: it gained
@@ -45,14 +45,16 @@ Only that arm carries them: 98 schema bytes are a sentence added to `bash`'s
 description (#87) and 143 prompt bytes qualify the batching rule against a
 script being one serial call (#89).
 
-Largest definitions: `agent` 808 B, `goal` 775 B, `grep` 645 B, `workflow`
-536 B. A project `AGENTS.md` adds an uncached tail on top.
+Largest definitions: `agent` 825 B, `goal` 775 B, `grep` 645 B, `workflow`
+536 B. The `agent` description grew by 17 bytes on 2026-11-27 (#127) to say
+that `inspect` children have no shell. A project `AGENTS.md` adds an uncached
+tail on top.
 
 What gates these numbers:
 
 - `cmd/neo/performance_test.go` enforces 1,400 bytes for the core prompt, 3,000
   for the chat prompt, 8,500 for the fixed floor (tool schemas plus chat prompt,
-  measured here as 8,242), and 10,000 for that floor with the script tool on. The same test renders the cacheable prefix
+  measured here as 8,259), and 10,000 for that floor with the script tool on. The same test renders the cacheable prefix
   twice and fails if the bytes differ.
 - `docs/performance.md` records the same three budgets and the token baseline,
   so the doc and the gate cannot drift apart quietly.

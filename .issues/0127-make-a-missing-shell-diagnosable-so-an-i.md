@@ -1,12 +1,13 @@
 ---
 id: 127
 title: Make a missing shell diagnosable so an inspect child does not burn its budget
-status: open
+status: closed
 priority: high
 labels:
     - bug
 created: "2026-11-27"
 updated: "2026-11-27"
+closed: "2026-11-27"
 ---
 
 ## 问题
@@ -51,3 +52,28 @@ output="\n[subagent hit its wall-clock limit]"
 ## Notes
 
 排查"另一个 Neo 进程报告子代理因为缺少 shell 工具权限超时关闭"时发现。结论：超时属实且可复现，但原因不是权限拒绝，而是能力缺失 + 诊断信息缺失。修复方向是让模型和协调者都能一眼看出边界，而不是放宽白名单。
+
+## 修复
+
+代码改动三处，都只在失败路径或 schema 上记账，不改 inspect 的工具白名单。
+
+1. **未知工具的报错列出会话实际持有的工具**（`internal/agent/agent.go`）。新增 `Agent.unknownToolError`：`unknown tool: bash; this session has: glob, grep, read_file`。列表取自运行中的 registry，不是内置全集——过滤后的 registry 正是差异有意义的地方。空 registry 时不追加列表。
+2. **inspect 子代理缺失工具时说明边界**。新增 `Agent.Config.UnknownToolNote`，由构造方填充；`internal/subagent/runner.go` 的 `unknownToolNote(mode)` 只在 inspect 下返回一句「inspect subagents have no shell, so commands, diffs, and git history are unavailable: read files with read_file, grep, and glob, and report what the parent must run itself.」。work 子代理有 shell，缺失工具是组合缺陷，加这句只会误导。模式经 `RunOptions.Mode`（`internal/subagent/subagent.go`）从 supervisor 传入。
+3. **协调者能看见 inspect 无 shell**。`agent` 工具 schema 的 `mode` 描述改为 `work (default, writable, serial, has a shell) or inspect (read-only, parallel-safe, no shell)`。
+
+选择 schema 而非系统提示的原因如实记录：先试过在工具描述里加一整句（+144 B），`TestScriptFloorBudget` 升到 10,098 / 10,000 失败；按验收标准回退成只改 `mode` 描述（+17 B），两个预算都通过。
+
+## 验收对照
+
+- `unknown tool` 列出本会话实际可用工具名：`TestAgent_UnknownToolNamesTheAvailableTools`（并断言不会出现该会话没有的 `read_file`）。
+- inspect 子代理调 `bash` 的错误含可用工具名与无 shell 说明：`TestInspectChildMissingShellIsDiagnosable` 从子代理下一次请求的 `tool_result` 读取，断言包含 `unknown tool: bash`、`read_file`、`grep`、`glob`、`no shell`。
+- 协调者事件流里这条错误仍可见：同一测试断言事件里存在 `bash error: …unknown tool: bash`。
+- 协调者的边界信息：`TestAgentToolSchemaStatesInspectHasNoShell`、`TestUnknownToolNoteFollowsTheMode`、`TestInspectOptionsCarryTheMode`。
+- 固定 prompt 预算核对后落地：`TestFixedPromptFloorBudget` 8,259 / 8,500（原 8,242），`TestScriptFloorBudget` 9,971 / 10,000（原 9,954），`TestCodeModeFloorBudget` 3,421 / 3,500 不变。`docs/performance.md` 与 `docs/design/token-budget.md` 同步更新，含 `agent` schema 825 B。
+- 白名单未动：`TestInspectModeNeverGetsScript`、`TestChildSurfacesDeliverTheToolsTheyAskFor` 仍通过。
+
+## 检查
+
+`go test ./...`、`go vet ./...`、`go test -race ./internal/subagent`（相关用例）、`qlty check`（0 issue）全部通过。
+
+文档：`docs/developer/tools.md` 增补失败路径说明，`docs/parallel-subagents/design.md` 记录边界可见性契约，`docs/performance.md` 与 `docs/design/token-budget.md` 更新实测字节。

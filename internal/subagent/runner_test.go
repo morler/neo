@@ -318,6 +318,60 @@ func TestInspectChildAdvertisesReadToolsUnderCodeMode(t *testing.T) {
 	}
 }
 
+// TestInspectChildMissingShellIsDiagnosable is the end-to-end contract of #127:
+// an inspect child that reaches for a shell gets an error naming the tools it
+// does have and why the one it wanted is absent, and the coordinator still sees
+// that error in the event stream. Before this, the child retried bash until its
+// wall-clock budget ran out and the parent received only a bare timeout.
+func TestInspectChildMissingShellIsDiagnosable(t *testing.T) {
+	dir := t.TempDir()
+	prov := &llmtest.FakeProvider{Responses: []llm.Response{
+		llmtest.ToolUse("call_bash", "bash", map[string]any{"command": "git diff"}),
+		llmtest.Text("no shell here"),
+	}}
+	sup := NewSupervisor(&AgentRunner{Provider: prov, DefaultModel: "model", Root: dir}, DefaultBudget())
+
+	res := sup.RunAgentPrompt(context.Background(), dir, "show me the diff", PromptOptions{Mode: AgentModeInspect})
+	if !res.Ok {
+		t.Fatalf("child failed: %+v", res)
+	}
+
+	// What the model was told, read from the request the child sent next.
+	if len(prov.Calls) < 2 {
+		t.Fatalf("child made %d provider calls, want the tool exchange and a report", len(prov.Calls))
+	}
+	var seen string
+	messages := prov.Calls[1].Messages
+	for _, block := range messages[len(messages)-1].Content {
+		if block.Type == "tool_result" {
+			seen = block.Content
+		}
+	}
+	for _, want := range []string{"unknown tool: bash", "read_file", "grep", "glob", "no shell"} {
+		if !strings.Contains(seen, want) {
+			t.Errorf("tool result = %q, want it to mention %q", seen, want)
+		}
+	}
+
+	// What the coordinator was told: the same failure must stay visible rather
+	// than being flattened into a timeout.
+	var bodies []string
+	for {
+		select {
+		case ev := <-sup.Events:
+			bodies = append(bodies, ev.Ev.Body)
+			continue
+		default:
+		}
+		break
+	}
+	if !slices.ContainsFunc(bodies, func(body string) bool {
+		return strings.Contains(body, "bash error:") && strings.Contains(body, "unknown tool: bash")
+	}) {
+		t.Fatalf("the missing-shell error never reached the stream: %v", bodies)
+	}
+}
+
 func TestEmptyChildRegistryIsAnError(t *testing.T) {
 	r := &AgentRunner{
 		Provider:     &llmtest.FakeProvider{},

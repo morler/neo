@@ -26,6 +26,78 @@ func newTestAgent(t *testing.T, prov llm.Provider, ts ...tools.Tool) *Agent {
 	})
 }
 
+// A missing tool must name what the session does have. "unknown tool: bash"
+// alone sent a model with no shell into retrying variants of the same call.
+func TestAgent_UnknownToolNamesTheAvailableTools(t *testing.T) {
+	prov := &llmtest.FakeProvider{Responses: []llm.Response{
+		llmtest.ToolUse("call_1", "bash", map[string]any{"command": "git diff"}),
+		llmtest.Text("done"),
+	}}
+	ag := New(Config{
+		Model:    "test-model",
+		Provider: prov,
+		Tools:    tools.NewRegistry(fastParallelTool{}),
+	})
+	if _, err := ag.Send(context.Background(), "check the diff"); err != nil {
+		t.Fatal(err)
+	}
+	var result llm.ContentBlock
+	for _, block := range prov.Calls[1].Messages[2].Content {
+		if block.Type == "tool_result" {
+			result = block
+		}
+	}
+	if !result.IsError {
+		t.Fatalf("missing tool did not produce an error result: %#v", result)
+	}
+	if !strings.Contains(result.Content, "unknown tool: bash") {
+		t.Fatalf("error = %q, want it to name the missing tool", result.Content)
+	}
+	// The session's own list, not the built-in set: this registry holds one tool.
+	if !strings.Contains(result.Content, fastParallelTool{}.Name()) {
+		t.Fatalf("error = %q, want it to list the session's tools", result.Content)
+	}
+	if strings.Contains(result.Content, "read_file") {
+		t.Fatalf("error = %q, wants only the tools this session has", result.Content)
+	}
+}
+
+// The note is how composition explains a boundary the loop cannot infer. It
+// belongs on the failure path only, so it costs nothing per turn.
+func TestAgent_UnknownToolCarriesTheCompositionNote(t *testing.T) {
+	prov := &llmtest.FakeProvider{Responses: []llm.Response{
+		llmtest.ToolUse("call_1", "bash", map[string]any{"command": "git diff"}),
+		llmtest.Text("done"),
+	}}
+	ag := New(Config{
+		Model:           "test-model",
+		Provider:        prov,
+		Tools:           tools.NewRegistry(fastParallelTool{}),
+		UnknownToolNote: "inspect subagents have no shell.",
+	})
+	if _, err := ag.Send(context.Background(), "check the diff"); err != nil {
+		t.Fatal(err)
+	}
+	var text string
+	for _, block := range prov.Calls[1].Messages[2].Content {
+		if block.Type == "tool_result" {
+			text = block.Content
+		}
+	}
+	if !strings.Contains(text, "inspect subagents have no shell.") {
+		t.Fatalf("error = %q, want the note", text)
+	}
+}
+
+// A session with no tools at all still says only that the tool is unknown: an
+// empty list is not a fact worth pasting.
+func TestAgent_UnknownToolWithoutToolsOmitsTheList(t *testing.T) {
+	ag := New(Config{})
+	if got := ag.unknownToolError("bash"); got != "unknown tool: bash" {
+		t.Fatalf("error = %q", got)
+	}
+}
+
 func TestAgent_SetBackendPublishesAtomicProviderModelPair(t *testing.T) {
 	ag := New(Config{Provider: namedProvider("a"), Model: "a-model"})
 	const iterations = 2_000

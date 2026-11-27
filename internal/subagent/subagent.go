@@ -20,6 +20,11 @@ import (
 // RunOptions are immutable capabilities for one child run.
 type RunOptions struct {
 	Tools []string
+	// Mode is the mode the supervisor admitted the child under. The runner reads
+	// it only to explain a boundary the tool list cannot state by itself: a
+	// missing tool in an inspect child is a deliberate limit, not a
+	// misconfiguration, and the error should say so.
+	Mode AgentMode
 }
 
 // PromptOptions configure one chat-spawned child and carry parent call

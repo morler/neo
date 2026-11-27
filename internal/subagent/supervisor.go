@@ -136,7 +136,7 @@ func (s *Supervisor) RunAgentPrompt(ctx context.Context, dir, prompt string, opt
 		return fail(fmt.Sprintf("agent: invalid mode %q", mode), "invalid_input")
 	}
 
-	opts := RunOptions{Tools: s.toolsFor(mode)}
+	opts := RunOptions{Tools: s.toolsFor(mode), Mode: mode}
 	id, err := s.admitAndRegister(prompt, call, tools.ConversationGenerationFrom(ctx))
 	if err != nil {
 		return fail(err.Error(), "admission_denied")
@@ -236,7 +236,7 @@ For independent investigations, issue several mode=inspect calls together. Use m
 			"type": "object",
 			"properties": map[string]any{
 				"prompt": map[string]any{"type": "string", "description": "Self-contained prompt for the subagent"},
-				"mode":   map[string]any{"type": "string", "enum": []string{"work", "inspect"}, "description": "work (default, writable and serial) or inspect (read-only and parallel-safe)"},
+				"mode":   map[string]any{"type": "string", "enum": []string{"work", "inspect"}, "description": "work (default, writable, serial, has a shell) or inspect (read-only, parallel-safe, no shell)"},
 			},
 			"required": []string{"prompt"},
 		},

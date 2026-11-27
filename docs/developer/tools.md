@@ -40,6 +40,24 @@ reports a start before it executes and a completion after, keyed by
 a delegated child's workflow detail both show what is running rather than only
 that the script was called.
 
+A call to a tool the session does not hold fails with the names it does hold:
+`unknown tool: bash; this session has: glob, grep, read_file`. The list comes
+from the running registry, not the built-in set, because a filtered registry is
+exactly when the difference matters. An inspect child's error adds one sentence
+saying it has no shell and where the action belongs. `agent.Config.UnknownToolNote`
+carries that sentence, so the text appears only on the failure path and never
+counts toward the fixed prompt floor. Without it a child retried `bash` with new
+arguments until its wall-clock budget expired, and the coordinator saw only a
+timeout (#127).
+
+The `agent` tool's `mode` description names the same boundary before a call is
+made: `work` has a shell, `inspect` does not. Delegating a test run or a diff to
+an inspect child cannot succeed, and the coordinator is the only party that can
+choose otherwise. The sentence is in the schema rather than the delegation prompt
+section because the script floor had 46 bytes of headroom, and the same
+sentence in the tool description cost 144 and pushed that floor to 10,098
+against its 10,000 budget.
+
 ## Goal ownership
 
 The `goal` tool is always registered in interactive chat, even in a session with

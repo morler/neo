@@ -154,6 +154,59 @@ func TestInspectCallsOverlapWithRestrictedTools(t *testing.T) {
 	}
 }
 
+// The coordinator picks a mode before it knows what the child can do. Saying
+// only "read-only" let it delegate a test run or a diff to a child with no
+// shell, which could not finish however long its budget was (#127).
+func TestAgentToolSchemaStatesInspectHasNoShell(t *testing.T) {
+	spec := AgentTool{}.Spec()
+	properties, ok := spec.InputSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema properties = %#v", spec.InputSchema["properties"])
+	}
+	mode, ok := properties["mode"].(map[string]any)
+	if !ok {
+		t.Fatalf("mode schema = %#v", properties["mode"])
+	}
+	description, _ := mode["description"].(string)
+	for _, want := range []string{"inspect", "no shell", "work"} {
+		if !strings.Contains(description, want) {
+			t.Errorf("mode description = %q, want it to mention %q", description, want)
+		}
+	}
+}
+
+// The note reaches only the mode that needs it. A work child has a shell, so a
+// missing tool there is a composition bug rather than a boundary, and saying
+// "no shell" would be false.
+func TestUnknownToolNoteFollowsTheMode(t *testing.T) {
+	if got := unknownToolNote(AgentModeInspect); !strings.Contains(got, "no shell") ||
+		!strings.Contains(got, "read_file") {
+		t.Fatalf("inspect note = %q", got)
+	}
+	if got := unknownToolNote(AgentModeWork); got != "" {
+		t.Fatalf("work note = %q, want none", got)
+	}
+}
+
+// The mode has to survive into the per-run options, because the runner threads
+// it from there into the child's unknown-tool error.
+func TestInspectOptionsCarryTheMode(t *testing.T) {
+	var seen []RunOptions
+	runner := configuredScriptedRunner{run: func(_ context.Context, _, _ string, _ chan<- AgentEvent, opts RunOptions) (string, error) {
+		seen = append(seen, opts)
+		return "done", nil
+	}}
+	sup := NewSupervisor(runner, testBudget())
+	for _, mode := range []AgentMode{AgentModeInspect, AgentModeWork} {
+		if res := sup.RunAgentPrompt(context.Background(), t.TempDir(), "look", PromptOptions{Mode: mode}); !res.Ok {
+			t.Fatalf("%s: %+v", mode, res)
+		}
+	}
+	if len(seen) != 2 || seen[0].Mode != AgentModeInspect || seen[1].Mode != AgentModeWork {
+		t.Fatalf("run options = %+v", seen)
+	}
+}
+
 func TestAgentToolModesFailClosed(t *testing.T) {
 	tool := AgentTool{}
 	inspect := map[string]any{"prompt": "review", "mode": "inspect"}

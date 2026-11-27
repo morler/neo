@@ -123,6 +123,8 @@ Writable parallel workers should be designed later around isolated worktrees or 
 
 Inspection without shell cannot query diffs, staged state, blame, or history. That limitation is accepted for the first release. A narrowly scoped `git_diff` tool is the preferred follow-up if real usage shows that parent-provided context is insufficient. Do not attempt to classify arbitrary shell commands as read-only.
 
+The limit has to be legible to both parties, or it becomes a timeout instead of a boundary. The `agent` tool's `mode` description says `work` has a shell and `inspect` does not. An inspect child that calls a tool it does not hold gets an error naming the tools it does hold plus one sentence that it has no shell and where the action belongs. The wording reaches the child through `agent.Config.UnknownToolNote`, so it costs nothing on the fixed prompt floor, and the supervisor's event stream still reports the failed call to the coordinator.
+
 ## Acceptance Criteria
 
 - Two `mode=inspect` calls emitted together demonstrably overlap.

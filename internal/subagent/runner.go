@@ -13,6 +13,23 @@ import (
 	"github.com/owainlewis/neo/internal/tools"
 )
 
+// inspectUnknownToolNote explains a missing tool an inspect child asked for.
+// The read-only surface is deliberate, so the useful answer is where the
+// action belongs, not a list of retries: a child used to call bash with new
+// arguments until its wall-clock budget ran out, and the coordinator saw only
+// a timeout.
+const inspectUnknownToolNote = "inspect subagents have no shell, so commands, diffs, and git history are unavailable: read files with read_file, grep, and glob, and report what the parent must run itself."
+
+// unknownToolNote is the note a child's missing-tool error carries. Work-mode
+// children have a shell, so a missing tool there is a real bug in composition
+// and the note would only be noise.
+func unknownToolNote(mode AgentMode) string {
+	if mode == AgentModeInspect {
+		return inspectUnknownToolNote
+	}
+	return ""
+}
+
 const dynamicAgentSystemPrompt = `You are a focused subagent spawned by Neo's chat coordinator.
 
 You have no memory of the parent conversation except the prompt you receive. Follow that prompt exactly, use tools as needed, and return a concise report with evidence. Do not commit changes unless explicitly asked.`
@@ -124,6 +141,9 @@ func (r *AgentRunner) RunAgentWithOptions(ctx context.Context, dir, input string
 		Compactor: r.compactor(provider, model),
 		Effort:    effort,
 		MaxTurns:  agent.DefaultMaxTurns,
+		// Only the failure path pays for this text: the fixed prompt floor is
+		// unchanged, and a child that never asks for a missing tool never sees it.
+		UnknownToolNote: unknownToolNote(opts.Mode),
 		OnEvent: func(e agent.Event) {
 			if ev, ok := translate(e); ok {
 				select {
