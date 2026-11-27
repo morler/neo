@@ -129,8 +129,7 @@ func (r *AgentRunner) RunAgentWithOptions(ctx context.Context, dir, input string
 	// returning ok=true for work nothing was done on.
 	registry := r.registryWithOptions(dir, opts)
 	if len(registry.Names()) == 0 {
-		return "", fmt.Errorf("subagent has no tools: the session's surface (%s) does not provide %s; this is a configuration defect, not a task failure",
-			r.surfaceName(), strings.Join(opts.Tools, ", "))
+		return "", fmt.Errorf("%s", emptyRegistryError(opts, r.surfaceName(), r.Script))
 	}
 
 	ag := agent.New(agent.Config{
@@ -187,7 +186,21 @@ func (r *AgentRunner) registryWithOptions(dir string, opts RunOptions) *tools.Re
 		tools.NewFileTools()...)
 
 	var base []tools.Tool
-	if r.CodeMode {
+	if r.CodeMode && !r.Script {
+		// features.script: false means this session does not execute code, and
+		// that decision belongs to the whole session, not to the coordinator
+		// alone: the script tool is the only way a code-mode work child acts, so
+		// keeping it here let a child read, write, and run programs in a session
+		// whose owner had switched code execution off.
+		//
+		// The file tools stay because that is where the two modes part company. A
+		// work child asks for the script tool alone, so it gets nothing and the
+		// run is refused; an inspect child asks for read_file, grep, and glob,
+		// which never depended on code execution and remain its whole read-only
+		// surface. Building nothing here would have taken inspect delegation down
+		// with the setting it has nothing to do with.
+		base = files
+	} else if r.CodeMode {
 		// A child in code mode acts the way the coordinator does. Absolute paths
 		// are what make grep's output usable inside one call, where there is no cd.
 		// The file tools are the same instances each branch already built, so a
@@ -215,10 +228,27 @@ func (r *AgentRunner) registryWithOptions(dir string, opts RunOptions) *tools.Re
 	}
 
 	all := tools.NewRegistry(base...)
-	if len(opts.Tools) == 0 {
+	if opts.Tools == nil {
+		// Nil means the caller wants the whole surface, which is how a test asks
+		// what a branch builds. An empty non-nil list is a child that may call
+		// nothing, and it has to survive to the caller as such.
 		return all
 	}
 	return all.Filter(opts.Tools)
+}
+
+// emptyRegistryError explains a child that asked for tools and got none. The
+// two causes need different fixes, so the message names which one applies: a
+// surface that cannot supply the requested names is a composition bug, while an
+// empty request in code mode with features.script off is the session owner's
+// deliberate setting. Saying "no tools" alone left the coordinator unable to
+// tell a misconfiguration from a policy it must report.
+func emptyRegistryError(opts RunOptions, surface string, script bool) string {
+	if len(opts.Tools) == 0 && !script {
+		return "subagent has no tools: features.script is false, and in code mode the script tool is the only way a child acts, so this session delegates work it cannot perform. Set features.script: true, or use features.codemode: classic so children get bash and the file tools"
+	}
+	return fmt.Sprintf("subagent has no tools: the session's surface (%s) does not provide %s; this is a configuration defect, not a task failure",
+		surface, strings.Join(opts.Tools, ", "))
 }
 
 // translate maps core agent loop events onto the subagent event stream.

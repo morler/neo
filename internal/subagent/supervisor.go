@@ -79,8 +79,16 @@ func (s *Supervisor) toolsFor(mode AgentMode) []string {
 	}
 	// A code-mode child acts through the script tool alone, like the coordinator.
 	// Keeping the per-action names here would filter the registry down to tools a
-	// code-mode child does not have.
+	// code-mode child does not have. The script tool is also the only one this
+	// surface has, so a session that turned features.script off leaves the child
+	// with no tool list at all: the empty non-nil slice, which the registry
+	// builder treats as "nothing" and the runner reports as a configuration
+	// defect. Asking for script anyway would have the runner build it and the
+	// filter drop it, which looks the same at the end but hides the reason.
 	if s.codeModeEnabled() {
+		if !s.scriptEnabled() {
+			return []string{}
+		}
 		return []string{scriptToolName}
 	}
 	tools := append([]string(nil), dynamicAgentTools...)

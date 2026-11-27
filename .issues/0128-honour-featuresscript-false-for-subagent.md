@@ -1,12 +1,13 @@
 ---
 id: 128
 title: 'Honour features.script: false for subagents in code mode'
-status: open
+status: closed
 priority: medium
 labels:
     - bug
 created: "2026-11-27"
 updated: "2026-11-27"
+closed: "2026-11-27"
 ---
 
 ## 问题
@@ -44,3 +45,17 @@ registryWithOptions(...)  = [script]
 ## Notes
 
 排查"子代理缺 shell 导致超时"时顺带发现，与那条问题独立。可分别修。
+
+## 完成记录（2026-11-27）
+
+- `Supervisor.toolsFor`：code mode 分支按 `scriptEnabled()` 决定——关掉时返回**空的非 nil 切片**（"没有工具"），否则返回 `[script]`。与 `registryWithOptions` 现在读同一个 `Script` 开关。
+- `AgentRunner.registryWithOptions`：code mode + `Script: false` 不再构建 script；只保留文件工具。理由是把两种模式分开看——work 子代理只要 `script`，过滤后为空并由既有分支拒绝；inspect 子代理要的是 `read_file/grep/glob`，它们从来不依赖代码执行，不应被这个开关连坐。
+- 顺带修了同一条路径上的语义坑：`Registry.Filter` 与 `registryWithOptions` 都把"空的非 nil 列表"当成"不筛选"，于是"故意没有工具的孩子"会拿到完整工具面。现在 `nil` 表示"全部"，空切片表示"没有"，两者分开（`internal/tools/tool.go`、`internal/subagent/runner.go`）。
+- 新增 `emptyRegistryError`：当孩子要了工具却一个都没有、且是 "code mode + features.script 关" 这个组合时，消息直接点名 `features.script` 与两条修法（打开它，或改用 `features.codemode: classic`）；其它空注册表场景仍用原来那句 "composition defect"，并列出它请求的名字。
+- 单测 `internal/subagent/runner_test.go`：
+  - `TestScriptOffDeniesCodeModeChildren`：work 子代理的工具列表为空、注册表为空、`RunAgentWithOptions` 返回错误且消息含 `no tools`/`features.script`/`codemode: classic`；同场景下 inspect 子代理仍拿到 `[glob grep read_file]`。
+  - `TestScriptOnStillWiresCodeModeChildren`：`Script: true` 时两处仍一致（`[script]`），inspect 不变。
+  - `TestClassicSurfaceKeepsBashWhenScriptIsOff`：classic 面关掉 script 后仍有 `bash` 与文件工具，且不含 `script`。
+- 反向验证（逐个回退）：回退 `toolsFor` → 测试报 "asked for [script]"；回退 `registryWithOptions` 的 script-off 分支 → 测试报它拿到了 6 个工具；回退 `Filter` 或 `opts.Tools == nil` 的语义 → 测试报空列表被当成"全部"。四处都能被抓住。
+- 文档同步：`docs/developer/config.md` 的 `script` 行、`docs/developer/tools.md` 的子代理段落，都写明该设置覆盖子代理、inspect 不受影响、classic 面含义更窄。
+- 验证：`go test ./... -count=1`、`go vet ./...`、`qlty check` 均通过。

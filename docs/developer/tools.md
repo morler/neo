@@ -31,7 +31,15 @@ also receive `script` when the session has it enabled (`features.script`,
 `--script`, or `/codemode on`), so delegated file work can batch dependent steps
 the way the coordinator can; inspect children never do, because their whitelist
 is read-only by construction and a script reaches `write_file` through the same
-globals. A child's script shares the file tools a later edit consults, so a read
+globals.
+
+The setting covers children, not only the coordinator. In code mode the script
+tool is a work child's whole surface, so `features.script: false` leaves it with
+nothing to call and the run is refused with a message naming the key and the two
+ways out, rather than returning a report on work nothing was done on. Inspect
+children are unaffected: their read-only tools never depended on code execution.
+In classic mode the setting only removes the opt-in page tool, because `bash` is
+how a classic child acts. A child's script shares the file tools a later edit consults, so a read
 inside a script counts as the child having seen the file.
 
 Both sides of a script are observable. Every file-tool call and every `run()` call

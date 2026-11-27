@@ -527,3 +527,82 @@ func TestSummarizeNamesCodeModeActions(t *testing.T) {
 		t.Fatalf("run summary = %q", got)
 	}
 }
+
+// TestScriptOffDeniesCodeModeChildren covers #128: features.script: false says
+// this session does not execute code, and a code-mode child's only way to act is
+// the script tool. Keeping it for children left the coordinator unable to run a
+// command while the child it delegated to read, wrote, and ran programs: the
+// same setting read two ways in two assembly points.
+func TestScriptOffDeniesCodeModeChildren(t *testing.T) {
+	dir := t.TempDir()
+	r := &AgentRunner{Root: dir, Script: false, CodeMode: true}
+	sup := NewSupervisor(r, DefaultBudget())
+
+	asked := sup.toolsFor(AgentModeWork)
+	if asked == nil {
+		t.Fatal("toolsFor returned nil, which means \"no filter\" to the registry builder")
+	}
+	if len(asked) != 0 {
+		t.Fatalf("code-mode work child asked for %v with features.script off, want nothing", asked)
+	}
+	if names := r.registryWithOptions(dir, RunOptions{Tools: asked}).Names(); len(names) != 0 {
+		t.Fatalf("work child registry = %v, want no tools: the script tool is the only code-mode capability a work child has", names)
+	}
+	// An inspect child's read-only surface never depended on code execution, so
+	// switching the script tool off must not take delegation down with it.
+	inspect := r.registryWithOptions(dir, RunOptions{Tools: sup.toolsFor(AgentModeInspect)}).Names()
+	if !slices.Equal(inspect, []string{"glob", "grep", "read_file"}) {
+		t.Fatalf("inspect child registry = %v, want the read-only set", inspect)
+	}
+
+	// The registry is empty, so the run must refuse instead of returning a
+	// report nothing was done on, and the message must name the setting and the
+	// fix.
+	_, err := r.RunAgentWithOptions(context.Background(), dir, "change a file", make(chan AgentEvent, 16), RunOptions{Tools: asked, Mode: AgentModeWork})
+	if err == nil {
+		t.Fatal("a child with no tools must not report success")
+	}
+	for _, want := range []string{"no tools", "features.script", "codemode: classic"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want it to mention %q", err, want)
+		}
+	}
+}
+
+// TestScriptOnStillWiresCodeModeChildren is the other direction of #128: the
+// fix must not disable delegation for the configuration that was already right.
+func TestScriptOnStillWiresCodeModeChildren(t *testing.T) {
+	dir := t.TempDir()
+	r := &AgentRunner{Root: dir, Script: true, CodeMode: true}
+	sup := NewSupervisor(r, DefaultBudget())
+	asked := sup.toolsFor(AgentModeWork)
+	if !slices.Equal(asked, []string{"script"}) {
+		t.Fatalf("code-mode work child asked for %v, want [script]", asked)
+	}
+	names := r.registryWithOptions(dir, RunOptions{Tools: asked}).Names()
+	if !slices.Equal(names, []string{"script"}) {
+		t.Fatalf("child registry = %v, want [script]", names)
+	}
+	// Inspect children stay read-only either way.
+	inspect := r.registryWithOptions(dir, RunOptions{Tools: sup.toolsFor(AgentModeInspect)}).Names()
+	if !slices.Equal(inspect, []string{"glob", "grep", "read_file"}) {
+		t.Fatalf("inspect registry = %v, want the read-only set", inspect)
+	}
+}
+
+// TestClassicSurfaceKeepsBashWhenScriptIsOff pins that features.script keeps its
+// narrower classic meaning: the page script tool is gone, but bash is how a
+// classic child works, and that surface never depended on the setting.
+func TestClassicSurfaceKeepsBashWhenScriptIsOff(t *testing.T) {
+	dir := t.TempDir()
+	r := &AgentRunner{Root: dir, Script: false, CodeMode: false}
+	sup := NewSupervisor(r, DefaultBudget())
+	asked := sup.toolsFor(AgentModeWork)
+	if slices.Contains(asked, "script") {
+		t.Fatalf("classic work child asked for script with features.script off: %v", asked)
+	}
+	names := r.registryWithOptions(dir, RunOptions{Tools: asked}).Names()
+	if !slices.Contains(names, "bash") || !slices.Contains(names, "edit_file") {
+		t.Fatalf("classic child registry = %v, want bash and the file tools", names)
+	}
+}

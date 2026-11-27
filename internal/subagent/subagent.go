@@ -19,6 +19,11 @@ import (
 
 // RunOptions are immutable capabilities for one child run.
 type RunOptions struct {
+	// Tools is the exact list of tools the child may use. Nil means the whole
+	// surface, which is what a caller that wants to inspect every branch asks
+	// for. An empty, non-nil list means a child with nothing to call: that is a
+	// configuration defect, not a request for everything, and the runner reports
+	// it rather than handing back a registry the caller never chose.
 	Tools []string
 	// Mode is the mode the supervisor admitted the child under. The runner reads
 	// it only to explain a boundary the tool list cannot state by itself: a

@@ -82,8 +82,13 @@ func (r *Registry) Names() []string {
 	return names
 }
 
+// Filter keeps the named tools. A nil list means "no filter", which is what a
+// caller that wants the whole surface passes; an empty, non-nil list means "no
+// tools", which is a real state the caller must be able to observe. Treating
+// both as "everything" is how a child that was deliberately left with nothing to
+// call still came back with a full surface.
 func (r *Registry) Filter(names []string) *Registry {
-	if len(names) == 0 {
+	if names == nil {
 		return r
 	}
 	out := &Registry{tools: map[string]Tool{}}
