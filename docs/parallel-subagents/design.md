@@ -145,8 +145,8 @@ The limit has to be legible to both parties, or it becomes a timeout instead of 
 ## Checks
 
 ```sh
-go test ./internal/factory ./internal/agent ./cmd/neo
-go test -race ./internal/factory ./internal/agent ./internal/tui
+go test ./internal/subagent ./internal/agent ./cmd/neo
+go test -race ./internal/subagent ./internal/agent ./internal/tui
 go test ./...
 ```
 
@@ -160,10 +160,10 @@ Manual smoke test:
 
 ## Relevant Code
 
-- `internal/factory/supervisor.go`
-- `internal/factory/runner.go`
-- `internal/factory/supervisor_test.go`
-- `internal/factory/runner_test.go`
+- `internal/subagent/supervisor.go`
+- `internal/subagent/runner.go`
+- `internal/subagent/supervisor_test.go`
+- `internal/subagent/runner_test.go`
 - `internal/agent/agent.go`
-- `cmd/neo/factory.go`
+- `cmd/neo/subagent.go`
 - `docs/developer/tools.md`

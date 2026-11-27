@@ -2,7 +2,8 @@
 
 > **Status:** Current implementation
 >
-> **Verification basis:** `b70f4a1` (`origin/main` on 2026-08-01)
+> **Verification basis:** the current tree; a test keeps every package named here in step with
+> the directories that exist (`TestArchitecturePackageReferencesResolve`).
 
 ## 1. Executive Summary
 
@@ -86,17 +87,16 @@ internal/llm          internal/tools          internal/approval
      └──────────── internal/agent ────────────────────┘
                               ▲
                               │
-              internal/factory and internal/tui
+              internal/subagent and internal/tui
                               ▲
                               │
                            cmd/neo
 
 Supporting leaf packages:
   internal/atomicfile   internal/auth       internal/compact
-  internal/config       internal/logx
-  internal/projectctx   internal/session    internal/skills
-  internal/workflow
-  internal/workspace
+  internal/config       internal/goal       internal/logx
+  internal/profile      internal/projectctx internal/session
+  internal/skills       internal/workflow   internal/workspace
 ```
 
 Key rules:
@@ -105,7 +105,7 @@ Key rules:
 - `internal/tools` defines executable capabilities.
 - `internal/approval` matches optional interactive confirmation preferences.
 - `internal/agent` coordinates providers, tools, and confirmation barriers.
-- `internal/factory` reuses the core loop for supervised child agents.
+- `internal/subagent` reuses the core loop for supervised child agents.
 - `internal/tui` consumes events and supplies user interaction. It does not
   implement agent decisions.
 - `cmd/neo` owns construction, feature selection, and cross-package wiring.
@@ -328,13 +328,13 @@ arguments cannot declare themselves parallel-safe.
 | Tool | Package | Behavior |
 | --- | --- | --- |
 | `bash` | `internal/tools` | Runs `/bin/bash -c` in the session directory with a default two-minute timeout and bounded output. |
-| `read_file` | `internal/tools` | Reads a file or a line window, capped at about 256 KiB. |
+| `read_file` | `internal/tools` | Reads a file or a line window, capped at 64 KiB with `offset` and `limit` paging. |
 | `write_file` | `internal/tools` | Creates parent directories and writes a file. |
 | `edit_file` | `internal/tools` | Replaces exactly one occurrence of a string. |
 | `grep` | `internal/tools` | Regex search under the workspace, capped by match count. |
 | `glob` | `internal/tools` | Glob search under the workspace, capped by match count. |
 | `workflow` | `internal/workflow` | Emits checklist state for the interactive UI. |
-| `agent` | `internal/factory` | Runs a supervised child agent and returns its report. |
+| `agent` | `internal/subagent` | Runs a supervised child agent and returns its report. |
 
 The composition root decides which tools are present. The core loop does not
 special-case any tool name.
@@ -410,7 +410,7 @@ cards. Errors and direct shell command output remain visible.
 
 ## 8. Subagent Architecture
 
-Interactive chat can expose the `agent` tool implemented by `internal/factory`.
+Interactive chat can expose the `agent` tool implemented by `internal/subagent`.
 The parent chat agent remains the coordinator. Each child is a fresh core
 `agent.Agent` with a self-contained prompt, no parent transcript, and no nested
 `agent` tool.
@@ -531,16 +531,17 @@ expanded into a user turn when the user references `$name` or invokes
 | `internal/auth/` | Device-code login, token refresh, credential storage | Used only for OpenAI subscription auth. |
 | `internal/compact/` | Compactor interface, transcript summarization, safe splitting | No session persistence or UI. |
 | `internal/config/` | Config discovery, defaults, validation, feature flags | No provider construction. |
-| `internal/factory/` | Child runner, supervisor budgets, attribution, `agent` tool | Does not interpret child results or permit nested children. |
 | `internal/goal/` | Session goal state, status transitions, attempt budget, blocked audit, `goal` tool, continuation prompt text | Product control state; the agent loop never sees it. |
 | `internal/llm/` | Shared request, response, message, content, usage, and provider types | No network transport in the root package. |
 | `internal/llm/chatcompletions/` | Reusable OpenAI-compatible wire conversion and HTTP client | Used by provider setup packages such as OpenRouter. |
 | `internal/llm/<provider>/` | Vendor wire conversion, HTTP transport, retry integration | Does not execute tools or own transcripts. |
 | `internal/llm/retry/` | Shared transient failure classification, backoff, and `Retry-After` handling | Does not know provider wire formats. |
 | `internal/logx/` | Optional structured debug logging with payload controls | Disabled unless configured by environment. |
+| `internal/profile/` | Agent-prompt discovery from `~/.neo/agents/` and `<workspace>/.neo/agents/`, selected by `--agent` | Files only: no frontmatter, schema, or config entry, and no prompt composition. |
 | `internal/projectctx/` | AGENTS.md discovery and prompt augmentation | Layered feature, not core behavior. |
 | `internal/session/` | Local session metadata, transcripts, usage, list and search | No provider calls. |
 | `internal/skills/` | Skill discovery, catalog, reference and slash expansion | Layered feature, not core behavior. |
+| `internal/subagent/` | Child runner, supervisor budgets, attribution, `agent` tool | Does not interpret child results or permit nested children. |
 | `internal/tools/` | Tool interfaces, registry, shell, file and search tools | Capabilities are selected by the composition root. |
 | `internal/tui/` | Bubble Tea state, input, rendering, approvals, steering | Consumes agent events; does not implement the loop. |
 | `internal/workflow/` | Visible checklist model and tool | UI state only, not a durable workflow engine. |
