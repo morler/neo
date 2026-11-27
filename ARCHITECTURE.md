@@ -383,12 +383,20 @@ steering. It does not call providers directly.
 
 ```text
 Agent events ──────────┬─→ Bubble Tea messages → model.Update → View
-Workflow tool events ──┘
+Workflow tool events ──┤
+Subagent events ───────┘
 
 Approval request ←──────────── TUI choice
 User send/steer ─────────────→ Agent
 AfterSend callback ──────────→ Session store
 ```
+
+The three event feeds carry different facts and are rendered differently.
+Agent events build the transcript. Workflow tool events replace the checklist.
+Subagent events annotate the checklist step in progress: a child's tool call or
+failure updates that step's detail line instead of appending a row per event,
+and each event is matched to the parent `agent` call by tool-use ID so a child
+cannot relabel a step the coordinator has already moved past.
 
 The agent event model includes assistant text, commentary, parallel group
 starts, tool calls, tool results, applied steering, completion, and errors.
@@ -425,6 +433,12 @@ The default supervisor admits at most 20 children per chat session and gives
 each child 15 minutes. Events are attributed to a node and sent to the TUI over
 a bounded, non-blocking channel. The supervisor reports execution status but
 does not judge whether a child's answer is correct.
+
+The TUI consumes that stream for the visible workflow: while the parent `agent`
+call is in flight, a child's tool call, completion, or failure updates the detail
+line of the workflow item the coordinator is working on. Nothing is added to the
+transcript per child event, so the plan keeps its height and position; the parent
+`agent` receipt remains the record of the outcome.
 
 Two modes define immutable capabilities for a run:
 

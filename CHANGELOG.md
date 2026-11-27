@@ -6,6 +6,17 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
+- Subagent progress now reaches the visible workflow checklist. The coordinator
+  was already told not to mirror child calls because Neo attaches them
+  automatically, but the supervisor's event stream was built and then discarded
+  at the CLI boundary, so a delegated child's tool calls, completion, and failure
+  never appeared. While a parent `agent` call is in flight, its child's activity
+  now updates the detail line of the workflow step in progress, matched by the
+  parent call's tool-use ID so a slow child cannot relabel a step the coordinator
+  has moved past. Nothing is appended per child event: the step keeps the height
+  and position it was created with, and stale events from a previous turn are
+  ignored by the same generation check workflow events already use.
+
 - Skills are now discovered from `~/.agents/skills/<name>/SKILL.md` as well as
   Neo's own directories, so a skill written for another agent tool is usable
   without copying it. Priority is unchanged elsewhere: built-ins first, then

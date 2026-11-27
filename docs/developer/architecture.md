@@ -14,7 +14,7 @@ Neo is a small Go coding agent. The core agent loop is policy-free: it owns mess
 | `internal/compact/` | Compaction interface, summarizing compactor, and safe split helpers. |
 | `internal/config/` | Config discovery, defaults, and feature flags. |
 | `internal/goal/` | Session goal state, serialized status transitions, the attempt budget, the blocked audit, the `goal` tool, and continuation prompt text. Product control state only: the agent loop never sees it. See [Goals](goals.md). |
-|  `internal/subagent/` | Subagent runtime for the chat `agent` tool: supervisor budgets and node bookkeeping. The TUI renders agent calls as ordinary tool receipts and does not consume the supervisor event stream. |
+|  `internal/subagent/` | Subagent runtime for the chat `agent` tool: supervisor budgets, node bookkeeping, and the attributed child event stream the TUI attaches to the live workflow item. The parent `agent` call still renders as an ordinary tool receipt, and the TUI does not build a separate subagent tree from the stream. |
 | `internal/llm/` | Provider-neutral request/response types and system prompt blocks. |
 | `internal/llm/anthropic/` | Anthropic provider adapter. |
 | `internal/llm/openai/` | OpenAI provider adapters for API-key Responses API calls and ChatGPT/Codex subscription calls. |

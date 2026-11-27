@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/owainlewis/neo/internal/agent"
 	"github.com/owainlewis/neo/internal/config"
@@ -15,6 +16,8 @@ import (
 	"github.com/owainlewis/neo/internal/llm/llmtest"
 	"github.com/owainlewis/neo/internal/profile"
 	"github.com/owainlewis/neo/internal/session"
+	"github.com/owainlewis/neo/internal/subagent"
+	"github.com/owainlewis/neo/internal/tools"
 )
 
 // These tests cover the chat runtime: the assembly that happens once before the
@@ -142,11 +145,16 @@ func TestBuildChatRuntimeAssemblesToolsPromptAndAgent(t *testing.T) {
 	cwd := t.TempDir()
 	var errOut bytes.Buffer
 
-	rt, wf := buildChatRuntime(context.Background(), cfg, &llmtest.FakeProvider{}, "local", "qwen3-coder",
+	rt, events := buildChatRuntime(context.Background(), cfg, &llmtest.FakeProvider{}, "local", "qwen3-coder",
 		sess, profile.Profile{}, cwd, cwd, stdio{out: &bytes.Buffer{}, err: &errOut})
 
-	if wf == nil {
+	if events.workflow == nil {
 		t.Fatal("workflow events channel is nil")
+	}
+	// #124: the supervisor's child stream must reach the TUI, or the workflow
+	// checklist cannot show what a delegated child is doing.
+	if events.subagent == nil {
+		t.Fatal("subagent events channel is nil")
 	}
 	if rt.runtime == nil || rt.runtime.ag == nil {
 		t.Fatal("runtime or agent is nil")
@@ -249,14 +257,20 @@ func TestChatExtraToolsRegistersTheAgentToolOnlyWithACWD(t *testing.T) {
 	}
 	cwd := t.TempDir()
 
-	wf, extra, runner, follows := chatExtraTools(context.Background(), cfg, &llmtest.FakeProvider{}, "qwen3-coder", cwd, cwd, mgr)
-	if wf == nil || len(extra) != 3 || runner == nil || !follows {
-		t.Fatalf("with cwd: wf=%v extra=%d runner=%v follows=%v", wf != nil, len(extra), runner != nil, follows)
+	events, extra, runner, follows := chatExtraTools(context.Background(), cfg, &llmtest.FakeProvider{}, "qwen3-coder", cwd, cwd, mgr)
+	if events.workflow == nil || events.subagent == nil || len(extra) != 3 || runner == nil || !follows {
+		t.Fatalf("with cwd: workflow=%v subagent=%v extra=%d runner=%v follows=%v",
+			events.workflow != nil, events.subagent != nil, len(extra), runner != nil, follows)
 	}
 
-	wf, extra, runner, follows = chatExtraTools(context.Background(), cfg, &llmtest.FakeProvider{}, "qwen3-coder", "", "", mgr)
-	if wf == nil || len(extra) != 2 || runner != nil || follows {
-		t.Fatalf("without cwd: wf=%v extra=%d runner=%v follows=%v", wf != nil, len(extra), runner != nil, follows)
+	events, extra, runner, follows = chatExtraTools(context.Background(), cfg, &llmtest.FakeProvider{}, "qwen3-coder", "", "", mgr)
+	if events.workflow == nil || len(extra) != 2 || runner != nil || follows {
+		t.Fatalf("without cwd: workflow=%v extra=%d runner=%v follows=%v", events.workflow != nil, len(extra), runner != nil, follows)
+	}
+	// A session with no agent tool has no children, so it must not advertise a
+	// child event stream either.
+	if events.subagent != nil {
+		t.Fatal("subagent events channel exists without the agent tool")
 	}
 }
 
@@ -662,5 +676,57 @@ func TestRunLoginReportsAMissingHomeDirectory(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "login:") {
 		t.Fatalf("error output = %q", errOut.String())
+	}
+}
+
+// TestChatExtraToolsStreamCarriesChildActivity ties #124's wiring to behavior
+// rather than to a non-nil channel: a child spawned by the registered agent tool
+// must publish on the stream the TUI subscribes to, tagged with the parent call
+// and the conversation generation so the checklist can attribute it.
+func TestChatExtraToolsStreamCarriesChildActivity(t *testing.T) {
+	cfg := keylessConfig()
+	mgr, warning := chatGoalManager(nil, cfg)
+	if warning != "" {
+		t.Fatalf("goal manager warning: %s", warning)
+	}
+	cwd := t.TempDir()
+	events, extra, _, _ := chatExtraTools(context.Background(), cfg, &llmtest.FakeProvider{}, "qwen3-coder", cwd, cwd, mgr)
+	if events.subagent == nil {
+		t.Fatal("subagent stream is nil")
+	}
+
+	var agentTool subagent.AgentTool
+	for _, tool := range extra {
+		if at, ok := tool.(subagent.AgentTool); ok {
+			agentTool = at
+		}
+	}
+	if agentTool.Sup == nil {
+		t.Fatal("agent tool was not registered")
+	}
+
+	// The chat provider is a fake that has no scripted responses, so the child
+	// fails; that is enough for the wiring test, which only needs the child to
+	// run and publish its lifecycle.
+	ctx := tools.WithConversationGeneration(context.Background(), 7)
+	ctx = tools.WithCallMetadata(ctx, tools.CallMetadata{ToolUseID: "call-1"})
+	if _, err := agentTool.Run(ctx, map[string]any{"prompt": "inspect auth", "mode": "inspect"}); err != nil {
+		t.Fatalf("agent tool: %v", err)
+	}
+
+	var seen []string
+	for {
+		select {
+		case ev := <-events.subagent:
+			if ev.Generation != 7 || ev.CallID != "call-1" {
+				t.Fatalf("event lost its attribution: %+v", ev)
+			}
+			seen = append(seen, ev.Ev.Kind)
+			if ev.Ev.Kind == "done" || ev.Ev.Kind == "fail" {
+				return
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("subagent stream stalled after %v", seen)
+		}
 	}
 }

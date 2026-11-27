@@ -1116,7 +1116,8 @@ func runOneChatSession(ctx context.Context, store *session.Store, sess *session.
 		),
 		tui.WithScriptSwitcher(rt.switchCodeMode, setup.cfg.ScriptEnabled),
 		tui.WithEffortSwitcher(rt.switchEffort, func() string { return rt.ag.Effort() }),
-		tui.WithWorkflowEvents(setup.workflowEvents),
+		tui.WithWorkflowEvents(setup.events.workflow),
+		tui.WithSubagentEvents(setup.events.subagent),
 		tui.WithVerbose(setup.cfg.VerboseEnabled()),
 		tui.WithIO(streams.in, streams.out),
 	)
@@ -1172,13 +1173,13 @@ func describeSessionLoadError(id string, err error) error {
 // starts. Each field is produced by one step of prepareChat, so a failure there
 // names the step that failed.
 type chatSetup struct {
-	cfg            *config.Config
-	sess           *session.Session
-	cwd            string
-	profile        profile.Profile
-	sk             []skills.Skill
-	runtime        *chatRuntime
-	workflowEvents <-chan workflow.Event
+	cfg     *config.Config
+	sess    *session.Session
+	cwd     string
+	profile profile.Profile
+	sk      []skills.Skill
+	runtime *chatRuntime
+	events  chatEventStreams
 }
 
 // chatRuntime is the state that keeps changing while a session runs: the active
@@ -1236,21 +1237,22 @@ func prepareChat(ctx context.Context, store *session.Store, sess *session.Sessio
 		return nil, false
 	}
 
-	rt, workflowEvents := buildChatRuntime(ctx, cfg, prov, providerName, model, sess, agentProfile, cwd, root, streams)
+	rt, events := buildChatRuntime(ctx, cfg, prov, providerName, model, sess, agentProfile, cwd, root, streams)
 	return &chatSetup{
-		cfg:            cfg,
-		sess:           sess,
-		cwd:            cwd,
-		profile:        agentProfile,
-		sk:             rt.sk,
-		runtime:        rt.runtime,
-		workflowEvents: workflowEvents,
+		cfg:     cfg,
+		sess:    sess,
+		cwd:     cwd,
+		profile: agentProfile,
+		sk:      rt.sk,
+		runtime: rt.runtime,
+		events:  events,
 	}, true
 }
 
 // buildChatRuntime assembles the tools, the system prompt, and the agent they
-// run in, plus the event channel the TUI reads workflow progress from.
-func buildChatRuntime(ctx context.Context, cfg *config.Config, prov llm.Provider, providerName, model string, sess *session.Session, agentProfile profile.Profile, cwd, root string, streams stdio) (chatRuntimeSetup, <-chan workflow.Event) {
+// run in, plus the event streams the TUI reads workflow and child-agent
+// progress from.
+func buildChatRuntime(ctx context.Context, cfg *config.Config, prov llm.Provider, providerName, model string, sess *session.Session, agentProfile profile.Profile, cwd, root string, streams stdio) (chatRuntimeSetup, chatEventStreams) {
 	// The goal tool is always registered, even with no goal in the session, so
 	// the model's tool list never changes mid-conversation. Its manager owns the
 	// session goal; the tool cannot pause, resume, clear, or spend the budget.
@@ -1258,7 +1260,7 @@ func buildChatRuntime(ctx context.Context, cfg *config.Config, prov llm.Provider
 	if goalWarning != "" {
 		fmt.Fprintln(streams.err, goalWarning)
 	}
-	workflowEvents, extra, agentRunner, followsCoordinator := chatExtraTools(ctx, cfg, prov, model, cwd, root, goalManager)
+	events, extra, agentRunner, followsCoordinator := chatExtraTools(ctx, cfg, prov, model, cwd, root, goalManager)
 
 	reg := registryFor(cfg, cwd, root, extra...)
 	// Skills are loaded once: the catalog is advertised in the system prompt
@@ -1315,7 +1317,7 @@ func buildChatRuntime(ctx context.Context, cfg *config.Config, prov llm.Provider
 			profile:                  agentProfile,
 			sk:                       sk,
 		},
-	}, workflowEvents
+	}, events
 }
 
 // chatRuntimeSetup pairs the runtime with the skills its system prompt
@@ -1385,19 +1387,31 @@ func ensureChatSession(ctx context.Context, store *session.Store, sess *session.
 // node 0) so it can spawn amnesiac subagents with self-contained prompts
 // directly from the conversation. Sequencing is the agent's judgment, not a
 // stored workflow artifact.
-func chatExtraTools(ctx context.Context, cfg *config.Config, prov llm.Provider, model, cwd, root string, goalManager *goal.Manager) (<-chan workflow.Event, []tools.Tool, *subagent.AgentRunner, bool) {
+func chatExtraTools(ctx context.Context, cfg *config.Config, prov llm.Provider, model, cwd, root string, goalManager *goal.Manager) (chatEventStreams, []tools.Tool, *subagent.AgentRunner, bool) {
 	wf := make(chan workflow.Event, 128)
 	extra := []tools.Tool{workflow.Tool{Events: wf}, goal.Tool{Manager: goalManager}}
+	events := chatEventStreams{workflow: wf}
 	var agentRunner *subagent.AgentRunner
 	followsCoordinator := false
 	if cwd != "" {
 		workerProvider, workerModel, follows := subagentBackend(ctx, cfg, prov, model)
 		followsCoordinator = follows
 		var at subagent.AgentTool
-		at, _, agentRunner = chatAgentTool(workerProvider, workerModel, cwd, root, cfg)
+		at, events.subagent, agentRunner = chatAgentTool(workerProvider, workerModel, cwd, root, cfg)
 		extra = append(extra, at)
 	}
-	return wf, extra, agentRunner, followsCoordinator
+	return events, extra, agentRunner, followsCoordinator
+}
+
+// chatEventStreams are the two live event feeds an interactive session
+// consumes: the workflow tool's checklist mutations and the supervisor's
+// child-agent observations. They are separate because they carry different
+// facts — a plan change versus what a delegated child is doing right now — and
+// the TUI treats them differently: the first replaces the checklist, the second
+// annotates the step in progress.
+type chatEventStreams struct {
+	workflow <-chan workflow.Event
+	subagent <-chan subagent.Event
 }
 
 // switchModel changes the model and persists the choice beside the backend it

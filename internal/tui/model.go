@@ -25,6 +25,7 @@ import (
 	"github.com/owainlewis/neo/internal/llm"
 	"github.com/owainlewis/neo/internal/logx"
 	"github.com/owainlewis/neo/internal/skills"
+	"github.com/owainlewis/neo/internal/subagent"
 	"github.com/owainlewis/neo/internal/tools"
 	"github.com/owainlewis/neo/internal/workflow"
 )
@@ -55,6 +56,11 @@ type Options struct {
 	SessionLister  func(context.Context) ([]SessionChoice, error)
 	SessionOpener  func(string) error
 	WorkflowEvents <-chan workflow.Event
+	// SubagentEvents carries the supervisor's stream for chat-spawned
+	// children. The TUI attaches it to the live workflow item instead of
+	// rendering a row per event: a delegated child is one step of the plan,
+	// and its progress is what that step is doing.
+	SubagentEvents <-chan subagent.Event
 	Verbose        bool
 	Input          io.Reader
 	Output         io.Writer
@@ -155,6 +161,13 @@ func WithWorkflowEvents(ch <-chan workflow.Event) Option {
 	return func(opts *Options) { opts.WorkflowEvents = ch }
 }
 
+// WithSubagentEvents supplies the supervisor's child-agent stream. Events are
+// correlated to the parent agent call by CallID, so a child's activity lands on
+// the workflow item the coordinator is currently working through.
+func WithSubagentEvents(ch <-chan subagent.Event) Option {
+	return func(opts *Options) { opts.SubagentEvents = ch }
+}
+
 // WithVerbose controls tool activity rendering: false (the default) shows live
 // activity and concise completed receipts while hiding successful tool result
 // bodies; true restores full tool call/result cards. Errors always render in
@@ -195,6 +208,13 @@ func Run(ctx context.Context, ag *agent.Agent, modelTag, version, cwd string, sk
 		go func() {
 			for ev := range opts.WorkflowEvents {
 				p.Send(workflowEventMsg{ev: ev})
+			}
+		}()
+	}
+	if opts.SubagentEvents != nil {
+		go func() {
+			for ev := range opts.SubagentEvents {
+				p.Send(subagentEventMsg{ev: ev})
 			}
 		}()
 	}
@@ -244,6 +264,7 @@ type sendResultMsg struct {
 type persistenceRetryResultMsg struct{ err error }
 type agentEventMsg struct{ ev agent.Event }
 type workflowEventMsg struct{ ev workflow.Event }
+type subagentEventMsg struct{ ev subagent.Event }
 type branchMsg struct{ branch string }
 type modelChoicesMsg struct {
 	choices []ModelChoice

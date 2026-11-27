@@ -9,6 +9,7 @@ import (
 
 	"github.com/owainlewis/neo/internal/agent"
 	"github.com/owainlewis/neo/internal/skills"
+	"github.com/owainlewis/neo/internal/subagent"
 	"github.com/owainlewis/neo/internal/workflow"
 )
 
@@ -228,5 +229,100 @@ func TestLateWorkflowEventFromPreviousTurnIsIgnored(t *testing.T) {
 
 	if m.workflow != nil {
 		t.Fatalf("late event from the previous turn became the live workflow: %+v", m.workflow)
+	}
+}
+
+// A delegated child is one step of the plan: its tool calls update the active
+// item's detail line instead of appending a block per event.
+func TestSubagentActivityAttachesToTheActiveWorkflowItem(t *testing.T) {
+	m := makeTestModel()
+	m.handleWorkflowEvent(workflow.Event{
+		Action: "create",
+		State: workflow.State{Title: "Review", Items: []workflow.Item{
+			{ID: "1", Text: "Inspect", Status: workflow.Pending},
+			{ID: "2", Text: "Decide", Status: workflow.Pending},
+		}},
+	})
+	m.handleWorkflowEvent(workflow.Event{Action: "start", ID: "1"})
+	// The coordinator's own agent call is what a child event is correlated to.
+	m.handleEvent(agent.Event{Kind: agent.EventToolCall, Name: "agent", ToolUseID: "call-1",
+		Args: map[string]any{"prompt": "inspect auth"}})
+	blocks := len(m.blocks)
+
+	m.handleSubagentEvent(subagent.Event{CallID: "call-1", Ev: subagent.AgentEvent{
+		Kind: "tool", Body: "read internal/auth.go"}})
+
+	if got := m.workflow.items[0].Detail; got != "Subagent · read internal/auth.go" {
+		t.Fatalf("active item detail = %q, want the child's activity", got)
+	}
+	if len(m.blocks) != blocks {
+		t.Fatalf("blocks = %d, want %d: child activity must not append a row per event", len(m.blocks), blocks)
+	}
+}
+
+// Events left over from an earlier turn must not relabel the current plan.
+// The supervisor buffers events, so a slow child's last observation can arrive
+// after the user already started the next turn.
+func TestSubagentEventFromPreviousTurnIsIgnored(t *testing.T) {
+	m := makeTestModel()
+	previous := m.conversationGeneration
+
+	m.submitUserTurn("next", "next", nil)
+	t.Cleanup(func() {
+		if m.sendCancel != nil {
+			m.sendCancel()
+		}
+	})
+	m.handleWorkflowEvent(workflow.Event{Generation: m.conversationGeneration, Action: "create",
+		State: workflow.State{Items: []workflow.Item{{ID: "1", Text: "Inspect", Status: workflow.Pending}}}})
+	m.handleWorkflowEvent(workflow.Event{Generation: m.conversationGeneration, Action: "start", ID: "1"})
+	m.handleEvent(agent.Event{Kind: agent.EventToolCall, Name: "agent", ToolUseID: "call-1"})
+
+	m.handleSubagentEvent(subagent.Event{Generation: previous, CallID: "call-1",
+		Ev: subagent.AgentEvent{Kind: "tool", Body: "stale work"}})
+
+	// The coordinator's own agent call already set the detail; what must not
+	// appear is the dropped child's activity from the previous turn.
+	if got := m.workflow.items[0].Detail; strings.Contains(got, "stale work") {
+		t.Fatalf("stale activity reached the checklist: %q", got)
+	}
+}
+
+// A child running after the coordinator moved to another step must not
+// overwrite the detail of the step now in progress.
+func TestSubagentEventDoesNotRelabelALaterStep(t *testing.T) {
+	m := makeTestModel()
+	m.handleWorkflowEvent(workflow.Event{Action: "create", State: workflow.State{
+		Items: []workflow.Item{
+			{ID: "1", Text: "Delegate", Status: workflow.Pending},
+			{ID: "2", Text: "Write", Status: workflow.Pending},
+		}}})
+	m.handleWorkflowEvent(workflow.Event{Action: "start", ID: "1"})
+	m.handleEvent(agent.Event{Kind: agent.EventToolCall, Name: "agent", ToolUseID: "call-1"})
+	// The agent call settled, so its child is no longer the live work.
+	m.handleEvent(agent.Event{Kind: agent.EventToolResult, Name: "agent", ToolUseID: "call-1", Text: "{\"ok\":true}"})
+	m.handleWorkflowEvent(workflow.Event{Action: "complete", ID: "1"})
+	m.handleWorkflowEvent(workflow.Event{Action: "start", ID: "2"})
+
+	m.handleSubagentEvent(subagent.Event{CallID: "call-1", Ev: subagent.AgentEvent{
+		Kind: "tool", Body: "late read"}})
+
+	if got := m.workflow.items[1].Detail; got != "" {
+		t.Fatalf("late child activity relabeled the active step: %q", got)
+	}
+}
+
+// A child that fails is visible as such, not frozen on its last tool call.
+func TestSubagentFailureIsVisibleOnTheStep(t *testing.T) {
+	m := makeTestModel()
+	m.handleWorkflowEvent(workflow.Event{Action: "create", State: workflow.State{
+		Items: []workflow.Item{{ID: "1", Text: "Inspect", Status: workflow.Pending}}}})
+	m.handleWorkflowEvent(workflow.Event{Action: "start", ID: "1"})
+	m.handleEvent(agent.Event{Kind: agent.EventToolCall, Name: "agent", ToolUseID: "call-1"})
+
+	m.handleSubagentEvent(subagent.Event{CallID: "call-1", Ev: subagent.AgentEvent{Kind: "fail", Body: "timeout"}})
+
+	if got := m.workflow.items[0].Detail; got != "Subagent failed" {
+		t.Fatalf("step detail = %q, want the failure", got)
 	}
 }

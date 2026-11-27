@@ -64,6 +64,9 @@ func (m *model) handleMsg(msg tea.Msg) updateResult {
 	case workflowEventMsg:
 		m.handleWorkflowEvent(msg.ev)
 		return updateResult{}
+	case subagentEventMsg:
+		m.handleSubagentEvent(msg.ev)
+		return updateResult{}
 	case branchMsg:
 		return m.handleBranch(msg)
 	default:
