@@ -1,12 +1,13 @@
 ---
 id: 134
 title: Measure a tool-result budget for compaction summary requests
-status: in-progress
+status: closed
 priority: low
 labels:
     - performance
 created: "2026-11-27"
 updated: "2026-11-28"
+closed: "2026-11-28"
 ---
 
 ## 背景
