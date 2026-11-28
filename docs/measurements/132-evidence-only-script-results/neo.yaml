@@ -1,0 +1,13 @@
+# Measurement config for #132. Provider, model, effort, and tool surface are
+# fixed here so the two arms differ only in the prompt.
+provider: commandcode
+model: deepseek/deepseek-v4.1-flash
+reasoning_effort: low
+providers:
+  commandcode:
+    endpoint: https://api.commandcode.ai/provider/v1
+    api_key_env: COMMANDCODE_API_KEY
+    default_model: deepseek/deepseek-v4.1-flash
+features:
+  script: true
+  codemode: codemode

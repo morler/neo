@@ -1,0 +1,4 @@
+package service
+
+// DefaultPort is the port the service listens on when nothing overrides it.
+const DefaultPort = 8080

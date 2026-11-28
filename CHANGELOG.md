@@ -6,6 +6,16 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
+- `docs/measurements/` now holds reproducible experiment records, each with its
+  fixtures, harness, and raw per-run results. The first entry measures whether a
+  `script` that returns only evidence is cheaper than one that returns what it
+  read (#132): 30 runs, 3 fixtures, 2 arms differing only in the prompt's last
+  sentence. Success was 30/30 in both arms. The long-log fixture dropped 86% in
+  tool result bytes, the cross-file fixture dropped in median only, and the
+  negative control reversed, so no product change is introduced. The full record
+  and the numbers are in
+  `docs/measurements/132-evidence-only-script-results/`.
+
 - The interactive `@` file picker completes paths that leave the workspace. It
   used to match only against paths relative to the working directory, so
   `@../`, `@../../` and `@/etc/` could never match anything and the picker

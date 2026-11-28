@@ -1,0 +1,8 @@
+package cli
+
+import "service"
+
+// run starts the CLI and reports the port it will use.
+func run() int {
+	return service.DefaultPort
+}

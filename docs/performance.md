@@ -382,6 +382,32 @@ without new text once the task needs the read's value to decide the write, and
 the batched shapes show the model composing several actions per call. Further
 prompt edits would be measuring noise.
 
+### Evidence-only script results (#132)
+
+Measured 2026-11-28 on `commandcode` / `deepseek/deepseek-v4.1-flash`, code mode
+with `features.script: true`, five runs per arm per fixture. Arms differ only in
+the prompt's final sentence: one asks for the findings quoted, one for the
+evidence only.
+
+| fixture | arm | tool bytes (median) | prompt tokens (median) | requests (median) |
+| --- | --- | ---: | ---: | ---: |
+| long-log locate | full | 6,832 | 26,644 | 7 |
+| long-log locate | evidence | **986** | **8,859** | **4** |
+| cross-file find | full | 66,879 | 26,530 | 5 |
+| cross-file find | evidence | 26,325 | 23,759 | 4 |
+| known-line narrow read | full | 902 | 4,115 | 2 |
+| known-line narrow read | evidence | 5,073 | 5,732 | 3 |
+
+Success was 30/30 in both arms, so nothing here is a correctness trade. The
+long-log shape drops by 67–86% in medians with overlapping ranges; the cross-file
+shape drops in median only because two of five runs read the whole fixture
+anyway; the negative control reverses, spending more tool bytes and one more
+request. No product change is recommended: a rule that buys the first shape
+would have to be shown not to flip the third, and this sample cannot show that.
+
+The full record, fixtures, offline-verified harness, and raw per-run results are
+in [docs/measurements/132-evidence-only-script-results](../measurements/132-evidence-only-script-results/README.md).
+
 ### Measuring a real run
 
 A run's actual cost comes from the provider, not from an estimate:

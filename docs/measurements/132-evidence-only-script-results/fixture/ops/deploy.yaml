@@ -1,0 +1,3 @@
+service:
+  replicas: 3
+  notes: the port comes from code, not from this file

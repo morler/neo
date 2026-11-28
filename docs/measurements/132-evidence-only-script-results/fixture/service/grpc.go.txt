@@ -1,0 +1,5 @@
+package service
+
+// ListenPort is deliberately a different name, so a grep for the word port
+// alone is not enough to find the definition.
+const ListenPort = 9090

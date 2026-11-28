@@ -16,6 +16,9 @@ Start here when changing Neo:
 - [Code quality tooling](code-quality.md) documents qlty, supercov, and their environment.
 - [Performance](../performance.md) records the binary, prompt, and token baselines
   and how to measure them.
+- [Measurements](../measurements/) holds reproducible experiment records with
+  their fixtures, harnesses, and raw results. Start with
+  [#132, evidence-only script results](../measurements/132-evidence-only-script-results/README.md).
 - [Token budget design](../design/token-budget.md) explains the four rules behind
   the fixed-floor budget, the frozen prefix, and the compaction trigger; it also
   records which switches were deliberately not added.
