@@ -6,6 +6,17 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
+- Transcript text in the TUI can now be selected with the mouse and copied.
+  Mouse reporting has to stay on for the wheel to scroll the alt-screen
+  transcript, which meant a plain drag reached the program instead of the
+  terminal and text could only be selected with shift held. A drag inside the
+  transcript now highlights the covered cells and copies them on release, with
+  the text written through a local helper (`wl-copy`, `xclip`, `xsel`,
+  `pbcopy`) or, when none is installed, through OSC52 so it also works over
+  SSH. Shift+drag still selects with the terminal itself. Copying is reported
+  in the status line, a plain click clears the highlight without touching the
+  clipboard, and a drag past the top or bottom edge scrolls.
+
 - #134 measured a bounded tool-result preview for compaction summary requests.
   It cuts the summary request from 141 KB / 28,276 input tokens to 3.3 KB / 687
   (−98%), but it also removes the one `ERROR … connection refused` line that the

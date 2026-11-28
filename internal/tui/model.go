@@ -364,9 +364,17 @@ type model struct {
 	// workflow is the checklist block for the current turn, if the workflow
 	// tool created one. It lives in the transcript like any other block and
 	// is updated in place until the next turn starts.
-	workflow       *workflowBlock
-	turn           turnStats
-	approval       *approvalState
+	workflow *workflowBlock
+	turn     turnStats
+	approval *approvalState
+	// selection is the mouse drag over the transcript, nil when nothing is
+	// selected. The transcript itself is not stored here: its rows are read
+	// from the viewport so a copied cell is the cell the user saw.
+	selection *transcriptSelection
+	// copyNotice is the last clipboard confirmation, shown in the status line
+	// until the next interaction. It lives there rather than in the transcript
+	// so copying does not grow the output it was copied from.
+	copyNotice     string
 	quitting       bool
 	quitPending    bool
 	persistenceErr error
@@ -614,7 +622,7 @@ func (m *model) View() tea.View {
 
 	// Everything above the composer, in the order JoinVertical stacks it. Its
 	// height is what offsets the composer's cursor into frame coordinates.
-	above := []string{m.viewport.View(), "", status, ""}
+	above := []string{m.transcriptPane(), "", status, ""}
 	parts := append(append([]string{}, above...), bottom)
 	if picker != "" {
 		parts = append(parts, picker)
@@ -741,6 +749,8 @@ func (m *model) submitUserTurnWithSkillExpansion(displayText, agentText string, 
 	m.workflow = nil
 	m.clearInflight()
 	m.conversationGeneration++
+	m.clearSelection()
+	m.copyNotice = ""
 	m.appendBlock(userBlock{text: displayText})
 	if len(images) > 0 {
 		m.appendBlock(noticeBlock{text: "attached image: " + strings.Join(shortPaths(images), ", ")})
@@ -1006,7 +1016,11 @@ func (m *model) statusLine() string {
 	if !m.busy {
 		// Idle is intentionally quiet; input discovery lives in the splash.
 		dot := lipgloss.NewStyle().Foreground(colDotReady).Render("●")
-		return truncate(" "+dot+" "+styMuted.Render("ready"), max(m.width, 1))
+		label := "ready"
+		if m.copyNotice != "" {
+			label = m.copyNotice
+		}
+		return truncate(" "+dot+" "+styMuted.Render(label), max(m.width, 1))
 	}
 
 	elapsed := time.Since(m.busySince)
@@ -1342,7 +1356,15 @@ func (m *model) refreshViewport() {
 		}
 		sb.WriteString("\n")
 	}
+	previousRows := m.viewport.TotalLineCount()
 	m.viewport.SetContent(sb.String())
+	// A selection holds transcript rows. If the transcript gained or lost rows,
+	// those rows now address different text, so the selection is dropped rather
+	// than copied from the wrong place. In-place updates (the live workflow
+	// checklist) keep the row count and are not user output.
+	if m.selection != nil && m.viewport.TotalLineCount() != previousRows {
+		m.clearSelection()
+	}
 	if followOutput {
 		m.viewport.GotoBottom()
 	} else {

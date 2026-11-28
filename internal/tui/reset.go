@@ -44,6 +44,8 @@ func (m *model) resetConversation() *goal.State {
 	m.ag.Clear()
 	m.blocks = nil
 	m.rendered = nil
+	m.clearSelection()
+	m.copyNotice = ""
 	m.busy = false
 	m.busySince = time.Time{}
 	m.inflight = nil

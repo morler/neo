@@ -46,9 +46,14 @@ func (m *model) handleMsg(msg tea.Msg) updateResult {
 		return m.handlePaste(msg)
 	case tea.MouseWheelMsg:
 		return m.handleMouseWheel(msg)
-	case tea.MouseClickMsg, tea.MouseReleaseMsg, tea.MouseMotionMsg:
-		m.clearApprovalSelection()
-		return updateResult{}
+	case tea.MouseClickMsg:
+		return m.handleMouseClick(msg)
+	case tea.MouseMotionMsg:
+		return m.handleMouseMotion(msg)
+	case tea.MouseReleaseMsg:
+		return m.handleMouseRelease(msg)
+	case clipboardResultMsg:
+		return m.finishClipboardCopy(msg)
 	case modelChoicesMsg:
 		return m.handleModelChoices(msg)
 	case agentEventMsg:
@@ -91,6 +96,9 @@ func (m *model) handleBackgroundColor(msg tea.BackgroundColorMsg) updateResult {
 func (m *model) handleWindowSize(msg tea.WindowSizeMsg) updateResult {
 	m.width = msg.Width
 	m.height = msg.Height
+	// Re-wrapping changes what sits on every row, so a held selection cannot be
+	// kept pointing at the same cells.
+	m.clearSelection()
 	m.layout()
 	m.refreshViewport()
 	return updateResult{}
@@ -100,6 +108,12 @@ func (m *model) handleWindowSize(msg tea.WindowSizeMsg) updateResult {
 // pending approval owns the keyboard and reports back whether it consumed the
 // key. Escapes are otherwise handled by handleKey.
 func (m *model) handleKeyMsg(msg tea.KeyMsg) updateResult {
+	// Any key ends the highlight and the copy confirmation: the pane may
+	// scroll, a browser may open, or a turn may start, and in each case the
+	// highlighted cells would no longer mean what they did when the drag ended.
+	// The confirmation is quiet again once the user has moved on.
+	m.clearSelection()
+	m.copyNotice = ""
 	if m.providers.visible {
 		_, cmd := m.handleProviderBrowserKey(msg)
 		return earlyWith(cmd)
@@ -139,6 +153,9 @@ func (m *model) handlePaste(msg tea.PasteMsg) updateResult {
 
 func (m *model) handleMouseWheel(msg tea.MouseWheelMsg) updateResult {
 	m.clearApprovalSelection()
+	// The wheel moves the text under the pointer, so a highlight left over
+	// from an earlier drag would point at different lines.
+	m.clearSelection()
 	// Some terminals and multiplexers report vertical trackpad gestures
 	// with Shift set. The viewport interprets those as horizontal wheel
 	// events, but Neo intentionally disables horizontal transcript scrolling,

@@ -406,6 +406,16 @@ metrics without depending on terminal code.
 Successful tool output is concise by default. Verbose mode restores full result
 cards. Errors and direct shell command output remain visible.
 
+The transcript lives on the alt screen, so the terminal's own scrollback is gone
+and the wheel only works because the view reports `MouseModeCellMotion`. That
+mode also sends plain drags to the program instead of the terminal, so
+`internal/tui/selection.go` gives a drag meaning: cells between the press and
+the release are painted with the selection style and copied on release. A
+selection is stored in absolute transcript rows, which is what lets a drag that
+reaches past an edge scroll without moving its anchor. The copy goes through a
+local helper when one is installed and falls back to OSC52 so it still works
+over SSH; shift+drag is left to the terminal.
+
 ---
 
 ## 8. Subagent Architecture

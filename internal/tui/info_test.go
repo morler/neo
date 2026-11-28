@@ -21,7 +21,7 @@ import (
 func TestHelpBlock_ListsHelpCommandAndKeys(t *testing.T) {
 	m := makeTestModel()
 	out := plain(helpBlock{commands: m.slashCommands()}.render(80, nil))
-	for _, want := range []string{"/help", "!cmd", "send", "newline", "wheel/pgup/pgdn", "shift+drag", "ctrl+o", "quit"} {
+	for _, want := range []string{"/help", "!cmd", "send", "newline", "wheel/pgup/pgdn", "drag", "shift+drag", "ctrl+o", "quit"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("/help missing %q: %s", want, out)
 		}

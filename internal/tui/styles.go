@@ -24,6 +24,11 @@ var (
 	// Accent-bar colours for attention blocks. A left stripe replaces heavy
 	// background fills.
 	colApprove = colAccent
+	// Selection colours. Reverse video looks correct on a plain row but loses
+	// the card background under it, which leaves low-contrast text on the tool
+	// and result surfaces; an explicit pair reads the same on every block.
+	colSelectBg = lipgloss.Color("62")
+	colSelectFg = lipgloss.Color("231")
 
 	styMuted    = lipgloss.NewStyle().Foreground(colMuted)
 	styDim      = lipgloss.NewStyle().Foreground(colDim)
@@ -34,6 +39,13 @@ var (
 	styWarn     = lipgloss.NewStyle().Foreground(colWarn)
 	styErr      = lipgloss.NewStyle().Foreground(colErr)
 	styThinking = lipgloss.NewStyle().Foreground(colMuted)
+
+	// stySelection paints the mouse selection over transcript text. It replaces
+	// the underlying colours rather than inverting them, so a selected card row
+	// stays readable.
+	stySelection = lipgloss.NewStyle().
+			Background(colSelectBg).
+			Foreground(colSelectFg)
 
 	styCardTool = lipgloss.NewStyle().
 			Background(colToolBg).
