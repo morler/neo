@@ -19,8 +19,9 @@ Start here when changing Neo:
 - [Measurements](../measurements/) holds reproducible experiment records with
   their fixtures, harnesses, and raw results: #132 on
   [evidence-only script results](../measurements/132-evidence-only-script-results/README.md)
-  and #133 on
-  [Go source outlines](../measurements/133-go-source-outlines/README.md).
+  #133 on [Go source outlines](../measurements/133-go-source-outlines/README.md),
+  and #134 on
+  [summary-request tool-result budgets](../measurements/134-compaction-tool-result-budget/README.md).
 - [Token budget design](../design/token-budget.md) explains the four rules behind
   the fixed-floor budget, the frozen prefix, and the compaction trigger; it also
   records which switches were deliberately not added.

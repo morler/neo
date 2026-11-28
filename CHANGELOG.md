@@ -6,6 +6,13 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
+- #134 measured a bounded tool-result preview for compaction summary requests.
+  It cuts the summary request from 141 KB / 28,276 input tokens to 3.3 KB / 687
+  (−98%), but it also removes the one `ERROR … connection refused` line that the
+  log exists to carry: 3/3 budgeted summaries lost it against 3/3 verbatim
+  summaries keeping it, and then asked to re-read the log filtered. Not
+  introduced; see `docs/measurements/134-compaction-tool-result-budget/`.
+
 - #133 measured whether a `go/parser` source skeleton beats grep before
   reading code. The probe's line ranges are trustworthy: all 1,327 declarations
   it printed for this repository re-parse from their declared range. It is

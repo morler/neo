@@ -1,12 +1,12 @@
 ---
 id: 134
 title: Measure a tool-result budget for compaction summary requests
-status: open
+status: in-progress
 priority: low
 labels:
     - performance
 created: "2026-11-27"
-updated: "2026-11-27"
+updated: "2026-11-28"
 ---
 
 ## 背景
@@ -22,3 +22,60 @@ Maki 的 `maki-agent/src/agent/compaction.rs` 在构建独立摘要请求时，�
 - 使用含大日志、并列工具结果以及近期未答输入的 fixture，验证摘要请求变小、tool_use/tool_result 配对及顺序有效，原始历史和近期保留段保持不变。stub 测试不访问网络。
 - 在同模型同 fixture 下比较未裁剪和预算版，记录摘要请求输入、输出、失败和用摘要继续任务的结果；检查摘要保留用户约束、关键错误、未完成事项和验证结论。
 - 只有在输入有明显下降且续作质量无回归时才建议启用；若需补查导致总消耗上升，记录为不引入。
+
+
+## 结果记录（2026-11-28）
+
+完整记录、原型、10 项离线不变性与两臂摘要原文：`docs/measurements/134-compaction-tool-result-budget/`，摘要已并入 `docs/performance.md`。
+
+**环境**：`provider: commandcode` / `deepseek/deepseek-v4.1-flash`，每臂 3 次运行，同一 fixture。**该后端不报告缓存分项**。
+
+**fixture**：8 条消息，含 ①必须保留的用户约束"不要改 retry budget"；②4,000 行日志，唯一错误在第 2871 行 `ERROR handler failed: dial tcp 10.4.2.9:6379: connect: connection refused`，第 2872 行重试警告，末尾 `exit status 1`；③一个并列且成功的工具结果 `ok internal/compact 0.02s`；④近期未答用户提问（必须留在保留段）。
+
+**原型**：`budget/` 是仓库内普通包，**未接入 `internal/compact`**。`Preview` 对每条超预算的 tool_result 保留 head+marker+tail，其余一切（消息、角色、块类型、tool_use ID）原样复制。
+
+**离线验证（不联网、不调模型）**：10 个测试全过，覆盖工具结果以外不变、tool_use/tool_result 配对与顺序有效、源 transcript 不被修改、预算内结果逐字节不变、budget=0 即对照臂、marker 计数与 UTF-8 有效、显式 head/tail 生效、摘要请求确实携带完整日志（对照臂成立）、预算版请求变小且结构有效、**保留段与对照臂逐字节相同**。传输字节由 `chatcompletions.BuildRequest` 序列化后度量，不是估算。
+
+测试过程中发现一个会让测量静默失效的陷阱：`KeepRecent` 过小时安全切分点落在日志**之前**，日志被原样保留，预览根本没被触发。fixture 做成 8 条消息使 `SafeSplitPoint` 落在 5，摘要第 4 条（日志）并保留 5–7。
+
+### 摘要请求变小 98%
+
+| | 对照（原样） | 预算（每结果 2,000 B） |
+| --- | ---: | ---: |
+| 摘要请求体 | 141,241 B | **3,324 B** |
+| 输入 tokens（实测） | **28,276** | **687** |
+| 输出 tokens | 550 / 482 / 649 | 501 / 343 / 402 |
+| 摘要长度 | 1,739 / 1,512 / 1,398 B | 1,160 / 710 / 1,299 B |
+
+### 但摘要丢掉了唯一的失败
+
+| 运行 | 保留 `10.4.2.9` / `connection refused` | 保留 retry budget 约束 |
+| --- | --- | --- |
+| 对照 r1/r2/r3 | **是 / 是 / 是** | 是 / 是 / 是 |
+| 预算 r1 | 否 | 是 |
+| 预算 r2 | 否 | 是 |
+| 预算 r3 | 否 | 是 |
+
+对照臂明确写出"唯一的真实失败是 10.4.2.9:6379 的连接丢失，其余全部成功"；预算臂对同样输入写"失败原因在保留输出中不可见，因为日志被成功请求行占据且结果被截断"。
+
+原因是结构性的：日志头部是 4,000 行连续 `status=200`，尾部是退出状态，唯一有意义的一行在中间——正好是 head+tail 切掉的位置。预览不是抽象意义上"有损"，它删掉了答案。
+
+### 而且导致补查
+
+预算臂的 open items 全部要求**重新读取日志**：
+
+> re-running with log output filtered or reduced since the INFO spam obscures the real failure
+
+即省下 27,589 输入 token，同时制造一次补读。这正是验收标准里"若需补查导致总消耗上升，记录为不引入"的情形。
+
+### 结论：不引入
+
+预注册判据要求"输入明显下降 **且** 续作质量无回归"。输入下降真实且巨大（−98%），但续作质量在"失败运行的摘要必须携带失败原因"这一点上回归：3/3 预算版丢失，3/3 对照版保留。
+
+工具结果预算不是中性的体积/成本权衡，在这个形态上它交易掉了让 transcript 值得摘要的那一行，且失败模式由日志结构决定（有趣事件在中间，两端都是噪声）。
+
+未改动 `internal/compact`、触发阈值、保留段、后端路由与公开配置。
+
+### 后续可试方向
+
+失败模式指向"少留"之外的做法：按**分类**而非位置保留（`ERROR|FATAL|FAIL|WARN`、非零退出状态、命令行本身），即 `status=200` 重复行不留；把"结论留下、日志丢掉"从提示词移到代码里；按**结果条数**而非字节限流（本例两条并列结果都正常，问题在某一条的内部）。任何方案都需要一个"答案不在噪声中间"的对照 fixture，否则保留错误行的分类器同样会保留 4,000 行错误。

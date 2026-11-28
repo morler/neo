@@ -430,6 +430,22 @@ requests from 5 to 7 and prompt tokens from 20,217 to 25,081. No product change
 is recommended; the full record, fixtures, and raw results are in
 [docs/measurements/133-go-source-outlines](../measurements/133-go-source-outlines/README.md).
 
+### A tool-result budget for summary requests (#134)
+
+Measured 2026-11-28 on the same backend, three runs per arm. Compaction re-sends
+the old segment verbatim, so on a fixture whose substance is one line in a
+4,000-line log the summary request costs 141 KB / 28,276 input tokens. Replacing
+oversized tool results with a head+tail preview cuts that to 3.3 KB / 687 input
+tokens (−98%).
+
+It also deletes the answer. The one `ERROR … connection refused` line sits in the
+middle of the log, which is exactly where a head+tail preview cuts, and 3/3
+budgeted summaries lost it while 3/3 verbatim summaries kept it — then asked to
+re-read the log, filtered, to recover it. Since continuation quality regressed on
+the one fact a failing run must carry, the budget is **not introduced**; the
+saving is real and irrelevant. `docs/measurements/134-compaction-tool-result-budget/`
+has the record, the prototype, the ten offline invariants, and both summaries.
+
 ### Measuring a real run
 
 A run's actual cost comes from the provider, not from an estimate:

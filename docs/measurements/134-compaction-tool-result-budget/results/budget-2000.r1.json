@@ -1,0 +1,10 @@
+{
+  "budget": 2000,
+  "request_bytes": 3324,
+  "input_tokens": 687,
+  "cache_read": 0,
+  "output_tokens": 501,
+  "summary_bytes": 1160,
+  "keeps_endpoint": false,
+  "keeps_constraint": true
+}
