@@ -1,12 +1,13 @@
 ---
 id: 136
 title: Verify the unmeasured MC/DC conditions in file_picker and tui/model
-status: in-progress
+status: closed
 priority: low
 labels:
     - bug
 created: "2026-11-28"
 updated: "2026-11-28"
+closed: "2026-11-28"
 ---
 
 ## 背景
