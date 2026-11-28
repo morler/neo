@@ -1,12 +1,13 @@
 ---
 id: 135
 title: Give the approval matcher named types instead of bare strings
-status: in-progress
+status: closed
 priority: medium
 labels:
     - security
 created: "2026-11-28"
 updated: "2026-11-28"
+closed: "2026-11-28"
 ---
 
 ## 背景
