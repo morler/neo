@@ -1,0 +1,52 @@
+package main
+
+import (
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Config holds the runtime knobs for the pipeline.
+type Config struct {
+	Workers   int
+	Attempts  int
+	Backoff   time.Duration
+	BatchSize int
+}
+
+// DefaultConfig is what the service starts with when no flags are given.
+var DefaultConfig = Config{Workers: 4, Attempts: 3, Backoff: 250 * time.Millisecond, BatchSize: 32}
+
+// parseWindow reads a "start-end" window setting such as "10-25".
+func parseWindow(s string) (int, int, error) {
+	parts := strings.SplitN(s, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, errBadWindow
+	}
+	start, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return 0, 0, errBadWindow
+	}
+	end, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return 0, 0, errBadWindow
+	}
+	if end < start {
+		return 0, 0, errBadWindow
+	}
+	return start, end, nil
+}
+
+// validate rejects settings the worker loop cannot honour.
+func (c Config) validate() error {
+	if c.Workers < 1 {
+		return errBadConfig
+	}
+	if c.Attempts < 1 {
+		return errBadConfig
+	}
+	if c.BatchSize < 1 {
+		return errBadConfig
+	}
+	return nil
+}

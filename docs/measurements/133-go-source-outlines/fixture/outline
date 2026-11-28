@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Record the invocation, then run the real probe (#133).
+#
+# A run() sub-call is logged without its argv, so a run cannot be reduced from
+# the log alone: this wrapper appends one line per call and the reducer counts
+# them. Both arms get the same wrapper; only the outline arm is told it exists.
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+echo "outline $*" >> "$PWD/outline-invocations.log"
+exec "$here/.outline-bin" "$@"

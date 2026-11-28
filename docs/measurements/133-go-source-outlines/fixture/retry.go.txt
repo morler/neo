@@ -1,0 +1,22 @@
+package main
+
+import "time"
+
+// nextAttempt decides whether the job may run again. When the attempt budget is
+// used up it returns errExhausted and the caller must dead-letter the job.
+func nextAttempt(cfg Config, j Job) (Job, time.Duration, error) {
+	if j.Attempt >= cfg.Attempts {
+		return j, 0, errExhausted
+	}
+	next := j.clone()
+	next.Attempt++
+	return next, backoffFor(cfg, next.Attempt), nil
+}
+
+// backoffFor grows the delay linearly with the attempt number.
+func backoffFor(cfg Config, attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	return time.Duration(attempt) * cfg.Backoff
+}

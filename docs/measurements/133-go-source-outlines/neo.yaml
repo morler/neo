@@ -1,0 +1,11 @@
+provider: commandcode
+model: deepseek/deepseek-v4.1-flash
+reasoning_effort: low
+providers:
+  commandcode:
+    endpoint: https://api.commandcode.ai/provider/v1
+    api_key_env: COMMANDCODE_API_KEY
+    default_model: deepseek/deepseek-v4.1-flash
+features:
+  script: true
+  codemode: codemode

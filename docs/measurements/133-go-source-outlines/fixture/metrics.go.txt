@@ -1,0 +1,20 @@
+package main
+
+// counters holds the run totals.
+type counters struct {
+	jobs   int
+	failed int
+	retry  int
+	dead   int
+}
+
+func (c *counters) observe(j Job) {
+	c.jobs++
+	if j.Attempt > 0 {
+		c.retry++
+	}
+}
+
+func (c *counters) snapshot() map[string]int {
+	return map[string]int{"jobs": c.jobs, "failed": c.failed, "retry": c.retry, "dead": c.dead}
+}

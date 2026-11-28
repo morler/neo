@@ -17,8 +17,10 @@ Start here when changing Neo:
 - [Performance](../performance.md) records the binary, prompt, and token baselines
   and how to measure them.
 - [Measurements](../measurements/) holds reproducible experiment records with
-  their fixtures, harnesses, and raw results. Start with
-  [#132, evidence-only script results](../measurements/132-evidence-only-script-results/README.md).
+  their fixtures, harnesses, and raw results: #132 on
+  [evidence-only script results](../measurements/132-evidence-only-script-results/README.md)
+  and #133 on
+  [Go source outlines](../measurements/133-go-source-outlines/README.md).
 - [Token budget design](../design/token-budget.md) explains the four rules behind
   the fixed-floor budget, the frozen prefix, and the compaction trigger; it also
   records which switches were deliberately not added.

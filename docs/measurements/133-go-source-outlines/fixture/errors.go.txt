@@ -1,0 +1,11 @@
+package main
+
+import "errors"
+
+var (
+	errBadWindow   = errors.New("window must be start-end with start <= end")
+	errBadConfig   = errors.New("config values must be positive")
+	errExhausted   = errors.New("attempts exhausted")
+	errQueueClosed = errors.New("queue closed")
+	errEmptyJob    = errors.New("job has no payload")
+)

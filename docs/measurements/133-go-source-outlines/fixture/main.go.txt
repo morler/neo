@@ -1,0 +1,25 @@
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	cfg := DefaultConfig
+	start, end, err := parseWindow("1-10")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	q := newQueue()
+	for i := start; i <= end; i++ {
+		_ = q.push(Job{ID: i, Payload: fmt.Sprintf("work-%d", i)})
+	}
+	n, err := runOnce(cfg, q)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println("settled", n)
+}

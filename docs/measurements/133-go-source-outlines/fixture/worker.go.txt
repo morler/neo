@@ -1,0 +1,44 @@
+package main
+
+import "fmt"
+
+// runOnce executes a batch and returns how many jobs it settled.
+func runOnce(cfg Config, q *queue) (int, error) {
+	if err := cfg.validate(); err != nil {
+		return 0, err
+	}
+	settled := 0
+	for i := 0; i < cfg.BatchSize; i++ {
+		j, ok := q.pop()
+		if !ok {
+			break
+		}
+		settled++
+		if failIfContains(j, "boom") {
+			next, delay, err := nextAttempt(cfg, j)
+			if err != nil {
+				deadLetter(j)
+				continue
+			}
+			_ = delay
+			_ = q.push(next)
+		}
+	}
+	return settled, nil
+}
+
+// failIfContains models a handler that fails on a marker payload.
+func failIfContains(j Job, marker string) bool {
+	return len(j.Payload) >= len(marker) && contains(j.Payload, marker)
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+func deadLetter(j Job) { fmt.Println("dead-letter", j.key()) }

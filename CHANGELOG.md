@@ -6,6 +6,14 @@ All notable changes to Neo will be documented in this file.
 
 ### Added
 
+- #133 measured whether a `go/parser` source skeleton beats grep before
+  reading code. The probe's line ranges are trustworthy: all 1,327 declarations
+  it printed for this repository re-parse from their declared range. It is
+  cheaper in bytes on both fixtures, but it costs a round trip on the
+  unknown-location fixture — requests 5 → 7 and prompt tokens 20,217 → 25,081 —
+  so no index capability is introduced. See
+  `docs/measurements/133-go-source-outlines/`.
+
 - `docs/measurements/` now holds reproducible experiment records, each with its
   fixtures, harness, and raw per-run results. The first entry measures whether a
   `script` that returns only evidence is cheaper than one that returns what it

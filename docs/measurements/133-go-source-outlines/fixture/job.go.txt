@@ -1,0 +1,32 @@
+package main
+
+import (
+	"fmt"
+	"hash/fnv"
+)
+
+// Job is one unit of work.
+type Job struct {
+	ID      int
+	Payload string
+	Attempt int
+}
+
+// key is the stable identifier used for logs and dedupe.
+func (j Job) key() string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(j.Payload))
+	return fmt.Sprintf("%d-%08x", j.ID, h.Sum32())
+}
+
+// clone returns a copy so a retry cannot mutate the queued original.
+func (j Job) clone() Job {
+	out := j
+	out.Attempt = j.Attempt
+	return out
+}
+
+// String renders a job for the log.
+func (j Job) String() string {
+	return fmt.Sprintf("job %s attempt %d", j.key(), j.Attempt)
+}

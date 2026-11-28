@@ -408,6 +408,28 @@ would have to be shown not to flip the third, and this sample cannot show that.
 The full record, fixtures, offline-verified harness, and raw per-run results are
 in [docs/measurements/132-evidence-only-script-results](../measurements/132-evidence-only-script-results/README.md).
 
+### Go source outlines (#133)
+
+Measured 2026-11-28 on the same backend as #132, five runs per arm per fixture.
+One arm may run a `go/parser` skeleton probe (`outline`) that prints
+`path:start-end<TAB>kind<TAB>name<TAB>signature` and no function bodies; the
+other uses grep. Naming the probe costs 260 bytes on every request of its arm.
+
+| fixture | arm | success | requests (median) | tool bytes (median) | prompt tokens (median) |
+| --- | --- | --- | ---: | ---: | ---: |
+| known symbol | grep | 5/5 | 4 | 5,340 | 14,302 |
+| known symbol | outline | 5/5 | 4 | **3,543** | **12,474** |
+| unknown location | grep | 5/5 | **5** | 30,957 | **20,217** |
+| unknown location | outline | 5/5 | 7 | **10,304** | 25,081 |
+
+The skeleton is trustworthy — all 1,327 declarations it printed for the
+repository's own sources re-parse from their declared line range — and it is
+cheaper in bytes on both fixtures. It does not save round trips: it *costs* one
+on the unknown-location fixture, which is where #133 expected the gain, taking
+requests from 5 to 7 and prompt tokens from 20,217 to 25,081. No product change
+is recommended; the full record, fixtures, and raw results are in
+[docs/measurements/133-go-source-outlines](../measurements/133-go-source-outlines/README.md).
+
 ### Measuring a real run
 
 A run's actual cost comes from the provider, not from an estimate:

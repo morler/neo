@@ -1,0 +1,670 @@
+package main
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Processor applies the pipeline's per-stage transformations.
+// It is deliberately long: the interesting navigation problem in this
+// repository is a file of this size, not a toy example.
+type Processor struct {
+	stage    string
+	records  []string
+	rejected int
+}
+
+// handleShard0 applies one shard transformation and records its result.
+func (p *Processor) handleShard0(in string) (string, error) {
+	// handleShard0 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleShard0 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleShard0 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleShard0 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleShard0 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleShard0 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleShard0 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleShard0 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "shard-skip-0") {
+		p.rejected++
+		return "", fmt.Errorf("shard %d rejected", 0)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleMerge1 applies one merge transformation and records its result.
+func (p *Processor) handleMerge1(in string) (string, error) {
+	// handleMerge1 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleMerge1 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleMerge1 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleMerge1 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleMerge1 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleMerge1 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleMerge1 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleMerge1 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "merge-skip-1") {
+		p.rejected++
+		return "", fmt.Errorf("merge %d rejected", 1)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleSplit2 applies one split transformation and records its result.
+func (p *Processor) handleSplit2(in string) (string, error) {
+	// handleSplit2 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleSplit2 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleSplit2 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleSplit2 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleSplit2 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleSplit2 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleSplit2 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleSplit2 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "split-skip-2") {
+		p.rejected++
+		return "", fmt.Errorf("split %d rejected", 2)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleAttach3 applies one attach transformation and records its result.
+func (p *Processor) handleAttach3(in string) (string, error) {
+	// handleAttach3 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleAttach3 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleAttach3 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleAttach3 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleAttach3 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleAttach3 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleAttach3 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleAttach3 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "attach-skip-3") {
+		p.rejected++
+		return "", fmt.Errorf("attach %d rejected", 3)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleResolve4 applies one resolve transformation and records its result.
+func (p *Processor) handleResolve4(in string) (string, error) {
+	// handleResolve4 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleResolve4 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleResolve4 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleResolve4 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleResolve4 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleResolve4 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleResolve4 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleResolve4 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "resolve-skip-4") {
+		p.rejected++
+		return "", fmt.Errorf("resolve %d rejected", 4)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleEmit5 applies one emit transformation and records its result.
+func (p *Processor) handleEmit5(in string) (string, error) {
+	// handleEmit5 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleEmit5 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleEmit5 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleEmit5 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleEmit5 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleEmit5 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleEmit5 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleEmit5 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "emit-skip-5") {
+		p.rejected++
+		return "", fmt.Errorf("emit %d rejected", 5)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleDrain6 applies one drain transformation and records its result.
+func (p *Processor) handleDrain6(in string) (string, error) {
+	// handleDrain6 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleDrain6 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleDrain6 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleDrain6 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleDrain6 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleDrain6 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleDrain6 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleDrain6 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "drain-skip-6") {
+		p.rejected++
+		return "", fmt.Errorf("drain %d rejected", 6)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleSeal7 applies one seal transformation and records its result.
+func (p *Processor) handleSeal7(in string) (string, error) {
+	// handleSeal7 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleSeal7 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleSeal7 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleSeal7 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleSeal7 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleSeal7 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleSeal7 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleSeal7 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "seal-skip-7") {
+		p.rejected++
+		return "", fmt.Errorf("seal %d rejected", 7)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleShard8 applies one shard transformation and records its result.
+func (p *Processor) handleShard8(in string) (string, error) {
+	// handleShard8 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleShard8 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleShard8 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleShard8 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleShard8 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleShard8 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleShard8 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleShard8 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "shard-skip-8") {
+		p.rejected++
+		return "", fmt.Errorf("shard %d rejected", 8)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleMerge9 applies one merge transformation and records its result.
+func (p *Processor) handleMerge9(in string) (string, error) {
+	// handleMerge9 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleMerge9 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleMerge9 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleMerge9 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleMerge9 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleMerge9 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleMerge9 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleMerge9 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "merge-skip-9") {
+		p.rejected++
+		return "", fmt.Errorf("merge %d rejected", 9)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleSplit10 applies one split transformation and records its result.
+func (p *Processor) handleSplit10(in string) (string, error) {
+	// handleSplit10 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleSplit10 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleSplit10 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleSplit10 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleSplit10 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleSplit10 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleSplit10 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleSplit10 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "split-skip-10") {
+		p.rejected++
+		return "", fmt.Errorf("split %d rejected", 10)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleAttach11 applies one attach transformation and records its result.
+func (p *Processor) handleAttach11(in string) (string, error) {
+	// handleAttach11 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleAttach11 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleAttach11 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleAttach11 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleAttach11 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleAttach11 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleAttach11 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleAttach11 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "attach-skip-11") {
+		p.rejected++
+		return "", fmt.Errorf("attach %d rejected", 11)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleResolve12 applies one resolve transformation and records its result.
+func (p *Processor) handleResolve12(in string) (string, error) {
+	// handleResolve12 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleResolve12 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleResolve12 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleResolve12 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleResolve12 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleResolve12 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleResolve12 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleResolve12 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "resolve-skip-12") {
+		p.rejected++
+		return "", fmt.Errorf("resolve %d rejected", 12)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleEmit13 applies one emit transformation and records its result.
+func (p *Processor) handleEmit13(in string) (string, error) {
+	// handleEmit13 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleEmit13 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleEmit13 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleEmit13 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleEmit13 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleEmit13 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleEmit13 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleEmit13 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "emit-skip-13") {
+		p.rejected++
+		return "", fmt.Errorf("emit %d rejected", 13)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleDrain14 applies one drain transformation and records its result.
+func (p *Processor) handleDrain14(in string) (string, error) {
+	// handleDrain14 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleDrain14 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleDrain14 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleDrain14 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleDrain14 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleDrain14 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleDrain14 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleDrain14 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "drain-skip-14") {
+		p.rejected++
+		return "", fmt.Errorf("drain %d rejected", 14)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleSeal15 applies one seal transformation and records its result.
+func (p *Processor) handleSeal15(in string) (string, error) {
+	// handleSeal15 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleSeal15 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleSeal15 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleSeal15 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleSeal15 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleSeal15 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleSeal15 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleSeal15 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "seal-skip-15") {
+		p.rejected++
+		return "", fmt.Errorf("seal %d rejected", 15)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleShard16 applies one shard transformation and records its result.
+func (p *Processor) handleShard16(in string) (string, error) {
+	// handleShard16 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleShard16 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleShard16 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleShard16 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleShard16 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleShard16 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleShard16 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleShard16 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "shard-skip-16") {
+		p.rejected++
+		return "", fmt.Errorf("shard %d rejected", 16)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleMerge17 applies one merge transformation and records its result.
+func (p *Processor) handleMerge17(in string) (string, error) {
+	// handleMerge17 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleMerge17 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleMerge17 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleMerge17 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleMerge17 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleMerge17 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleMerge17 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleMerge17 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "merge-skip-17") {
+		p.rejected++
+		return "", fmt.Errorf("merge %d rejected", 17)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleSplit18 applies one split transformation and records its result.
+func (p *Processor) handleSplit18(in string) (string, error) {
+	// handleSplit18 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleSplit18 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleSplit18 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleSplit18 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleSplit18 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleSplit18 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleSplit18 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleSplit18 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "split-skip-18") {
+		p.rejected++
+		return "", fmt.Errorf("split %d rejected", 18)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleAttach19 applies one attach transformation and records its result.
+func (p *Processor) handleAttach19(in string) (string, error) {
+	// handleAttach19 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleAttach19 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleAttach19 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleAttach19 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleAttach19 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleAttach19 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleAttach19 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleAttach19 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "attach-skip-19") {
+		p.rejected++
+		return "", fmt.Errorf("attach %d rejected", 19)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleResolve20 applies one resolve transformation and records its result.
+func (p *Processor) handleResolve20(in string) (string, error) {
+	// handleResolve20 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleResolve20 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleResolve20 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleResolve20 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleResolve20 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleResolve20 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleResolve20 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleResolve20 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "resolve-skip-20") {
+		p.rejected++
+		return "", fmt.Errorf("resolve %d rejected", 20)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleEmit21 applies one emit transformation and records its result.
+func (p *Processor) handleEmit21(in string) (string, error) {
+	// handleEmit21 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleEmit21 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleEmit21 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleEmit21 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleEmit21 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleEmit21 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleEmit21 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleEmit21 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "emit-skip-21") {
+		p.rejected++
+		return "", fmt.Errorf("emit %d rejected", 21)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleDrain22 applies one drain transformation and records its result.
+func (p *Processor) handleDrain22(in string) (string, error) {
+	// handleDrain22 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleDrain22 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleDrain22 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleDrain22 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleDrain22 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleDrain22 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleDrain22 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleDrain22 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "drain-skip-22") {
+		p.rejected++
+		return "", fmt.Errorf("drain %d rejected", 22)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// handleSeal23 applies one seal transformation and records its result.
+func (p *Processor) handleSeal23(in string) (string, error) {
+	// handleSeal23 detail 0: kept for realism, no behavioural effect.
+	_ = 0
+	// handleSeal23 detail 1: kept for realism, no behavioural effect.
+	_ = 1
+	// handleSeal23 detail 2: kept for realism, no behavioural effect.
+	_ = 2
+	// handleSeal23 detail 3: kept for realism, no behavioural effect.
+	_ = 3
+	// handleSeal23 detail 4: kept for realism, no behavioural effect.
+	_ = 4
+	// handleSeal23 detail 5: kept for realism, no behavioural effect.
+	_ = 5
+	// handleSeal23 detail 6: kept for realism, no behavioural effect.
+	_ = 6
+	// handleSeal23 detail 7: kept for realism, no behavioural effect.
+	_ = 7
+	if strings.Contains(in, "seal-skip-23") {
+		p.rejected++
+		return "", fmt.Errorf("seal %d rejected", 23)
+	}
+	p.records = append(p.records, in)
+	return fmt.Sprintf("%s:%s", p.stage, in), nil
+}
+
+// reconcile merges a batch after every attempt has settled. Its signature
+// spans several lines on purpose.
+func (p *Processor) reconcile(
+	left []string,
+	right []string,
+	attempt int,
+	force bool,
+) ([]string, error) {
+	if attempt <= 0 {
+		return nil, fmt.Errorf("attempt must be positive")
+	}
+	out := make([]string, 0, len(left)+len(right))
+	out = append(out, left...)
+	for _, r := range right {
+		if force || !strings.Contains(r, "duplicate") {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// stats returns the processor's counters as a printable line.
+func (p *Processor) stats() string {
+	return fmt.Sprintf("stage=%s records=%d rejected=%d", p.stage, len(p.records), p.rejected)
+}
+
+// newProcessor builds a processor for one stage.
+func newProcessor(stage string) *Processor {
+	return &Processor{stage: stage}
+}
