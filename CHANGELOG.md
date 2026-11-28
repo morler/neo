@@ -57,6 +57,16 @@ All notable changes to Neo will be documented in this file.
 
 ### Changed
 
+- A misspelled `tool_approvals` entry now warns at startup. The list may hold
+  either a tool name or a Bash prefix, so a typo cannot be an error: it silently
+  became a prefix that matched nothing, and the confirmation the user asked for
+  never happened. Neo warns once about any entry shaped like a tool name
+  (`word_word`) that names no registered tool, and suggests the closest one —
+  `tool_approvals entry "write_fiel" is not a tool name … Did you mean one of:
+  write_file?`. A bare program (`git`) and a command line (`rm -rf`) are prefixes
+  by design and stay quiet. Matching behaviour, the approval flow, and the config
+  format are unchanged.
+
 - `just build` and `just install` now pass `-s -w`, so a local binary has the
   same shape as the release build: 32.98 MiB down to 23.86 MiB on linux/amd64,
   because the symbol table and DWARF data are gone. `install` matters most,

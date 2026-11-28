@@ -383,6 +383,19 @@ Entries are trimmed when loaded. Empty entries are rejected and exact
 duplicates keep their first position. Neo does not parse shell chains,
 wrappers, aliases, variables, scripts, or substitutions.
 
+Because one entry can be either kind, a misspelled tool name is not an error: it
+becomes a Bash prefix that matches nothing, and the confirmation you asked for
+never happens. Startup therefore warns once about any entry shaped like a tool
+name (`word_word`) that names no registered tool, and suggests the closest one:
+
+```text
+warning: tool_approvals entry "write_fiel" is not a tool name; treating it as a
+bash command prefix. Did you mean one of: write_file?
+```
+
+A bare program (`git`) and a command line (`rm -rf`) are prefixes by design and
+are not warned about.
+
 This is optional user-interface friction, not a security boundary. It is not
 passed to `neo run` or child agents. The VM or sandbox must control filesystem,
 process, network, credentials, and external-service access.

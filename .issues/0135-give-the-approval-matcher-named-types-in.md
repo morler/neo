@@ -1,7 +1,7 @@
 ---
 id: 135
 title: Give the approval matcher named types instead of bare strings
-status: open
+status: in-progress
 priority: medium
 labels:
     - security
@@ -50,3 +50,58 @@ updated: "2026-11-28"
 - `supercov quality file internal/approval/matcher.go` 不再命中 `primitive_obsession`。
 - 新增一条测试：把工具名当作命令前缀传入（或反之）无法编译，或运行时被明确拒绝。
 - `go test ./...`、`qlty check --all` 通过。
+
+
+## 结果记录（2026-11-28）
+
+### 前提被证伪，方案随之改变
+
+本 issue 原本的提案是"为工具名与命令前缀引入具名类型，使拼写错误在编译期暴露"。核查后发现**这不成立**：
+
+`tool_approvals` 是 YAML 里的字符串列表（`internal/config/config.go:55`），用户写什么就传什么，不存在调用点可以让我加类型约束。`approval.New` 在 `cmd/neo/main.go:1274` 接收 `cfg.ToolApprovals`，具名类型只能从 YAML 解析后才构造出来——那时拼写错误已经发生。所以"编译期暴露"是做不到的。
+
+真正的问题不是表达方式，而是**没有任何校验**。核实结果：
+
+    $ go run ./docs/measurements/135-approval-typo-probe   # 临时探针，已删除
+    rule names: write_fiel (typo of write_file)
+      Requires(write_file, nil)                    = false   <- should be true
+      Requires(bash, {command: write_fiel x})      = true    <- 拼错的名字只当命令前缀匹配
+      Requires(bash, {command: write_file x})      = false   <- 真正要门控的调用未被门控
+
+即：拼错一个字母，用户以为 `write_file` 需要确认，实际上它从不确认，而规则静默退化成一条匹配不到任何东西的命令前缀。
+
+### 实现
+
+不能在启动时报错——因为 **一条规则合法地可以是命令前缀**（`git`、`rm -rf`），报错会让合法配置无法启动。所以改为启动时告警一次：
+
+- `internal/approval/matcher.go` 新增 `UnknownTools(rules, toolNames)`，只在规则**形如工具名**（纯小写字母加下划线、至少含一个下划线）且不在注册表中时返回它。单字（`git`）、含空格或标点（`rm -rf`）一律视为命令前缀，不告警。
+- `cmd/neo/main.go` 在 `registryFor` 之后（此时 `reg.Names()` 可用）打印一次告警，并用 Levenshtein 距离给出最接近的真实工具名：
+
+      warning: tool_approvals entry "write_fiel" is not a tool name; treating it
+      as a bash command prefix. Did you mean one of: write_file?
+
+未改批准流程、配置格式、匹配语义；`Requires` 的行为一字未动。
+
+### 验收核对
+
+| 标准 | 结果 |
+| --- | --- |
+| `go test ./internal/approval/` 既有测试不改动即通过 | 通过（`TestMatcherRequiresToolOrBashPrefix`、`TestMatcherCopiesRules` 原样） |
+| `supercov quality file internal/approval/matcher.go` 不再命中 `primitive_obsession` | **未达成**。规则来源仍是 YAML 字符串，"具名类型"这条路被证伪；`primitive_obsession` 是 supercov 对字符串承载领域概念的判断，本改动不改变它，也不应以通过该检查为目标 |
+| 新增测试：把工具名当作命令前缀传入时被明确拒绝 | 改为等价且更强的断言：`TestRequiresDoesNotMatchAMisspelledToolName` 固定当前行为，`TestBuildChatRuntimeWarnsAboutAMisspelledToolApproval` 断言告警真的出现在 stderr |
+| `go test ./...`、`qlty check --all` 通过 | 见下 |
+
+### 新增测试
+
+- `internal/approval/matcher_test.go`：`TestRequiresDoesNotMatchAMisspelledToolName`、`TestUnknownToolsFindsOnlyToolShapedRules`（10 个形状用例，含 `git`、`rm -rf`、`WRITE_FILE`、`_`、`read-file`）、`TestUnknownToolsReturnsEveryOffenderInOrder`、`TestUnknownToolsIsEmptyWithoutRules`。
+- `cmd/neo/approval_warning_test.go`：`TestNearestToolNameNamesTheLikelyFix`、`TestNearestToolNameSurvivesAnEmptyRegistry`、`TestBuildChatRuntimeWarnsAboutAMisspelledToolApproval`、`TestBuildChatRuntimeIsQuietAboutCorrectApprovals`。
+
+其中 `TestBuildChatRuntimeIsQuietAboutCorrectApprovals` 与 `UnknownTools("git")` 两条是防噪声的：每次启动都告警的提示会被用户学会忽略。
+
+### 一处越界，已撤回
+
+我一度把探针放在 `docs/measurements/135-approval-typo-probe/`，但 `docs/measurements/` 记录的是"已完成的度量实验"；这个探针属于一次性验证，不该留在那里。已删除，它的结论转写为本 issue 与测试中的断言。
+
+### 文档
+
+`docs/developer/config.md` 的 Tool Approvals 一节补充：拼写错误为何不是错误、启动时告警的样子、哪些形状不告警。

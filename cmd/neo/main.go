@@ -923,6 +923,54 @@ func headlessAgent(ctx context.Context, cfg *config.Config, prov llm.Provider, m
 	}), model, true
 }
 
+// nearestToolName returns the registered tool closest to rule, for a warning
+// that names the fix rather than only the mistake.
+func nearestToolName(rule string, names []string) string {
+	best, bestDistance := "", -1
+	for _, name := range names {
+		d := editDistance(rule, name)
+		if bestDistance < 0 || d < bestDistance {
+			best, bestDistance = name, d
+		}
+	}
+	if best == "" {
+		return "no tools are registered"
+	}
+	return best
+}
+
+// editDistance is the plain Levenshtein distance: the candidate lists are tiny
+// and this runs once at startup.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min3(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
+func min3(a, b, c int) int {
+	if b < a {
+		a = b
+	}
+	if c < a {
+		a = c
+	}
+	return a
+}
+
 // surfaceName names the surface in a message the user has to act on. It reuses
 // the config value rather than inventing a second vocabulary for it.
 func surfaceName(cfg *config.Config) string {
@@ -1271,6 +1319,13 @@ func buildChatRuntime(ctx context.Context, cfg *config.Config, prov llm.Provider
 
 	var requiresApproval func(string, map[string]any) bool
 	if len(cfg.ToolApprovals) > 0 {
+		// A misspelled tool name cannot be an error, because a rule may also be a
+		// bash prefix. Say so once at startup instead: the confirmation the user
+		// asked for would otherwise never happen, and nothing would report it.
+		for _, rule := range approval.UnknownTools(cfg.ToolApprovals, reg.Names()) {
+			fmt.Fprintf(streams.err, "warning: tool_approvals entry %q is not a tool name; treating it as a bash command prefix. Did you mean one of: %s?\n",
+				rule, nearestToolName(rule, reg.Names()))
+		}
 		requiresApproval = approval.New(cfg.ToolApprovals).Requires
 	}
 	ag := agent.New(agent.Config{
